@@ -164,6 +164,14 @@ func (b *Brocketchat) Send(msg config.Message) (string, error) {
 
 	rmsg, err := b.c.SendMessage(smsg)
 	if rmsg == nil {
+		if strings.Contains(err.Error(), "Invalid or expired session, please login again") {
+			b.Log.Info("Login expired, reconnecting..")
+			err := b.apiLogin()
+			if err != nil {
+				return "", err
+			}
+			b.Remote <- config.Message{Username: "system", Text: "rejoin", Channel: "", Account: b.Account, Event: config.EventRejoinChannels}
+		}
 		return "", err
 	}
 	return rmsg.ID, err
