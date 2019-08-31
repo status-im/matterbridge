@@ -8,10 +8,12 @@ require (
 	github.com/Rhymen/go-whatsapp v0.1.1-0.20200421062035-31e8111ac334
 	github.com/d5/tengo/v2 v2.4.2
 	github.com/davecgh/go-spew v1.1.1
+	github.com/ethereum/go-ethereum v1.9.5
 	github.com/fsnotify/fsnotify v1.4.9
 	github.com/go-telegram-bot-api/telegram-bot-api v4.6.5-0.20181225215658-ec221ba9ea45+incompatible
 	github.com/gomarkdown/markdown v0.0.0-20200127000047-1813ea067497
 	github.com/google/gops v0.3.6
+	github.com/google/uuid v1.1.1
 	github.com/gopackage/ddp v0.0.0-20170117053602-652027933df4 // indirect
 	github.com/gorilla/schema v1.1.0
 	github.com/gorilla/websocket v1.4.2
@@ -36,10 +38,8 @@ require (
 	github.com/mrexodia/wray v0.0.0-20160318003008-78a2c1f284ff // indirect
 	github.com/nelsonken/gomf v0.0.0-20180504123937-a9dd2f9deae9
 	github.com/nicksnyder/go-i18n v1.4.0 // indirect
-	github.com/onsi/ginkgo v1.6.0 // indirect
-	github.com/onsi/gomega v1.4.1 // indirect
 	github.com/paulrosania/go-charset v0.0.0-20190326053356-55c9d7a5834c
-	github.com/pborman/uuid v0.0.0-20160216163710-c55201b03606 // indirect
+	github.com/pkg/errors v0.9.1
 	github.com/rs/xid v1.2.1
 	github.com/russross/blackfriday v1.5.2
 	github.com/saintfish/chardet v0.0.0-20120816061221-3af4cd4741ca
@@ -47,12 +47,14 @@ require (
 	github.com/sirupsen/logrus v1.6.0
 	github.com/slack-go/slack v0.6.4
 	github.com/spf13/viper v1.7.0
+	github.com/status-im/status-go v0.49.0
 	github.com/stretchr/testify v1.5.1
 	github.com/technoweenie/multipartstreamer v1.0.1 // indirect
 	github.com/writeas/go-strip-markdown v2.0.1+incompatible
 	github.com/x-cray/logrus-prefixed-formatter v0.5.2 // indirect
 	github.com/yaegashi/msgraph.go v0.1.2
 	github.com/zfjagann/golang-ring v0.0.0-20190304061218-d34796e0a6c2
+	go.uber.org/zap v1.13.0
 	golang.org/x/image v0.0.0-20200430140353-33d19683fad8
 	golang.org/x/oauth2 v0.0.0-20200107190931-bf48bf16ab8d
 	gopkg.in/fsnotify.v1 v1.4.7 // indirect
@@ -61,5 +63,7 @@ require (
 )
 
 //replace github.com/bwmarrin/discordgo v0.20.2 => github.com/matterbridge/discordgo v0.18.1-0.20200109173909-ed873362fa43
+
+replace github.com/ethereum/go-ethereum v1.9.5 => github.com/status-im/go-ethereum v1.9.5-status.9
 
 go 1.13
