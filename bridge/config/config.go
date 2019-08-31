@@ -93,6 +93,8 @@ type Protocol struct {
 	Jid                    string // xmpp
 	JoinDelay              string // all protocols
 	Label                  string // all protocols
+	ListenPort             int    // status
+	ListenAddr             string // status
 	Login                  string // mattermost, matrix
 	LogFile                string // general
 	MediaDownloadBlackList []string
@@ -146,6 +148,7 @@ type Protocol struct {
 	TeamID                 string     // msteams
 	TenantID               string     // msteams
 	Token                  string     // gitter, slack, discord, api
+	PrivateKey             string     // status
 	Topic                  string     // zulip
 	URL                    string     // mattermost, slack // DEPRECATED
 	UseAPI                 bool       // mattermost, slack
@@ -203,6 +206,7 @@ type BridgeValues struct {
 	Matrix             map[string]Protocol
 	Slack              map[string]Protocol
 	SlackLegacy        map[string]Protocol
+	Status             map[string]Protocol
 	Steam              map[string]Protocol
 	Gitter             map[string]Protocol
 	XMPP               map[string]Protocol

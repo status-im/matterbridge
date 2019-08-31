@@ -1,16 +1,22 @@
 FROM alpine AS builder
 
-COPY . /go/src/github.com/42wim/matterbridge
-RUN apk update && apk add go git gcc musl-dev \
-        && cd /go/src/github.com/42wim/matterbridge \
-        && export GOPATH=/go \
-        && go get \
-        && go build -x -ldflags "-X main.githash=$(git log --pretty=format:'%h' -n 1)" -o /bin/matterbridge
+RUN apk update && apk add go git gcc musl-dev linux-headers
 
-FROM alpine
-RUN apk --no-cache add ca-certificates mailcap
+COPY . /go/src/github.com/42wim/matterbridge
+
+WORKDIR /go/src/github.com/42wim/matterbridge
+
+ENV GOPATH /go
+ENV CGOENABLE 1
+ENV GO111MODULE on
+
+RUN go get
+RUN go build -x -ldflags "-X main.githash=$(git log --pretty=format:'%h' -n 1)" -o /bin/matterbridge
+
+FROM alpine:latest
+
+RUN apk update && apk add ca-certificates
+
 COPY --from=builder /bin/matterbridge /bin/matterbridge
-RUN mkdir /etc/matterbridge \
-  && touch /etc/matterbridge/matterbridge.toml \
-  && ln -sf /matterbridge.toml /etc/matterbridge/matterbridge.toml
-ENTRYPOINT ["/bin/matterbridge", "-conf", "/etc/matterbridge/matterbridge.toml"]
+
+ENTRYPOINT ["/bin/matterbridge"]

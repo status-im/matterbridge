@@ -42,6 +42,7 @@ require (
 	github.com/sirupsen/logrus v1.6.0
 	github.com/slack-go/slack v0.6.6
 	github.com/spf13/viper v1.7.1
+	github.com/status-im/status-go v0.56.10 // indirect
 	github.com/stretchr/testify v1.6.1
 	github.com/vincent-petithory/dataurl v0.0.0-20191104211930-d1553a71de50
 	github.com/writeas/go-strip-markdown v2.0.1+incompatible
