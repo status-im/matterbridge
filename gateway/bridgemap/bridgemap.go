@@ -13,6 +13,7 @@ import (
 	brocketchat "github.com/42wim/matterbridge/bridge/rocketchat"
 	bslack "github.com/42wim/matterbridge/bridge/slack"
 	bsshchat "github.com/42wim/matterbridge/bridge/sshchat"
+	bstatus "github.com/42wim/matterbridge/bridge/status"
 	bsteam "github.com/42wim/matterbridge/bridge/steam"
 	btelegram "github.com/42wim/matterbridge/bridge/telegram"
 	bwhatsapp "github.com/42wim/matterbridge/bridge/whatsapp"
@@ -33,6 +34,7 @@ var (
 		"slack":        bslack.New,
 		"sshchat":      bsshchat.New,
 		"steam":        bsteam.New,
+		"status":       bstatus.New,
 		"telegram":     btelegram.New,
 		"whatsapp":     bwhatsapp.New,
 		"xmpp":         bxmpp.New,

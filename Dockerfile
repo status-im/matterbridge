@@ -1,4 +1,4 @@
-FROM alpine:edge
+FROM alpine:latest
 ENTRYPOINT ["/bin/matterbridge"]
 
 COPY . /go/src/github.com/42wim/matterbridge
