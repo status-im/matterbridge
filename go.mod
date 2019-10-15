@@ -89,3 +89,5 @@ require (
 replace github.com/bwmarrin/discordgo v0.19.0 => github.com/matterbridge/discordgo v0.0.0-20190818085008-57c6e0fc2f40
 
 replace github.com/ethereum/go-ethereum v1.8.27 => github.com/status-im/go-ethereum v1.8.27-status.5
+
+go 1.13

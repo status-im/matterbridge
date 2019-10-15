@@ -1,8 +1,8 @@
 package status
 
 import (
-	"encoding/hex"
 	"crypto/ecdsa"
+	"encoding/hex"
 
 	crypto "github.com/ethereum/go-ethereum/crypto"
 )
