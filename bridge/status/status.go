@@ -1,34 +1,34 @@
 package status
 
 import (
-	"fmt"
-	"time"
 	"context"
-	"strings"
-	"database/sql"
 	"crypto/ecdsa"
+	"database/sql"
+	"fmt"
+	"strings"
+	"time"
 
-	"go.uber.org/zap"
-	"github.com/pkg/errors"
 	"github.com/google/uuid"
+	"github.com/pkg/errors"
+	"go.uber.org/zap"
 
 	"github.com/42wim/matterbridge/bridge"
 	"github.com/42wim/matterbridge/bridge/config"
 
-	v1 "github.com/status-im/status-protocol-go/v1"
 	crypto "github.com/ethereum/go-ethereum/crypto"
-	status "github.com/status-im/status-protocol-go"
-	params "github.com/status-im/status-go/params"
 	gonode "github.com/status-im/status-go/node"
+	params "github.com/status-im/status-go/params"
+	status "github.com/status-im/status-protocol-go"
+	v1 "github.com/status-im/status-protocol-go/v1"
 )
 
 type Bstatus struct {
 	*bridge.Config
 
 	// message fetching loop controls
-    fetchInterval   time.Duration
-	fetchTimeout    time.Duration
-	fetchDone       chan bool
+	fetchInterval time.Duration
+	fetchTimeout  time.Duration
+	fetchDone     chan bool
 
 	// Whisper node settings
 	whisperListenPort int
@@ -43,14 +43,14 @@ type Bstatus struct {
 
 func New(cfg *bridge.Config) bridge.Bridger {
 	return &Bstatus{
-		Config: cfg,
-		fetchDone: make(chan bool),
+		Config:            cfg,
+		fetchDone:         make(chan bool),
 		whisperListenPort: 30303,
 		whisperListenAddr: "0.0.0.0",
 		// TODO parametrize those
 		whisperDataDir: "/tmp/matterbridge-status-data",
-		fetchTimeout: 500 * time.Millisecond,
-		fetchInterval: 500 * time.Millisecond,
+		fetchTimeout:   500 * time.Millisecond,
+		fetchInterval:  500 * time.Millisecond,
 	}
 }
 
@@ -127,6 +127,10 @@ func (b *Bstatus) Send(msg config.Message) (string, error) {
 	if !b.Connected() {
 		return "", fmt.Errorf("bridge %s not connected, dropping message %#v to bridge", b.Account, msg)
 	}
+
+	if skipBridgeMessage(msg) {
+		return "", nil
+	}
 	b.Log.Infof("=> Sending message %#v", msg)
 
 	// Use a timeout for sending messages
@@ -181,8 +185,7 @@ func (b *Bstatus) fetchMessagesLoop() {
 				continue
 			}
 			for _, msg := range msgs {
-		        b.Log.Infof("MSG: %#v", msg)
-				if b.skipMessage(msg) {
+				if b.skipStatusMessage(msg) {
 					continue
 				}
 				b.propagateMessage(msg)
@@ -215,8 +218,8 @@ func (b *Bstatus) propagateMessage(msg *v1.Message) {
 	}
 }
 
-// skipMessage skips messages that need to be skipped
-func (b *Bstatus) skipMessage(msg *v1.Message) bool {
+// skipStatusMessage defines which Status messages can be ignored
+func (b *Bstatus) skipStatusMessage(msg *v1.Message) bool {
 	// skip messages from ourselves
 	if isPubKeyEqual(msg.SigPubKey, &b.privateKey.PublicKey) {
 		return true
@@ -227,6 +230,15 @@ func (b *Bstatus) skipMessage(msg *v1.Message) bool {
 		return true
 	}
 
+	return false
+}
+
+// skipBridgeMessage defines which messages from the bridge should be ignored
+func skipBridgeMessage(msg config.Message) bool {
+	// skip delete messages
+	if msg.Event == config.EventMsgDelete {
+		return true
+	}
 	return false
 }
 
