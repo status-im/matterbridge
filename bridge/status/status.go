@@ -10,7 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
-	"go.uber.org/zap"
+	//"go.uber.org/zap"
 
 	"github.com/42wim/matterbridge/bridge"
 	"github.com/42wim/matterbridge/bridge/config"
@@ -77,13 +77,13 @@ func (b *Bstatus) Connect() error {
 
 	// Create a custom logger to suppress DEBUG messages
 	//logger, _ := zap.NewProduction()
-	logger := zap.NewNop()
+	//logger := zap.NewNop()
 
 	// Using an in-memory SQLite DB since we have nothing worth preserving
 	db, _ := sql.Open("sqlite3", "file:mem?mode=memory&cache=shared")
 	options := []status.Option{
 		status.WithDatabase(db),
-		status.WithCustomLogger(logger),
+		//status.WithCustomLogger(logger),
 	}
 
 	var instID string = uuid.New().String()
