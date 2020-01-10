@@ -18,8 +18,8 @@ import (
 	crypto "github.com/ethereum/go-ethereum/crypto"
 	gonode "github.com/status-im/status-go/node"
 	params "github.com/status-im/status-go/params"
-	status "github.com/status-im/status-protocol-go"
-	v1 "github.com/status-im/status-protocol-go/v1"
+	status "github.com/status-im/status-go/protocol"
+	v1 "github.com/status-im/status-go/protocol/v1"
 )
 
 type Bstatus struct {
