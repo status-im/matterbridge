@@ -16,10 +16,11 @@ import (
 	"github.com/42wim/matterbridge/bridge/config"
 
 	crypto "github.com/ethereum/go-ethereum/crypto"
+	gethbridge "github.com/status-im/status-go/eth-node/bridge/geth"
 	gonode "github.com/status-im/status-go/node"
 	params "github.com/status-im/status-go/params"
 	status "github.com/status-im/status-go/protocol"
-	v1 "github.com/status-im/status-go/protocol/v1"
+	"github.com/status-im/status-go/protocol/protobuf"
 )
 
 type Bstatus struct {
@@ -85,7 +86,7 @@ func (b *Bstatus) Connect() error {
 
 	messenger, err := status.NewMessenger(
 		b.privateKey,
-		b.statusNode,
+		gethbridge.NewNodeBridge(b.statusNode.GethNode()),
 		instID,
 		options...,
 	)
@@ -114,7 +115,7 @@ func (b *Bstatus) Disconnect() error {
 func (b *Bstatus) JoinChannel(channel config.ChannelInfo) error {
 	chat := status.CreatePublicChat(channel.Name)
 	b.messenger.Join(chat)
-	b.messenger.SaveChat(chat)
+	b.messenger.SaveChat(&chat)
 	return nil
 }
 
@@ -132,8 +133,7 @@ func (b *Bstatus) Send(msg config.Message) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), b.fetchTimeout)
 	defer cancel()
 
-	payload := []byte(msg.Username + msg.Text)
-	msgHash, err := b.messenger.Send(ctx, msg.Channel, payload)
+	msgHash, err := b.messenger.SendChatMessage(ctx, genStatusMsg(msg))
 	if err != nil {
 		return "", errors.Wrap(err, "failed to send message")
 	}
@@ -145,6 +145,15 @@ func (b *Bstatus) Connected() bool {
 	return b.statusNode.IsRunning()
 }
 
+// Converts a bridge message into a Status message
+func genStatusMsg(msg config.Message) (sMsg *status.Message) {
+	sMsg.ChatId = msg.Channel
+	sMsg.Text = msg.Text
+	sMsg.ContentType = protobuf.ChatMessage_TEXT_PLAIN
+	return
+}
+
+// Generate a sane configuration for a Status Node
 func (b *Bstatus) generateConfig() *params.NodeConfig {
 	options := []params.Option{
 		params.WithFleet(params.FleetBeta),
@@ -168,18 +177,19 @@ func (b *Bstatus) stopMessagesLoops() {
 	close(b.fetchDone)
 }
 
+// Main loop for fetching Status messages and relaying them to the bridge
 func (b *Bstatus) fetchMessagesLoop() {
 	t := time.NewTicker(b.fetchInterval)
 	defer t.Stop()
 	for {
 		select {
 		case <-t.C:
-			msgs, err := b.retrieveLatestMessages()
+			mResp, err := b.messenger.RetrieveAll()
 			if err != nil {
 				b.Log.WithError(err).Error("Failed to retrieve messages")
 				continue
 			}
-			for _, msg := range msgs {
+			for _, msg := range mResp.Messages {
 				if b.skipStatusMessage(msg) {
 					continue
 				}
@@ -191,30 +201,23 @@ func (b *Bstatus) fetchMessagesLoop() {
 	}
 }
 
-func (b *Bstatus) retrieveLatestMessages() (msgs []*v1.Message, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	msgs, err = b.messenger.RetrieveAll(ctx, status.RetrieveLatest)
-	return
-}
-
-func (b *Bstatus) propagateMessage(msg *v1.Message) {
+func (b *Bstatus) propagateMessage(msg *status.Message) {
 	pubKey := publicKeyToHex(msg.SigPubKey)
 	alias := getThreeWordName(pubKey)
 	// Send message for processing
 	b.Remote <- config.Message{
-		Timestamp: msg.Timestamp.Time(),
+		Timestamp: time.Unix(int64(msg.WhisperTimestamp), 0),
 		Username:  alias,
 		UserID:    pubKey,
 		Text:      msg.Text,
-		Channel:   msg.ChatID,
+		Channel:   msg.ChatId,
 		ID:        fmt.Sprintf("%#x", msg.ID),
 		Account:   b.Account,
 	}
 }
 
 // skipStatusMessage defines which Status messages can be ignored
-func (b *Bstatus) skipStatusMessage(msg *v1.Message) bool {
+func (b *Bstatus) skipStatusMessage(msg *status.Message) bool {
 	// skip messages from ourselves
 	if isPubKeyEqual(msg.SigPubKey, &b.privateKey.PublicKey) {
 		return true
