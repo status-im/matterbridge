@@ -70,11 +70,6 @@ func (b *Bstatus) Connect() error {
 		return errors.Wrap(err, "Failed to start Status node")
 	}
 
-	shhService, err := b.statusNode.WhisperService()
-	if err != nil {
-		return errors.Wrap(err, "Failed to get Whisper service")
-	}
-
 	// Create a custom logger to suppress DEBUG messages
 	//logger, _ := zap.NewProduction()
 	//logger := zap.NewNop()
@@ -90,7 +85,7 @@ func (b *Bstatus) Connect() error {
 
 	messenger, err := status.NewMessenger(
 		b.privateKey,
-		shhService,
+		b.statusNode,
 		instID,
 		options...,
 	)
