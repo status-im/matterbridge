@@ -20,6 +20,7 @@ import (
 	gonode "github.com/status-im/status-go/node"
 	params "github.com/status-im/status-go/params"
 	status "github.com/status-im/status-go/protocol"
+	alias "github.com/status-im/status-go/protocol/identity/alias"
 	"github.com/status-im/status-go/protocol/protobuf"
 )
 
@@ -203,7 +204,10 @@ func (b *Bstatus) fetchMessagesLoop() {
 
 func (b *Bstatus) propagateMessage(msg *status.Message) {
 	pubKey := publicKeyToHex(msg.SigPubKey)
-	alias := getThreeWordName(pubKey)
+	alias, err := alias.GenerateFromPublicKeyString(pubKey)
+	if err != nil {
+		b.Log.WithError(err).Error("Failed to generate Chat name")
+	}
 	// Send message for processing
 	b.Remote <- config.Message{
 		Timestamp: time.Unix(int64(msg.WhisperTimestamp), 0),
