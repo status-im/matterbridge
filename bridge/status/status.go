@@ -114,7 +114,7 @@ func (b *Bstatus) Disconnect() error {
 }
 
 func (b *Bstatus) JoinChannel(channel config.ChannelInfo) error {
-	chat := status.CreatePublicChat(channel.Name, b.messenger.GetTimesource())
+	chat := status.CreatePublicChat(channel.Name, b.messenger.Timesource())
 	b.messenger.Join(chat)
 	b.messenger.SaveChat(&chat)
 	return nil
