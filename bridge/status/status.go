@@ -157,6 +157,7 @@ func (b *Bstatus) Connected() bool {
 
 // Converts a bridge message into a Status message
 func genStatusMsg(msg config.Message) (sMsg *status.Message) {
+	sMsg = &status.Message{}
 	sMsg.ChatId = msg.Channel
 	sMsg.Text = msg.Text
 	sMsg.ContentType = protobuf.ChatMessage_TEXT_PLAIN
