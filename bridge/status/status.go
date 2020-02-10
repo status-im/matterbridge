@@ -77,7 +77,10 @@ func (b *Bstatus) Connect() error {
 	//logger := zap.NewNop()
 
 	// Using an in-memory SQLite DB since we have nothing worth preserving
-	db, _ := sql.Open("sqlite3", "file:mem?mode=memory&cache=shared")
+	db, err := sql.Open("sqlite3", "file:mem?mode=memory&cache=shared")
+	if err != nil {
+		return errors.Wrap(err, "Failed to open sqlite database")
+	}
 	options := []status.Option{
 		status.WithDatabase(db),
 		//status.WithCustomLogger(logger),
@@ -93,6 +96,12 @@ func (b *Bstatus) Connect() error {
 	)
 	if err != nil {
 		return errors.Wrap(err, "Failed to create Messenger")
+	}
+	if err := messenger.Start(); err != nil {
+		return errors.Wrap(err, "Failed to start Messenger")
+	}
+	if err := messenger.Init(); err != nil {
+		return errors.Wrap(err, "Failed to init Messenger")
 	}
 	b.messenger = messenger
 
