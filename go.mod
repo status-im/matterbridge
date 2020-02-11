@@ -16,6 +16,7 @@ require (
 	github.com/gorilla/schema v1.1.0
 	github.com/gorilla/websocket v1.4.1
 	github.com/hashicorp/golang-lru v0.5.3
+	github.com/hpcloud/tail v1.0.0 // indirect
 	github.com/jpillora/backoff v1.0.0
 	github.com/keybase/go-keybase-chat-bot v0.0.0-20200226211841-4e48f3eaef3e
 	github.com/labstack/echo/v4 v4.1.13
@@ -31,11 +32,15 @@ require (
 	github.com/mattermost/mattermost-server v5.5.0+incompatible
 	github.com/mattn/go-runewidth v0.0.7 // indirect
 	github.com/mattn/godown v0.0.0-20180312012330-2e9e17e0ea51
+	github.com/mgutz/ansi v0.0.0-20170206155736-9520e82c474b // indirect
 	github.com/mreiferson/go-httpclient v0.0.0-20160630210159-31f0106b4474 // indirect
 	github.com/mrexodia/wray v0.0.0-20160318003008-78a2c1f284ff // indirect
 	github.com/nelsonken/gomf v0.0.0-20180504123937-a9dd2f9deae9
 	github.com/nicksnyder/go-i18n v1.4.0 // indirect
+	github.com/onsi/ginkgo v1.6.0 // indirect
+	github.com/onsi/gomega v1.4.1 // indirect
 	github.com/paulrosania/go-charset v0.0.0-20190326053356-55c9d7a5834c
+	github.com/pborman/uuid v0.0.0-20160216163710-c55201b03606 // indirect
 	github.com/rs/xid v1.2.1
 	github.com/russross/blackfriday v1.5.2
 	github.com/saintfish/chardet v0.0.0-20120816061221-3af4cd4741ca
@@ -43,18 +48,19 @@ require (
 	github.com/sirupsen/logrus v1.4.2
 	github.com/slack-go/slack v0.6.3-0.20200228121756-f56d616d5901
 	github.com/spf13/viper v1.6.1
-	github.com/status-im/status-go v0.45.1 // indirect
 	github.com/stretchr/testify v1.4.0
 	github.com/technoweenie/multipartstreamer v1.0.1 // indirect
+	github.com/x-cray/logrus-prefixed-formatter v0.5.2 // indirect
 	github.com/zfjagann/golang-ring v0.0.0-20190106091943-a88bb6aef447
 	golang.org/x/image v0.0.0-20191214001246-9130b4cfad52
 	golang.org/x/oauth2 v0.0.0-20190604053449-0f29369cfe45
+	gopkg.in/fsnotify.v1 v1.4.7 // indirect
+	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
+	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
 )
 
-replace github.com/nlopes/slack v0.6.0 => github.com/matterbridge/slack v0.1.1-0.20191208194820-95190f11bfb6
+//replace github.com/bwmarrin/discordgo v0.20.2 => github.com/matterbridge/discordgo v0.18.1-0.20200109173909-ed873362fa43
 
-replace github.com/bwmarrin/discordgo v0.19.0 => github.com/matterbridge/discordgo v0.0.0-20191026232317-01823f4ebba4
-
-replace github.com/ethereum/go-ethereum v1.9.5 => github.com/status-im/go-ethereum v1.9.5-status.7
+//replace github.com/yaegashi/msgraph.go => github.com/matterbridge/msgraph.go v0.0.0-20191226214848-9e5d9c08a4e1
 
 go 1.13
