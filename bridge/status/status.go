@@ -167,7 +167,7 @@ func genStatusMsg(msg config.Message) (sMsg *status.Message) {
 // Generate a sane configuration for a Status Node
 func (b *Bstatus) generateConfig() *params.NodeConfig {
 	options := []params.Option{
-		params.WithFleet(params.FleetBeta),
+		params.WithFleet("eth.prod"),
 		b.withListenAddr(),
 	}
 
