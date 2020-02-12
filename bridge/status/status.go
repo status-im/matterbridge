@@ -158,8 +158,9 @@ func (b *Bstatus) Connected() bool {
 func genStatusMsg(msg config.Message) (sMsg *status.Message) {
 	sMsg = &status.Message{}
 	sMsg.ChatId = msg.Channel
-	sMsg.Text = msg.Text
 	sMsg.ContentType = protobuf.ChatMessage_TEXT_PLAIN
+	// We need to prefix messages with usernames
+	sMsg.Text = fmt.Sprintf("%s%s", msg.Username, msg.Text)
 	return
 }
 
