@@ -35,10 +35,10 @@ type Bstatus struct {
 	fetchTimeout  time.Duration
 	fetchDone     chan bool
 
-	// Whisper node settings
-	whisperListenPort int
-	whisperListenAddr string
-	whisperDataDir    string
+	// Waku node settings
+	wakuListenPort int
+	wakuListenAddr string
+	wakuDataDir    string
 
 	// ENS settings
 	ensName      string        // Make sure the bridge account owns the ENS name
@@ -48,20 +48,20 @@ type Bstatus struct {
 	ensInterval  time.Duration // Frequency of ENS verification checks
 
 	privateKey *ecdsa.PrivateKey  // secret for Status chat identity
-	nodeConfig *params.NodeConfig // configuration for Whisper node
-	statusNode *gonode.StatusNode // Ethereum Whisper node to run in background
+	nodeConfig *params.NodeConfig // configuration for Waku node
+	statusNode *gonode.StatusNode // Ethereum Waku node to run in background
 	messenger  *status.Messenger  // Status messaging layer instance
 }
 
 func New(cfg *bridge.Config) bridge.Bridger {
 	return &Bstatus{
-		Config:            cfg,
-		fetchDone:         make(chan bool),
-		whisperListenPort: 30303,
-		whisperListenAddr: "0.0.0.0",
+		Config:         cfg,
+		fetchDone:      make(chan bool),
+		wakuListenPort: 30303,
+		wakuListenAddr: "0.0.0.0",
 		// TODO parametrize those
 		maxUsernameLen: 40,
-		whisperDataDir: "/tmp/matterbridge-status-data",
+		wakuDataDir:    "/tmp/matterbridge-status-data",
 		fetchTimeout:   500 * time.Millisecond,
 		fetchInterval:  500 * time.Millisecond,
 		// ENS checks are slow, also db has a lock
@@ -190,16 +190,19 @@ func (b *Bstatus) genStatusMsg(msg config.Message) (sMsg *status.Message) {
 func (b *Bstatus) generateConfig() *params.NodeConfig {
 	options := []params.Option{
 		params.WithFleet("eth.prod"),
+		b.withNodeName(),
 		b.withListenAddr(),
+		b.withWakuEnabled(),
 	}
 
 	var configFiles []string
 	config, err := params.NewNodeConfigWithDefaultsAndFiles(
-		b.whisperDataDir,
+		b.wakuDataDir,
 		params.MainNetworkID,
 		options,
 		configFiles,
 	)
+
 	if err != nil {
 		b.Log.WithError(err).Error("Failed to generate config")
 	}
@@ -316,13 +319,31 @@ func skipBridgeMessage(msg config.Message) bool {
 
 func (b *Bstatus) withListenAddr() params.Option {
 	if addr := b.GetString("ListenAddr"); addr != "" {
-		b.whisperListenAddr = addr
+		b.wakuListenAddr = addr
 	}
 	if port := b.GetInt("ListenPort"); port != 0 {
-		b.whisperListenPort = port
+		b.wakuListenPort = port
 	}
 	return func(c *params.NodeConfig) error {
-		c.ListenAddr = fmt.Sprintf("%s:%d", b.whisperListenAddr, b.whisperListenPort)
+		c.ListenAddr = fmt.Sprintf("%s:%d", b.wakuListenAddr, b.wakuListenPort)
+		return nil
+	}
+}
+
+func (b *Bstatus) withNodeName() params.Option {
+	return func(c *params.NodeConfig) error {
+		// To make it different from Statusd and StatusIM nodes
+		c.Name = "StatusBridge"
+		return nil
+	}
+}
+
+func (b *Bstatus) withWakuEnabled() params.Option {
+	return func(c *params.NodeConfig) error {
+		// Disable Whisper
+		c.WhisperConfig.Enabled = false
+		// Enable Waku
+		c.WakuConfig.Enabled = true
 		return nil
 	}
 }
