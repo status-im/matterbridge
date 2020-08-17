@@ -261,16 +261,16 @@ func (b *Bstatus) checkEnsNamesLoop() {
 }
 
 func (b *Bstatus) propagateMessage(msg *status.Message) {
-	pubKey := publicKeyToHex(msg.SigPubKey)
 	var username string
+	var err error
 	// Contact can have an ENS Name, but needs to be verified
-	contact, err := b.messenger.GetContactByID(pubKey)
-	if err != nil {
-		b.Log.WithError(err).Error("Not yet verified contact:", pubKey)
-		username, err = alias.GenerateFromPublicKeyString(pubKey)
+	contact := b.messenger.GetContactByID(msg.From)
+	if contact == nil {
+		b.Log.Error("Not yet verified contact:", msg.From)
+		username, err = alias.GenerateFromPublicKeyString(msg.From)
 		if err != nil { // fallback to full public key
 			b.Log.WithError(err).Error("Failed to generate Chat name")
-			username = pubKey
+			username = msg.From
 		}
 	} else if contact.ENSVerified { // trim our domain for brevity
 		username = strings.TrimSuffix(contact.Name, ".stateofus.eth")
@@ -285,7 +285,7 @@ func (b *Bstatus) propagateMessage(msg *status.Message) {
 	b.Remote <- config.Message{
 		Timestamp: time.Unix(int64(msg.WhisperTimestamp), 0),
 		Username:  username,
-		UserID:    pubKey,
+		UserID:    msg.From,
 		Text:      msg.Text,
 		Channel:   msg.ChatId,
 		ID:        fmt.Sprintf("%#x", msg.ID),
@@ -296,7 +296,7 @@ func (b *Bstatus) propagateMessage(msg *status.Message) {
 // skipStatusMessage defines which Status messages can be ignored
 func (b *Bstatus) skipStatusMessage(msg *status.Message) bool {
 	// skip messages from ourselves
-	if isPubKeyEqual(msg.SigPubKey, &b.privateKey.PublicKey) {
+	if msg.From == publicKeyToHex(&b.privateKey.PublicKey) {
 		return true
 	}
 
