@@ -8,10 +8,12 @@ require (
 	github.com/Rhymen/go-whatsapp v0.1.1-0.20200818115958-f07a700b9819
 	github.com/d5/tengo/v2 v2.6.0
 	github.com/davecgh/go-spew v1.1.1
+	github.com/ethereum/go-ethereum v1.9.5
 	github.com/fsnotify/fsnotify v1.4.9
 	github.com/go-telegram-bot-api/telegram-bot-api v1.0.1-0.20200524105306-7434b0456e81
 	github.com/gomarkdown/markdown v0.0.0-20200824053859-8c8b3816f167
 	github.com/google/gops v0.3.11
+	github.com/google/uuid v1.1.1
 	github.com/gopackage/ddp v0.0.0-20170117053602-652027933df4 // indirect
 	github.com/gorilla/schema v1.2.0
 	github.com/gorilla/websocket v1.4.2
@@ -35,6 +37,7 @@ require (
 	github.com/mrexodia/wray v0.0.0-20160318003008-78a2c1f284ff // indirect
 	github.com/nelsonken/gomf v0.0.0-20180504123937-a9dd2f9deae9
 	github.com/paulrosania/go-charset v0.0.0-20190326053356-55c9d7a5834c
+	github.com/pkg/errors v0.9.1
 	github.com/rs/xid v1.2.1
 	github.com/russross/blackfriday v1.5.2
 	github.com/saintfish/chardet v0.0.0-20120816061221-3af4cd4741ca
@@ -42,18 +45,21 @@ require (
 	github.com/sirupsen/logrus v1.6.0
 	github.com/slack-go/slack v0.6.6
 	github.com/spf13/viper v1.7.1
-	github.com/status-im/status-go v0.56.10 // indirect
+	github.com/status-im/status-go v0.56.10
 	github.com/stretchr/testify v1.6.1
 	github.com/vincent-petithory/dataurl v0.0.0-20191104211930-d1553a71de50
 	github.com/writeas/go-strip-markdown v2.0.1+incompatible
 	github.com/x-cray/logrus-prefixed-formatter v0.5.2 // indirect
 	github.com/yaegashi/msgraph.go v0.1.4
 	github.com/zfjagann/golang-ring v0.0.0-20190304061218-d34796e0a6c2
+	go.uber.org/zap v1.15.0
 	golang.org/x/image v0.0.0-20200801110659-972c09e46d76
 	golang.org/x/oauth2 v0.0.0-20200902213428-5d25da1a8d43
 	gomod.garykim.dev/nc-talk v0.1.4
 	gopkg.in/olahol/melody.v1 v1.0.0-20170518105555-d52139073376
 	layeh.com/gumble v0.0.0-20200818122324-146f9205029b
 )
+
+replace github.com/ethereum/go-ethereum v1.9.5 => github.com/status-im/go-ethereum v1.9.5-status.9
 
 go 1.13
