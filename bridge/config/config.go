@@ -48,6 +48,11 @@ type Message struct {
 	Extra     map[string][]interface{}
 }
 
+type OriginalMessageIds struct {
+	ID       string `json:"id"`
+	ParentID string `json:"parent_id"`
+}
+
 func (m Message) ParentNotFound() bool {
 	return m.ParentID == ParentIDNotFound
 }
@@ -94,6 +99,7 @@ type Protocol struct {
 	Charset                string   // irc
 	ClientID               string   // msteams
 	ColorNicks             bool     // only irc for now
+	DataDir                string   // status
 	Debug                  bool     // general
 	DebugLevel             int      // only for irc now
 	DisableWebPagePreview  bool     // telegram
@@ -107,6 +113,8 @@ type Protocol struct {
 	Jid                    string   // xmpp
 	JoinDelay              string   // all protocols
 	Label                  string   // all protocols
+	ListenPort             int      // status
+	ListenAddr             string   // status
 	Login                  string   // mattermost, matrix
 	LogFile                string   // general
 	MediaDownloadBlackList []string
@@ -131,6 +139,7 @@ type Protocol struct {
 	NickServPassword       string     // IRC
 	NicksPerRow            int        // mattermost, slack
 	NoHomeServerSuffix     bool       // matrix
+	NodeConfigFile         string     // status
 	NoSendJoinPart         bool       // all protocols
 	NoTLS                  bool       // mattermost, xmpp
 	Password               string     // IRC,mattermost,XMPP,matrix
@@ -161,7 +170,7 @@ type Protocol struct {
 	Team                   string     // mattermost, keybase
 	TeamID                 string     // msteams
 	TenantID               string     // msteams
-	Token                  string     // gitter, slack, discord, api, matrix
+	Token                  string     // gitter, slack, discord, api, matrix, status
 	Topic                  string     // zulip
 	URL                    string     // mattermost, slack // DEPRECATED
 	UseAPI                 bool       // mattermost, slack
@@ -220,6 +229,7 @@ type BridgeValues struct {
 	Matrix             map[string]Protocol
 	Slack              map[string]Protocol
 	SlackLegacy        map[string]Protocol
+	Status             map[string]Protocol
 	Steam              map[string]Protocol
 	Gitter             map[string]Protocol
 	XMPP               map[string]Protocol
