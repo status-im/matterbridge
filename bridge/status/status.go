@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	stdlog "log"
 	"os"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/storage"
 	"go.uber.org/zap"
+	"golang.org/x/crypto/ssh/terminal"
 	"golang.org/x/exp/slices"
 
 	crypto "github.com/ethereum/go-ethereum/crypto"
@@ -25,6 +27,7 @@ import (
 	"github.com/status-im/status-go/appdatabase"
 	gethbridge "github.com/status-im/status-go/eth-node/bridge/geth"
 	"github.com/status-im/status-go/eth-node/types"
+	"github.com/status-im/status-go/logutils"
 	"github.com/status-im/status-go/multiaccounts"
 	"github.com/status-im/status-go/multiaccounts/accounts"
 	"github.com/status-im/status-go/multiaccounts/settings"
@@ -52,6 +55,7 @@ type Bstatus struct {
 	fetchDone     chan bool
 
 	// node settings
+	debug            bool
 	statusListenPort int
 	statusListenAddr string
 
@@ -74,6 +78,7 @@ func New(cfg *bridge.Config) bridge.Bridger {
 		statusListenAddr:     "0.0.0.0",
 		statusDataDir:        cfg.GetString("DataDir"),
 		statusNodeConfigFile: cfg.GetString("NodeConfigFile"),
+		debug:                cfg.GetBool("Debug"),
 		fetchInterval:        500 * time.Millisecond,
 	}
 }
@@ -296,6 +301,14 @@ func (b *Bstatus) Send(msg config.Message) (string, error) {
 }
 
 func (b *Bstatus) Connect() error {
+	colors := terminal.IsTerminal(int(os.Stdin.Fd()))
+	level := "ERROR"
+	if b.debug {
+		level = "DEBUG"
+	}
+	if err := logutils.OverrideRootLog(true, level, logutils.FileOptions{}, colors); err != nil {
+		stdlog.Fatalf("Error initializing logger: %v", err)
+	}
 	if len(b.statusDataDir) == 0 {
 		b.statusDataDir = os.TempDir() + "/matterbridge-status-data"
 	}
