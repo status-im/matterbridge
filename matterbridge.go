@@ -7,6 +7,9 @@ import (
 	"runtime"
 	"strings"
 
+	"net/http"
+	_ "net/http/pprof"
+
 	"github.com/42wim/matterbridge/bridge/config"
 	"github.com/42wim/matterbridge/gateway"
 	"github.com/42wim/matterbridge/gateway/bridgemap"
@@ -40,6 +43,10 @@ func main() {
 			defer agent.Close()
 		}
 	}
+
+	go func() {
+		http.ListenAndServe("0.0.0.0:6060", nil)
+	}()
 
 	logger.Printf("Running version %s %s", version.Release, version.GitHash)
 	if strings.Contains(version.Release, "-dev") {
