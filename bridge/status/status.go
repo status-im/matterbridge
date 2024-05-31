@@ -99,10 +99,8 @@ func (b *Bstatus) generateNodeConfig() (*params.NodeConfig, error) {
 		return nil, fmt.Errorf("STATUS_BUILD_INFURA_TOKEN env variable not set")
 	}
 
-	createAccRequest := &requests.CreateAccount{
-		WalletSecretsConfig: requests.WalletSecretsConfig{
-			InfuraToken: infuraToken,
-		},
+	createAccRequest := &requests.WalletSecretsConfig{
+		InfuraToken: infuraToken,
 	}
 	config.Networks = api.BuildDefaultNetworks(createAccRequest)
 
@@ -288,7 +286,7 @@ func (b *Bstatus) Send(msg config.Message) (string, error) {
 	b.Log.Debugf("=> Sending message %#v", msg)
 
 	statusMessageToSend := b.toStatusMsg(msg)
-	statusMessageID, err := b.messenger.FindStatusMessageIdForBridgeMessageId(statusMessageToSend.GetBridgeMessage().MessageID)
+	statusMessageID, err := b.messenger.FindStatusMessageIDForBridgeMessageID(statusMessageToSend.GetBridgeMessage().MessageID)
 	if err != nil {
 		return "", errors.Wrap(err, "failed to get status message for bridge message")
 	}
