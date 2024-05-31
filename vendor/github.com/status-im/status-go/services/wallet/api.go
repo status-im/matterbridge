@@ -15,6 +15,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/log"
 	gethrpc "github.com/ethereum/go-ethereum/rpc"
+	"github.com/status-im/status-go/account"
 	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/params"
 	"github.com/status-im/status-go/rpc/network"
@@ -24,6 +25,7 @@ import (
 	wcommon "github.com/status-im/status-go/services/wallet/common"
 	"github.com/status-im/status-go/services/wallet/currency"
 	"github.com/status-im/status-go/services/wallet/history"
+	"github.com/status-im/status-go/services/wallet/router"
 	"github.com/status-im/status-go/services/wallet/thirdparty"
 	"github.com/status-im/status-go/services/wallet/token"
 	"github.com/status-im/status-go/services/wallet/transfer"
@@ -34,7 +36,8 @@ import (
 )
 
 func NewAPI(s *Service) *API {
-	router := NewRouter(s)
+	router := router.NewRouter(s.GetRPCClient(), s.GetTransactor(), s.GetTokenManager(), s.GetMarketManager(), s.GetCollectiblesService(),
+		s.GetCollectiblesManager(), s.GetEnsService(), s.GetStickersService())
 	return &API{s, s.reader, router}
 }
 
@@ -42,7 +45,7 @@ func NewAPI(s *Service) *API {
 type API struct {
 	s      *Service
 	reader *Reader
-	router *Router
+	router *router.Router
 }
 
 func (api *API) StartWallet(ctx context.Context) error {
@@ -341,6 +344,12 @@ func (api *API) GetCollectiblesByUniqueIDAsync(requestID int32, uniqueIDs []thir
 	return nil
 }
 
+func (api *API) FetchCollectionSocialsAsync(contractID thirdparty.ContractID) error {
+	log.Debug("wallet.api.FetchCollectionSocialsAsync", "contractID", contractID)
+
+	return api.s.collectiblesManager.FetchCollectionSocialsAsync(contractID)
+}
+
 func (api *API) GetCollectibleOwnersByContractAddress(ctx context.Context, chainID wcommon.ChainID, contractAddress common.Address) (*thirdparty.CollectibleContractOwnership, error) {
 	log.Debug("call to GetCollectibleOwnersByContractAddress")
 	return api.s.collectiblesManager.FetchCollectibleOwnersByContractAddress(ctx, chainID, contractAddress)
@@ -403,9 +412,9 @@ func (api *API) FetchTokenDetails(ctx context.Context, symbols []string) (map[st
 	return api.s.marketManager.FetchTokenDetails(symbols)
 }
 
-func (api *API) GetSuggestedFees(ctx context.Context, chainID uint64) (*SuggestedFees, error) {
+func (api *API) GetSuggestedFees(ctx context.Context, chainID uint64) (*router.SuggestedFees, error) {
 	log.Debug("call to GetSuggestedFees")
-	return api.s.feesManager.suggestedFees(ctx, chainID)
+	return api.router.GetFeesManager().SuggestedFees(ctx, chainID)
 }
 
 func (api *API) GetEstimatedLatestBlockNumber(ctx context.Context, chainID uint64) (uint64, error) {
@@ -414,27 +423,46 @@ func (api *API) GetEstimatedLatestBlockNumber(ctx context.Context, chainID uint6
 }
 
 // @deprecated
-func (api *API) GetTransactionEstimatedTime(ctx context.Context, chainID uint64, maxFeePerGas *big.Float) (TransactionEstimation, error) {
+func (api *API) GetTransactionEstimatedTime(ctx context.Context, chainID uint64, maxFeePerGas *big.Float) (router.TransactionEstimation, error) {
 	log.Debug("call to getTransactionEstimatedTime")
-	return api.s.feesManager.transactionEstimatedTime(ctx, chainID, maxFeePerGas), nil
+	return api.router.GetFeesManager().TransactionEstimatedTime(ctx, chainID, maxFeePerGas), nil
 }
 
 func (api *API) GetSuggestedRoutes(
 	ctx context.Context,
-	sendType SendType,
+	sendType router.SendType,
 	addrFrom common.Address,
 	addrTo common.Address,
 	amountIn *hexutil.Big,
 	tokenID string,
+	toTokenID string,
 	disabledFromChainIDs,
 	disabledToChaindIDs,
 	preferedChainIDs []uint64,
-	gasFeeMode GasFeeMode,
+	gasFeeMode router.GasFeeMode,
 	fromLockedAmount map[uint64]*hexutil.Big,
-) (*SuggestedRoutes, error) {
+) (*router.SuggestedRoutes, error) {
 	log.Debug("call to GetSuggestedRoutes")
-	return api.router.suggestedRoutes(ctx, sendType, addrFrom, addrTo, amountIn.ToInt(), tokenID, disabledFromChainIDs,
-		disabledToChaindIDs, preferedChainIDs, gasFeeMode, fromLockedAmount)
+
+	testnetMode, err := api.s.accountsDB.GetTestNetworksEnabled()
+	if err != nil {
+		return nil, err
+	}
+
+	return api.router.SuggestedRoutes(ctx, sendType, addrFrom, addrTo, amountIn.ToInt(), tokenID, toTokenID, disabledFromChainIDs,
+		disabledToChaindIDs, preferedChainIDs, gasFeeMode, fromLockedAmount, testnetMode)
+}
+
+func (api *API) GetSuggestedRoutesV2(ctx context.Context, input *router.RouteInputParams) (*router.SuggestedRoutesV2, error) {
+	log.Debug("call to GetSuggestedRoutesV2")
+	testnetMode, err := api.s.accountsDB.GetTestNetworksEnabled()
+	if err != nil {
+		return nil, err
+	}
+
+	input.TestnetMode = testnetMode
+
+	return api.router.SuggestedRoutesV2(ctx, input)
 }
 
 // Generates addresses for the provided paths, response doesn't include `HasActivity` value (if you need it check `GetAddressDetails` function)
@@ -525,7 +553,13 @@ func (api *API) GetAddressDetails(ctx context.Context, chainID uint64, address s
 
 func (api *API) SignMessage(ctx context.Context, message types.HexBytes, address common.Address, password string) (string, error) {
 	log.Debug("[WalletAPI::SignMessage]", "message", message, "address", address)
-	return api.s.transactionManager.SignMessage(message, address, password)
+
+	selectedAccount, err := api.s.gethManager.VerifyAccountPassword(api.s.Config().KeyStoreDir, address.Hex(), password)
+	if err != nil {
+		return "", err
+	}
+
+	return api.s.transactionManager.SignMessage(message, selectedAccount)
 }
 
 func (api *API) BuildTransaction(ctx context.Context, chainID uint64, sendTxArgsJSON string) (response *transfer.TxResponse, err error) {
@@ -573,7 +607,32 @@ func (api *API) SendTransactionWithSignature(ctx context.Context, chainID uint64
 
 func (api *API) CreateMultiTransaction(ctx context.Context, multiTransactionCommand *transfer.MultiTransactionCommand, data []*bridge.TransactionBridge, password string) (*transfer.MultiTransactionCommandResult, error) {
 	log.Debug("[WalletAPI:: CreateMultiTransaction] create multi transaction")
-	return api.s.transactionManager.CreateMultiTransactionFromCommand(ctx, multiTransactionCommand, data, api.router.bridges, password)
+
+	cmd, err := api.s.transactionManager.CreateMultiTransactionFromCommand(ctx, multiTransactionCommand, data)
+	if err != nil {
+		return nil, err
+	}
+
+	if password != "" {
+		selectedAccount, err := api.getVerifiedWalletAccount(multiTransactionCommand.FromAddress.Hex(), password)
+		if err != nil {
+			return nil, err
+		}
+
+		cmdRes, err := api.s.transactionManager.SendTransactions(ctx, cmd, data, api.router.GetBridges(), selectedAccount)
+		if err != nil {
+			return nil, err
+		}
+
+		_, err = api.s.transactionManager.InsertMultiTransaction(cmd)
+		if err != nil {
+			return nil, err
+		}
+
+		return cmdRes, nil
+	}
+
+	return nil, api.s.transactionManager.SendTransactionForSigningToKeycard(ctx, cmd, data, api.router.GetBridges())
 }
 
 func (api *API) ProceedWithTransactionsSignatures(ctx context.Context, signatures map[string]transfer.SignatureDetails) (*transfer.MultiTransactionCommandResult, error) {
@@ -597,10 +656,10 @@ func (api *API) FetchAllCurrencyFormats() (currency.FormatPerSymbol, error) {
 }
 
 // @deprecated replaced by session APIs; see #12120
-func (api *API) FilterActivityAsync(requestID int32, addresses []common.Address, allAddresses bool, chainIDs []wcommon.ChainID, filter activity.Filter, offset int, limit int) error {
-	log.Debug("wallet.api.FilterActivityAsync", "requestID", requestID, "addr.count", len(addresses), "allAddresses", allAddresses, "chainIDs.count", len(chainIDs), "offset", offset, "limit", limit)
+func (api *API) FilterActivityAsync(requestID int32, addresses []common.Address, chainIDs []wcommon.ChainID, filter activity.Filter, offset int, limit int) error {
+	log.Debug("wallet.api.FilterActivityAsync", "requestID", requestID, "addr.count", len(addresses), "chainIDs.count", len(chainIDs), "offset", offset, "limit", limit)
 
-	api.s.activity.FilterActivityAsync(requestID, addresses, allAddresses, chainIDs, filter, offset, limit)
+	api.s.activity.FilterActivityAsync(requestID, addresses, chainIDs, filter, offset, limit)
 	return nil
 }
 
@@ -612,10 +671,10 @@ func (api *API) CancelActivityFilterTask(requestID int32) error {
 	return nil
 }
 
-func (api *API) StartActivityFilterSession(addresses []common.Address, allAddresses bool, chainIDs []wcommon.ChainID, filter activity.Filter, firstPageCount int) (activity.SessionID, error) {
-	log.Debug("wallet.api.StartActivityFilterSession", "addr.count", len(addresses), "allAddresses", allAddresses, "chainIDs.count", len(chainIDs), "firstPageCount", firstPageCount)
+func (api *API) StartActivityFilterSession(addresses []common.Address, chainIDs []wcommon.ChainID, filter activity.Filter, firstPageCount int) (activity.SessionID, error) {
+	log.Debug("wallet.api.StartActivityFilterSession", "addr.count", len(addresses), "chainIDs.count", len(chainIDs), "firstPageCount", firstPageCount)
 
-	return api.s.activity.StartFilterSession(addresses, allAddresses, chainIDs, filter, firstPageCount), nil
+	return api.s.activity.StartFilterSession(addresses, chainIDs, filter, firstPageCount), nil
 }
 
 func (api *API) UpdateActivityFilterForSession(sessionID activity.SessionID, filter activity.Filter, firstPageCount int) error {
@@ -738,4 +797,29 @@ func (api *API) WCAuthRequest(ctx context.Context, address common.Address, authM
 	log.Debug("wallet.api.wc.AuthRequest", "address", address, "authMessage", authMessage)
 
 	return api.s.walletConnect.AuthRequest(address, authMessage)
+}
+
+func (api *API) getVerifiedWalletAccount(address, password string) (*account.SelectedExtKey, error) {
+	exists, err := api.s.accountsDB.AddressExists(types.HexToAddress(address))
+	if err != nil {
+		log.Error("failed to query db for a given address", "address", address, "error", err)
+		return nil, err
+	}
+
+	if !exists {
+		log.Error("failed to get a selected account", "err", transactions.ErrInvalidTxSender)
+		return nil, transactions.ErrAccountDoesntExist
+	}
+
+	keyStoreDir := api.s.Config().KeyStoreDir
+	key, err := api.s.gethManager.VerifyAccountPassword(keyStoreDir, address, password)
+	if err != nil {
+		log.Error("failed to verify account", "account", address, "error", err)
+		return nil, err
+	}
+
+	return &account.SelectedExtKey{
+		Address:    key.Address,
+		AccountKey: key,
+	}, nil
 }

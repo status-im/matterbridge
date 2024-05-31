@@ -4,15 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"runtime"
 	"strings"
+	"unicode/utf8"
 
+	utils "github.com/status-im/status-go/common"
 	"github.com/status-im/status-go/multiaccounts/settings"
 	sociallinkssettings "github.com/status-im/status-go/multiaccounts/settings_social_links"
 	"github.com/status-im/status-go/protocol/encryption/multidevice"
 	"github.com/status-im/status-go/protocol/identity"
-	"github.com/status-im/status-go/protocol/identity/alias"
 	"github.com/status-im/status-go/server"
 )
 
@@ -21,37 +21,9 @@ const (
 	maxSocialLinkTextLength = 24
 )
 
-var ErrInvalidDisplayNameRegExp = errors.New("only letters, numbers, underscores and hyphens allowed")
-var ErrInvalidDisplayNameEthSuffix = errors.New(`usernames ending with "eth" are not allowed`)
-var ErrInvalidDisplayNameNotAllowed = errors.New("name is not allowed")
 var ErrInvalidBioLength = errors.New("invalid bio length")
 var ErrInvalidSocialLinkTextLength = errors.New("invalid social link text length")
 var ErrDisplayNameDupeOfCommunityMember = errors.New("display name duplicates on of community members")
-
-func ValidateDisplayName(displayName *string) error {
-	name := strings.TrimSpace(*displayName)
-	*displayName = name
-
-	if name == "" {
-		return nil
-	}
-
-	// ^[\\w-\\s]{5,24}$ to allow spaces
-	if match, _ := regexp.MatchString("^[\\w-\\s]{5,24}$", name); !match {
-		return ErrInvalidDisplayNameRegExp
-	}
-
-	// .eth should not happen due to the regexp above, but let's keep it here in case the regexp is changed in the future
-	if strings.HasSuffix(name, "_eth") || strings.HasSuffix(name, ".eth") || strings.HasSuffix(name, "-eth") {
-		return ErrInvalidDisplayNameEthSuffix
-	}
-
-	if alias.IsAlias(name) {
-		return ErrInvalidDisplayNameNotAllowed
-	}
-
-	return nil
-}
 
 func (m *Messenger) SetDisplayName(displayName string) error {
 	currDisplayName, err := m.settings.DisplayName()
@@ -59,11 +31,11 @@ func (m *Messenger) SetDisplayName(displayName string) error {
 		return err
 	}
 
-	if currDisplayName == displayName {
+	if utils.IsENSName(displayName) || currDisplayName == displayName {
 		return nil // Do nothing
 	}
 
-	if err = ValidateDisplayName(&displayName); err != nil {
+	if err = utils.ValidateDisplayName(&displayName); err != nil {
 		return err
 	}
 
@@ -106,15 +78,22 @@ func (m *Messenger) SaveSyncDisplayName(displayName string, clock uint64) error 
 		return err
 	}
 
+	preferredName, err := m.settings.GetPreferredUsername()
+	if err != nil {
+		return err
+	}
+
 	preferredNameClock, err := m.settings.GetSettingLastSynced(settings.PreferredName)
 	if err != nil {
 		return err
 	}
 	// When either the display name or preferred name changes, m.account.Name should be updated.
 	// However, a race condition can occur during BackupData, where m.account.Name could be incorrectly updated.
-	// The final value of m.account.Name depending on which backup message(BackedUpProfile/BackedUpSettings) arrives later.
+	// The final value of m.account.Name depends on which backup message(BackedUpProfile/BackedUpSettings) arrives later.
 	// So we should check the clock of the preferred name and only update m.account.Name if it's older than the display name.
-	if preferredNameClock < clock {
+	// Yet even if the preferred name clock is older, but the preferred name was empty, we should still update m.account.Name.
+
+	if preferredNameClock < clock || preferredName == "" {
 		m.account.Name = displayName
 		return m.multiAccounts.SaveAccount(*m.account)
 	}
@@ -122,7 +101,7 @@ func (m *Messenger) SaveSyncDisplayName(displayName string, clock uint64) error 
 }
 
 func ValidateBio(bio *string) error {
-	if len(*bio) > maxBioLength {
+	if utf8.RuneCountInString(*bio) > maxBioLength {
 		return ErrInvalidBioLength
 	}
 	return nil

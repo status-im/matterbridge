@@ -67,10 +67,10 @@ func (m *Messenger) SendContactVerificationRequest(ctx context.Context, contactI
 	}
 
 	rawMessage, err := m.dispatchMessage(ctx, common.RawMessage{
-		LocalChatID:         chat.ID,
-		Payload:             encodedMessage,
-		MessageType:         protobuf.ApplicationMetadataMessage_REQUEST_CONTACT_VERIFICATION,
-		ResendAutomatically: true,
+		LocalChatID: chat.ID,
+		Payload:     encodedMessage,
+		MessageType: protobuf.ApplicationMetadataMessage_REQUEST_CONTACT_VERIFICATION,
+		ResendType:  common.ResendTypeDataSync,
 	})
 
 	if err != nil {
@@ -232,10 +232,10 @@ func (m *Messenger) CancelVerificationRequest(ctx context.Context, id string) (*
 	}
 
 	_, err = m.dispatchMessage(ctx, common.RawMessage{
-		LocalChatID:         chat.ID,
-		Payload:             encodedMessage,
-		MessageType:         protobuf.ApplicationMetadataMessage_CANCEL_CONTACT_VERIFICATION,
-		ResendAutomatically: true,
+		LocalChatID: chat.ID,
+		Payload:     encodedMessage,
+		MessageType: protobuf.ApplicationMetadataMessage_CANCEL_CONTACT_VERIFICATION,
+		ResendType:  common.ResendTypeDataSync,
 	})
 
 	if err != nil {
@@ -323,10 +323,10 @@ func (m *Messenger) AcceptContactVerificationRequest(ctx context.Context, id str
 	}
 
 	rawMessage, err := m.dispatchMessage(ctx, common.RawMessage{
-		LocalChatID:         chat.ID,
-		Payload:             encodedMessage,
-		MessageType:         protobuf.ApplicationMetadataMessage_ACCEPT_CONTACT_VERIFICATION,
-		ResendAutomatically: true,
+		LocalChatID: chat.ID,
+		Payload:     encodedMessage,
+		MessageType: protobuf.ApplicationMetadataMessage_ACCEPT_CONTACT_VERIFICATION,
+		ResendType:  common.ResendTypeDataSync,
 	})
 
 	if err != nil {
@@ -397,12 +397,8 @@ func (m *Messenger) VerifiedTrusted(ctx context.Context, request *requests.Verif
 		return nil, errors.New("must be a mutual contact")
 	}
 
-	err = m.verificationDatabase.SetTrustStatus(contactID, verification.TrustStatusTRUSTED, m.getTimesource().GetCurrentTime())
-	if err != nil {
-		return nil, err
-	}
+	err = m.setTrustStatusForContact(context.Background(), contactID, verification.TrustStatusTRUSTED)
 
-	err = m.SyncTrustedUser(context.Background(), contactID, verification.TrustStatusTRUSTED, m.dispatchMessage)
 	if err != nil {
 		return nil, err
 	}
@@ -507,24 +503,12 @@ func (m *Messenger) VerifiedUntrustworthy(ctx context.Context, request *requests
 
 	contactID := notification.ReplyMessage.From
 
-	contact, ok := m.allContacts.Load(contactID)
-	if !ok || !contact.mutual() {
-		return nil, errors.New("must be a mutual contact")
-	}
-
-	err = m.verificationDatabase.SetTrustStatus(contactID, verification.TrustStatusUNTRUSTWORTHY, m.getTimesource().GetCurrentTime())
+	err = m.setTrustStatusForContact(context.Background(), contactID, verification.TrustStatusUNTRUSTWORTHY)
 	if err != nil {
 		return nil, err
 	}
 
-	err = m.SyncTrustedUser(context.Background(), contactID, verification.TrustStatusUNTRUSTWORTHY, m.dispatchMessage)
-	if err != nil {
-		return nil, err
-	}
-
-	contact.VerificationStatus = VerificationStatusVERIFIED
-	contact.LastUpdatedLocally = m.getTimesource().GetCurrentTime()
-	err = m.persistence.SaveContact(contact, nil)
+	contact, err := m.setContactVerificationStatus(contactID, VerificationStatusVERIFIED)
 	if err != nil {
 		return nil, err
 	}
@@ -558,18 +542,6 @@ func (m *Messenger) VerifiedUntrustworthy(ctx context.Context, request *requests
 	}
 
 	err = m.SyncVerificationRequest(context.Background(), verifRequest, m.dispatchMessage)
-	if err != nil {
-		return nil, err
-	}
-
-	// We sync the contact with the other devices
-	err = m.syncContact(context.Background(), contact, m.dispatchMessage)
-	if err != nil {
-		return nil, err
-	}
-
-	// Dispatch profile message to remove a contact from the encrypted profile part
-	err = m.DispatchProfileShowcase()
 	if err != nil {
 		return nil, err
 	}
@@ -619,6 +591,12 @@ func (m *Messenger) DeclineContactVerificationRequest(ctx context.Context, id st
 	if !ok || !contact.mutual() {
 		return nil, errors.New("must be a mutual contact")
 	}
+	contactID := verifRequest.From
+	contact, err = m.setContactVerificationStatus(contactID, VerificationStatusVERIFIED)
+
+	if err != nil {
+		return nil, err
+	}
 
 	if verifRequest == nil {
 		return nil, errors.New("no contact verification found")
@@ -665,10 +643,10 @@ func (m *Messenger) DeclineContactVerificationRequest(ctx context.Context, id st
 	}
 
 	_, err = m.dispatchMessage(ctx, common.RawMessage{
-		LocalChatID:         chat.ID,
-		Payload:             encodedMessage,
-		MessageType:         protobuf.ApplicationMetadataMessage_DECLINE_CONTACT_VERIFICATION,
-		ResendAutomatically: true,
+		LocalChatID: chat.ID,
+		Payload:     encodedMessage,
+		MessageType: protobuf.ApplicationMetadataMessage_DECLINE_CONTACT_VERIFICATION,
+		ResendType:  common.ResendTypeDataSync,
 	})
 
 	if err != nil {
@@ -705,37 +683,74 @@ func (m *Messenger) DeclineContactVerificationRequest(ctx context.Context, id st
 	return response, nil
 }
 
-func (m *Messenger) MarkAsTrusted(ctx context.Context, contactID string) error {
-	err := m.verificationDatabase.SetTrustStatus(contactID, verification.TrustStatusTRUSTED, m.getTimesource().GetCurrentTime())
+func (m *Messenger) setContactVerificationStatus(contactID string, verificationStatus VerificationStatus) (*Contact, error) {
+	contact, ok := m.allContacts.Load(contactID)
+	if !ok || !contact.mutual() {
+		return nil, errors.New("must be a mutual contact")
+	}
+
+	contact.VerificationStatus = verificationStatus
+	contact.LastUpdatedLocally = m.getTimesource().GetCurrentTime()
+
+	err := m.persistence.SaveContact(contact, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	err = m.syncContact(context.Background(), contact, m.dispatchMessage)
+	if err != nil {
+		return nil, err
+	}
+
+	m.allContacts.Store(contact.ID, contact)
+
+	// Dispatch profile message to save a contact to the encrypted profile part
+	err = m.DispatchProfileShowcase()
+	if err != nil {
+		return nil, err
+	}
+
+	return contact, nil
+}
+
+func (m *Messenger) setTrustStatusForContact(ctx context.Context, contactID string, trustStatus verification.TrustStatus) error {
+	currentTime := m.getTimesource().GetCurrentTime()
+
+	err := m.verificationDatabase.SetTrustStatus(contactID, trustStatus, currentTime)
 	if err != nil {
 		return err
 	}
 
-	return m.SyncTrustedUser(ctx, contactID, verification.TrustStatusTRUSTED, m.dispatchMessage)
+	return m.SyncTrustedUser(ctx, contactID, trustStatus, m.dispatchMessage)
+}
+
+func (m *Messenger) MarkAsTrusted(ctx context.Context, contactID string) error {
+	return m.setTrustStatusForContact(ctx, contactID, verification.TrustStatusTRUSTED)
 }
 
 func (m *Messenger) MarkAsUntrustworthy(ctx context.Context, contactID string) error {
-	err := m.verificationDatabase.SetTrustStatus(contactID, verification.TrustStatusUNTRUSTWORTHY, m.getTimesource().GetCurrentTime())
-	if err != nil {
-		return err
-	}
-
-	return m.SyncTrustedUser(ctx, contactID, verification.TrustStatusUNTRUSTWORTHY, m.dispatchMessage)
+	return m.setTrustStatusForContact(ctx, contactID, verification.TrustStatusUNTRUSTWORTHY)
 }
 
 func (m *Messenger) RemoveTrustStatus(ctx context.Context, contactID string) error {
-	err := m.verificationDatabase.SetTrustStatus(contactID, verification.TrustStatusUNKNOWN, m.getTimesource().GetCurrentTime())
+	return m.setTrustStatusForContact(ctx, contactID, verification.TrustStatusUNKNOWN)
+}
+
+func (m *Messenger) RemoveTrustVerificationStatus(ctx context.Context, contactID string) (*MessengerResponse, error) {
+	err := m.setTrustStatusForContact(ctx, contactID, verification.TrustStatusUNKNOWN)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	// Dispatch profile message to remove a contact from the encrypted profile part
-	err = m.DispatchProfileShowcase()
+	contact, err := m.setContactVerificationStatus(contactID, VerificationStatusUNVERIFIED)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	return m.SyncTrustedUser(ctx, contactID, verification.TrustStatusUNKNOWN, m.dispatchMessage)
+	response := &MessengerResponse{}
+	response.AddContact(contact)
+
+	return response, nil
 }
 
 func (m *Messenger) GetTrustStatus(contactID string) (verification.TrustStatus, error) {

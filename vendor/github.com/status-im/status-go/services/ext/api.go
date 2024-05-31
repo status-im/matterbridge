@@ -19,10 +19,12 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
+
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/images"
 	"github.com/status-im/status-go/mailserver"
+	multiaccountscommon "github.com/status-im/status-go/multiaccounts/common"
 	"github.com/status-im/status-go/multiaccounts/settings"
 	"github.com/status-im/status-go/protocol"
 	"github.com/status-im/status-go/protocol/common"
@@ -408,7 +410,7 @@ func (api *PublicAPI) IsDisplayNameDupeOfCommunityMember(name string) (bool, err
 
 // CommunityTags return the list of possible community tags
 func (api *PublicAPI) CommunityTags(parent context.Context) map[string]string {
-	return requests.TagsEmojies
+	return requests.AvailableTagsEmojis()
 }
 
 // CuratedCommunities returns the list of curated communities stored in the smart contract. If a community is
@@ -969,12 +971,12 @@ func (api *PublicAPI) AcceptRequestTransaction(ctx context.Context, transactionH
 	return api.service.messenger.AcceptRequestTransaction(ctx, transactionHash, messageID, signature)
 }
 
-func (api *PublicAPI) SendContactUpdates(ctx context.Context, name, picture string) error {
-	return api.service.messenger.SendContactUpdates(ctx, name, picture)
+func (api *PublicAPI) SendContactUpdates(ctx context.Context, name, picture string, customizationColor multiaccountscommon.CustomizationColor) error {
+	return api.service.messenger.SendContactUpdates(ctx, name, picture, customizationColor)
 }
 
-func (api *PublicAPI) SendContactUpdate(ctx context.Context, contactID, name, picture string) (*protocol.MessengerResponse, error) {
-	return api.service.messenger.SendContactUpdate(ctx, contactID, name, picture)
+func (api *PublicAPI) SendContactUpdate(ctx context.Context, contactID, name, picture string, customizationColor multiaccountscommon.CustomizationColor) (*protocol.MessengerResponse, error) {
+	return api.service.messenger.SendContactUpdate(ctx, contactID, name, picture, customizationColor)
 }
 
 func (api *PublicAPI) SetDisplayName(ctx context.Context, displayName string) error {
@@ -995,6 +997,10 @@ func (api *PublicAPI) MarkAsUntrustworthy(ctx context.Context, contactID string)
 
 func (api *PublicAPI) RemoveTrustStatus(ctx context.Context, contactID string) error {
 	return api.service.messenger.RemoveTrustStatus(ctx, contactID)
+}
+
+func (api *PublicAPI) RemoveTrustVerificationStatus(ctx context.Context, contactID string) (*protocol.MessengerResponse, error) {
+	return api.service.messenger.RemoveTrustVerificationStatus(ctx, contactID)
 }
 
 func (api *PublicAPI) GetTrustStatus(ctx context.Context, contactID string) (verification.TrustStatus, error) {
@@ -1584,12 +1590,24 @@ func (api *PublicAPI) CheckPermissionsToJoinCommunity(request *requests.CheckPer
 	return api.service.messenger.CheckPermissionsToJoinCommunity(request)
 }
 
+func (api *PublicAPI) CheckPermissionsToJoinCommunityLight(request *requests.CheckPermissionToJoinCommunity) (bool, error) {
+	return api.service.messenger.CheckPermissionsToJoinCommunityLight(request)
+}
+
 func (api *PublicAPI) CheckCommunityChannelPermissions(request *requests.CheckCommunityChannelPermissions) (*communities.CheckChannelPermissionsResponse, error) {
 	return api.service.messenger.CheckCommunityChannelPermissions(request)
 }
 
+func (api *PublicAPI) CheckCommunityChannelPermissionsLight(request *requests.CheckCommunityChannelPermissions) (*communities.CheckChannelPermissionsResponse, error) {
+	return api.service.messenger.CheckCommunityChannelPermissionsLight(request)
+}
+
 func (api *PublicAPI) CheckAllCommunityChannelsPermissions(request *requests.CheckAllCommunityChannelsPermissions) (*communities.CheckAllChannelsPermissionsResponse, error) {
 	return api.service.messenger.CheckAllCommunityChannelsPermissions(request)
+}
+
+func (api *PublicAPI) CheckAllCommunityChannelsPermissionsLight(request *requests.CheckAllCommunityChannelsPermissions) (*communities.CheckAllChannelsPermissionsResponse, error) {
+	return api.service.messenger.CheckAllCommunityChannelsPermissionsLight(request)
 }
 
 func (api *PublicAPI) CollectCommunityMetrics(request *requests.CommunityMetricsRequest) (*protocol.CommunityMetricsResponse, error) {

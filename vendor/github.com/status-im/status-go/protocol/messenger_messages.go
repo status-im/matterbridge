@@ -33,7 +33,7 @@ func (m *Messenger) EditMessage(ctx context.Context, request *requests.EditMessa
 		return nil, ErrInvalidEditOrDeleteAuthor
 	}
 
-	if message.ContentType != protobuf.ChatMessage_TEXT_PLAIN && message.ContentType != protobuf.ChatMessage_EMOJI && message.ContentType != protobuf.ChatMessage_IMAGE {
+	if message.ContentType != protobuf.ChatMessage_TEXT_PLAIN && message.ContentType != protobuf.ChatMessage_EMOJI && message.ContentType != protobuf.ChatMessage_IMAGE && message.ContentType != protobuf.ChatMessage_BRIDGE_MESSAGE {
 		return nil, ErrInvalidEditContentType
 	}
 
@@ -102,12 +102,16 @@ func (m *Messenger) EditMessage(ctx context.Context, request *requests.EditMessa
 			return nil, err
 		}
 
+		resendType := common.ResendTypeRawMessage
+		if chat.ChatType == ChatTypeOneToOne {
+			resendType = common.ResendTypeDataSync
+		}
 		rawMessage := common.RawMessage{
 			LocalChatID:          chat.ID,
 			Payload:              encodedMessage,
 			MessageType:          protobuf.ApplicationMetadataMessage_EDIT_MESSAGE,
 			SkipGroupMessageWrap: true,
-			ResendAutomatically:  true,
+			ResendType:           resendType,
 		}
 		_, err = m.dispatchMessage(ctx, rawMessage)
 		if err != nil {
@@ -231,7 +235,7 @@ func (m *Messenger) DeleteMessageAndSend(ctx context.Context, messageID string) 
 		Payload:              encodedMessage,
 		MessageType:          protobuf.ApplicationMetadataMessage_DELETE_MESSAGE,
 		SkipGroupMessageWrap: true,
-		ResendAutomatically:  true,
+		ResendType:           chat.DefaultResendType(),
 	}
 
 	_, err = m.dispatchMessage(ctx, rawMessage)
@@ -350,10 +354,10 @@ func (m *Messenger) DeleteMessageForMeAndSync(ctx context.Context, localChatID s
 			}
 
 			rawMessage := common.RawMessage{
-				LocalChatID:         chatID,
-				Payload:             encodedMessage,
-				MessageType:         protobuf.ApplicationMetadataMessage_SYNC_DELETE_FOR_ME_MESSAGE,
-				ResendAutomatically: true,
+				LocalChatID: chatID,
+				Payload:     encodedMessage,
+				MessageType: protobuf.ApplicationMetadataMessage_SYNC_DELETE_FOR_ME_MESSAGE,
+				ResendType:  common.ResendTypeDataSync,
 			}
 			_, err2 = m.dispatchMessage(ctx, rawMessage)
 			return err2
@@ -373,7 +377,13 @@ func (m *Messenger) applyEditMessage(editMessage *protobuf.EditMessage, message 
 	if err := ValidateText(editMessage.Text); err != nil {
 		return err
 	}
-	message.Text = editMessage.Text
+
+	if editMessage.ContentType != protobuf.ChatMessage_BRIDGE_MESSAGE {
+		message.Text = editMessage.Text
+	} else {
+		message.GetBridgeMessage().Content = editMessage.Text
+	}
+
 	message.EditedAt = editMessage.Clock
 	message.UnfurledLinks = editMessage.UnfurledLinks
 	message.UnfurledStatusLinks = editMessage.UnfurledStatusLinks

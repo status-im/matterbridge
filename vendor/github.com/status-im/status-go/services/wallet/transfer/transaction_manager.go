@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"math/big"
+	"time"
 
 	ethTypes "github.com/ethereum/go-ethereum/core/types"
 
@@ -17,13 +18,7 @@ import (
 	"github.com/status-im/status-go/params"
 	"github.com/status-im/status-go/services/wallet/bridge"
 	wallet_common "github.com/status-im/status-go/services/wallet/common"
-	"github.com/status-im/status-go/services/wallet/walletevent"
 	"github.com/status-im/status-go/transactions"
-)
-
-const (
-	// EventMTTransactionUpdate is emitted when a multi-transaction is updated (added or deleted)
-	EventMTTransactionUpdate walletevent.EventType = "multi-transaction-update"
 )
 
 type SignatureDetails struct {
@@ -134,13 +129,31 @@ type TxResponse struct {
 	TxHash        common.Hash             `json:"txHash,omitempty"`
 }
 
-func (tm *TransactionManager) SignMessage(message types.HexBytes, address common.Address, password string) (string, error) {
-	selectedAccount, err := tm.gethManager.VerifyAccountPassword(tm.config.KeyStoreDir, address.Hex(), password)
-	if err != nil {
-		return "", err
+func NewMultiTransaction(timestamp uint64, fromNetworkID, toNetworkID uint64, fromTxHash, toTxHash common.Hash, fromAddress, toAddress common.Address, fromAsset, toAsset string, fromAmount, toAmount *hexutil.Big, txType MultiTransactionType, crossTxID string) *MultiTransaction {
+	if timestamp == 0 {
+		timestamp = uint64(time.Now().Unix())
 	}
 
-	signature, err := crypto.Sign(message[:], selectedAccount.PrivateKey)
+	return &MultiTransaction{
+		ID:            multiTransactionIDGenerator(),
+		Timestamp:     timestamp,
+		FromNetworkID: fromNetworkID,
+		ToNetworkID:   toNetworkID,
+		FromTxHash:    fromTxHash,
+		ToTxHash:      toTxHash,
+		FromAddress:   fromAddress,
+		ToAddress:     toAddress,
+		FromAsset:     fromAsset,
+		ToAsset:       toAsset,
+		FromAmount:    fromAmount,
+		ToAmount:      toAmount,
+		Type:          txType,
+		CrossTxID:     crossTxID,
+	}
+}
+
+func (tm *TransactionManager) SignMessage(message types.HexBytes, account *types.Key) (string, error) {
+	signature, err := crypto.Sign(message[:], account.PrivateKey)
 
 	return types.EncodeHex(signature), err
 }

@@ -343,14 +343,16 @@ func (tm *PendingTxTracker) emitNotifications(chainID common.ChainID, changes []
 }
 
 // PendingTransaction called with autoDelete = false will keep the transaction in the database until it is confirmed by the caller using Delete
-func (tm *PendingTxTracker) TrackPendingTransaction(chainID common.ChainID, hash eth.Hash, from eth.Address, trType PendingTrxType, autoDelete AutoDeleteType) error {
+func (tm *PendingTxTracker) TrackPendingTransaction(chainID common.ChainID, hash eth.Hash, from eth.Address, to eth.Address, trType PendingTrxType, autoDelete AutoDeleteType, additionalData string) error {
 	err := tm.addPending(&PendingTransaction{
-		ChainID:    chainID,
-		Hash:       hash,
-		From:       from,
-		Timestamp:  uint64(time.Now().Unix()),
-		Type:       trType,
-		AutoDelete: &autoDelete,
+		ChainID:        chainID,
+		Hash:           hash,
+		From:           from,
+		To:             to,
+		Timestamp:      uint64(time.Now().Unix()),
+		Type:           trType,
+		AutoDelete:     &autoDelete,
+		AdditionalData: additionalData,
 	})
 	if err != nil {
 		return err
@@ -523,7 +525,7 @@ func (tm *PendingTxTracker) GetPendingEntry(chainID common.ChainID, hash eth.Has
 	return trs[0], nil
 }
 
-func (tm *PendingTxTracker) GetPendingTxForSuggestedNonce(chainID common.ChainID, address eth.Address, nonce uint64) (pendingTx uint64, err error) {
+func (tm *PendingTxTracker) CountPendingTxsFromNonce(chainID common.ChainID, address eth.Address, nonce uint64) (pendingTx uint64, err error) {
 	err = tm.db.QueryRow(`
 		SELECT
 			COUNT(nonce)
@@ -603,7 +605,8 @@ func (tm *PendingTxTracker) addPending(transaction *PendingTransaction) error {
 	}
 
 	// TODO: maybe we should think of making (network_id, from_address, nonce) as primary key instead (network_id, hash) ????
-	insert, err := tx.Prepare(`INSERT OR REPLACE INTO pending_transactions
+	var insert *sql.Stmt
+	insert, err = tx.Prepare(`INSERT OR REPLACE INTO pending_transactions
                                       (network_id, hash, timestamp, value, from_address, to_address,
                                        data, symbol, gas_price, gas_limit, type, additional_data, multi_transaction_id, status,
 																			 auto_delete, nonce)

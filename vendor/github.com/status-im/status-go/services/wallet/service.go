@@ -102,7 +102,8 @@ func NewService(
 
 	communityManager := community.NewManager(db, mediaServer, feed)
 	balanceCacher := balance.NewCacherWithTTL(5 * time.Minute)
-	tokenManager := token.NewTokenManager(db, rpcClient, communityManager, rpcClient.NetworkManager, appDB, mediaServer, feed)
+	tokenManager := token.NewTokenManager(db, rpcClient, communityManager, rpcClient.NetworkManager, appDB, mediaServer, feed, accountFeed, accountsDB)
+	tokenManager.Start()
 	savedAddressesManager := &SavedAddressesManager{db: db}
 	transactionManager := transfer.NewTransactionManager(db, gethManager, transactor, config, accountsDB, pendingTxManager, feed)
 	blockChainState := blockchainstate.NewBlockChainState()
@@ -113,7 +114,7 @@ func NewService(
 	coingecko := coingecko.NewClient()
 	marketManager := market.NewManager(cryptoCompare, coingecko, feed)
 	reader := NewReader(rpcClient, tokenManager, marketManager, communityManager, accountsDB, NewPersistence(db), feed)
-	history := history.NewService(db, accountsDB, feed, rpcClient, tokenManager, marketManager, balanceCacher.Cache())
+	history := history.NewService(db, accountsDB, accountFeed, feed, rpcClient, tokenManager, marketManager, balanceCacher.Cache())
 	currency := currency.NewService(db, feed, tokenManager, marketManager)
 
 	openseaHTTPClient := opensea.NewHTTPClient()
@@ -167,7 +168,7 @@ func NewService(
 	)
 	collectibles := collectibles.NewService(db, feed, accountsDB, accountFeed, settingsFeed, communityManager, rpcClient.NetworkManager, collectiblesManager)
 
-	activity := activity.NewService(db, tokenManager, collectiblesManager, feed, pendingTxManager)
+	activity := activity.NewService(db, accountsDB, tokenManager, collectiblesManager, feed, pendingTxManager)
 
 	walletconnect := walletconnect.NewService(db, rpcClient.NetworkManager, accountsDB, transactionManager, gethManager, feed, config)
 
@@ -184,7 +185,6 @@ func NewService(
 		cryptoOnRampManager:   cryptoOnRampManager,
 		collectiblesManager:   collectiblesManager,
 		collectibles:          collectibles,
-		feesManager:           &FeeManager{rpcClient},
 		gethManager:           gethManager,
 		marketManager:         marketManager,
 		transactor:            transactor,
@@ -200,6 +200,7 @@ func NewService(
 		blockChainState:       blockChainState,
 		keycardPairings:       NewKeycardPairings(),
 		walletConnect:         walletconnect,
+		config:                config,
 	}
 }
 
@@ -215,7 +216,6 @@ type Service struct {
 	pendingTxManager      *transactions.PendingTxTracker
 	cryptoOnRampManager   *CryptoOnRampManager
 	transferController    *transfer.Controller
-	feesManager           *FeeManager
 	marketManager         *market.Manager
 	started               bool
 	collectiblesManager   *collectibles.Manager
@@ -234,6 +234,7 @@ type Service struct {
 	blockChainState       *blockchainstate.BlockChainState
 	keycardPairings       *KeycardPairings
 	walletConnect         *walletconnect.Service
+	config                *params.NodeConfig
 }
 
 // Start signals transmitter.
@@ -262,6 +263,7 @@ func (s *Service) Stop() error {
 	s.history.Stop()
 	s.activity.Stop()
 	s.collectibles.Stop()
+	s.tokenManager.Stop()
 	s.started = false
 	log.Info("wallet stopped")
 	return nil
@@ -290,4 +292,40 @@ func (s *Service) IsStarted() bool {
 
 func (s *Service) KeycardPairings() *KeycardPairings {
 	return s.keycardPairings
+}
+
+func (s *Service) Config() *params.NodeConfig {
+	return s.config
+}
+
+func (s *Service) GetRPCClient() *rpc.Client {
+	return s.rpcClient
+}
+
+func (s *Service) GetTransactor() *transactions.Transactor {
+	return s.transactor
+}
+
+func (s *Service) GetTokenManager() *token.Manager {
+	return s.tokenManager
+}
+
+func (s *Service) GetMarketManager() *market.Manager {
+	return s.marketManager
+}
+
+func (s *Service) GetCollectiblesService() *collectibles.Service {
+	return s.collectibles
+}
+
+func (s *Service) GetCollectiblesManager() *collectibles.Manager {
+	return s.collectiblesManager
+}
+
+func (s *Service) GetEnsService() *ens.Service {
+	return s.ens
+}
+
+func (s *Service) GetStickersService() *stickers.Service {
+	return s.stickers
 }

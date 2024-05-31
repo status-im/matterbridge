@@ -44,7 +44,7 @@ func getBaseURL(chainID walletCommon.ChainID) (string, error) {
 	switch uint64(chainID) {
 	case walletCommon.EthereumMainnet, walletCommon.ArbitrumMainnet:
 		return "https://api.rarible.org", nil
-	case walletCommon.ArbitrumSepolia:
+	case walletCommon.EthereumSepolia, walletCommon.ArbitrumSepolia:
 		return "https://testnet-api.rarible.org", nil
 	}
 
@@ -388,6 +388,10 @@ func (o *Client) FetchAssetsByCollectibleUniqueID(ctx context.Context, uniqueIDs
 	}
 
 	return ret, nil
+}
+
+func (o *Client) FetchCollectionSocials(ctx context.Context, contractID thirdparty.ContractID) (*thirdparty.CollectionSocials, error) {
+	return nil, thirdparty.ErrEndpointNotSupported
 }
 
 func (o *Client) FetchCollectionsDataByContractID(ctx context.Context, contractIDs []thirdparty.ContractID) ([]thirdparty.CollectionData, error) {

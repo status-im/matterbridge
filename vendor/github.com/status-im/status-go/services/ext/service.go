@@ -603,6 +603,7 @@ func (s *Service) FillCollectibleMetadata(community *communities.Community, coll
 	collectible.CollectibleData.Description = tokenMetadata.GetDescription()
 	collectible.CollectibleData.ImagePayload = imagePayload
 	collectible.CollectibleData.Traits = getCollectibleCommunityTraits(communityToken)
+	collectible.CollectibleData.Soulbound = !communityToken.Transferable
 
 	if collectible.CollectionData == nil {
 		collectible.CollectionData = &thirdparty.CollectionData{
@@ -657,11 +658,6 @@ func (s *Service) fetchCommunityFromStoreNodes(communityID string) (*communities
 		return nil, err
 	}
 	return community, nil
-}
-
-func (s *Service) GetCommunityInfoFromDB(communityID string) (*thirdparty.CommunityInfo, error) {
-	community, err := s.messenger.FindCommunityInfoFromDB(communityID)
-	return communityToInfo(community), err
 }
 
 // Fetch latest community from store nodes.

@@ -70,7 +70,10 @@ func (db RawMessagesPersistence) SaveRawMessage(message *RawMessage) error {
 			message.Sent = oldMessage.Sent
 		}
 	}
-
+	var sender []byte
+	if message.Sender != nil {
+		sender = crypto.FromECDSA(message.Sender)
+	}
 	_, err = tx.Exec(`
 		 INSERT INTO
 		 raw_messages
@@ -81,28 +84,41 @@ func (db RawMessagesPersistence) SaveRawMessage(message *RawMessage) error {
 		   send_count,
 		   sent,
 		   message_type,
-		   resend_automatically,
 		   recipients,
 		   skip_encryption,
-	           send_push_notification,
+	       send_push_notification,
 		   skip_group_message_wrap,
 		   send_on_personal_topic,
-		   payload
+		   payload,
+		   sender,
+		   community_id,
+		   resend_type,
+		   pubsub_topic,
+		   hash_ratchet_group_id,
+		   community_key_ex_msg_type,
+		   resend_method
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		message.ID,
 		message.LocalChatID,
 		message.LastSent,
 		message.SendCount,
 		message.Sent,
 		message.MessageType,
-		message.ResendAutomatically,
 		encodedRecipients.Bytes(),
 		message.SkipEncryptionLayer,
 		message.SendPushNotification,
 		message.SkipGroupMessageWrap,
 		message.SendOnPersonalTopic,
-		message.Payload)
+		message.Payload,
+		sender,
+		message.CommunityID,
+		message.ResendType,
+		message.PubsubTopic,
+		message.HashRatchetGroupID,
+		message.CommunityKeyExMsgType,
+		message.ResendMethod,
+	)
 	return err
 }
 
@@ -126,8 +142,8 @@ func (db RawMessagesPersistence) RawMessageByID(id string) (*RawMessage, error) 
 func (db RawMessagesPersistence) rawMessageByID(tx *sql.Tx, id string) (*RawMessage, error) {
 	var rawPubKeys [][]byte
 	var encodedRecipients []byte
-	var skipGroupMessageWrap sql.NullBool
-	var sendOnPersonalTopic sql.NullBool
+	var skipGroupMessageWrap, sendOnPersonalTopic sql.NullBool
+	var sender []byte
 	message := &RawMessage{}
 
 	err := tx.QueryRow(`
@@ -138,13 +154,19 @@ func (db RawMessagesPersistence) rawMessageByID(tx *sql.Tx, id string) (*RawMess
 			  send_count,
 			  sent,
 			  message_type,
-			  resend_automatically,
 			  recipients,
 			  skip_encryption,
-		          send_push_notification,
+		      send_push_notification,
 			  skip_group_message_wrap,
 			  send_on_personal_topic,
-		          payload
+		      payload,
+			  sender,
+			  community_id,
+			  resend_type,
+			  pubsub_topic,
+			  hash_ratchet_group_id,
+			  community_key_ex_msg_type,
+			  resend_method
 			FROM
 				raw_messages
 			WHERE
@@ -157,19 +179,25 @@ func (db RawMessagesPersistence) rawMessageByID(tx *sql.Tx, id string) (*RawMess
 		&message.SendCount,
 		&message.Sent,
 		&message.MessageType,
-		&message.ResendAutomatically,
 		&encodedRecipients,
 		&message.SkipEncryptionLayer,
 		&message.SendPushNotification,
 		&skipGroupMessageWrap,
 		&sendOnPersonalTopic,
 		&message.Payload,
+		&sender,
+		&message.CommunityID,
+		&message.ResendType,
+		&message.PubsubTopic,
+		&message.HashRatchetGroupID,
+		&message.CommunityKeyExMsgType,
+		&message.ResendMethod,
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	if rawPubKeys != nil {
+	if encodedRecipients != nil {
 		// Restore recipients
 		decoder := gob.NewDecoder(bytes.NewBuffer(encodedRecipients))
 		err = decoder.Decode(&rawPubKeys)
@@ -177,7 +205,7 @@ func (db RawMessagesPersistence) rawMessageByID(tx *sql.Tx, id string) (*RawMess
 			return nil, err
 		}
 		for _, pkBytes := range rawPubKeys {
-			pubkey, err := crypto.UnmarshalPubkey(pkBytes)
+			pubkey, err := crypto.DecompressPubkey(pkBytes)
 			if err != nil {
 				return nil, err
 			}
@@ -193,6 +221,12 @@ func (db RawMessagesPersistence) rawMessageByID(tx *sql.Tx, id string) (*RawMess
 		message.SendOnPersonalTopic = sendOnPersonalTopic.Bool
 	}
 
+	if sender != nil {
+		message.Sender, err = crypto.ToECDSA(sender)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return message, nil
 }
 
@@ -338,6 +372,11 @@ func (db RawMessagesPersistence) DeleteHashRatchetMessages(ids [][]byte) error {
 	return err
 }
 
+func (db *RawMessagesPersistence) DeleteHashRatchetMessagesOlderThan(timestamp int64) error {
+	_, err := db.db.Exec("DELETE FROM hash_ratchet_encrypted_messages WHERE timestamp < ?", timestamp)
+	return err
+}
+
 func (db *RawMessagesPersistence) IsMessageAlreadyCompleted(hash []byte) (bool, error) {
 	var alreadyCompleted int
 	err := db.db.QueryRow("SELECT COUNT(*) FROM message_segments_completed WHERE hash = ?", hash).Scan(&alreadyCompleted)
@@ -347,33 +386,46 @@ func (db *RawMessagesPersistence) IsMessageAlreadyCompleted(hash []byte) (bool, 
 	return alreadyCompleted > 0, nil
 }
 
-func (db *RawMessagesPersistence) SaveMessageSegment(segment *protobuf.SegmentMessage, sigPubKey *ecdsa.PublicKey, timestamp int64) error {
+func (db *RawMessagesPersistence) SaveMessageSegment(segment *SegmentMessage, sigPubKey *ecdsa.PublicKey, timestamp int64) error {
 	sigPubKeyBlob := crypto.CompressPubkey(sigPubKey)
 
-	_, err := db.db.Exec("INSERT INTO message_segments (hash, segment_index, segments_count, sig_pub_key, payload, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
-		segment.EntireMessageHash, segment.Index, segment.SegmentsCount, sigPubKeyBlob, segment.Payload, timestamp)
+	_, err := db.db.Exec("INSERT INTO message_segments (hash, segment_index, segments_count, parity_segment_index, parity_segments_count, sig_pub_key, payload, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		segment.EntireMessageHash, segment.Index, segment.SegmentsCount, segment.ParitySegmentIndex, segment.ParitySegmentsCount, sigPubKeyBlob, segment.Payload, timestamp)
 
 	return err
 }
 
 // Get ordered message segments for given hash
-func (db *RawMessagesPersistence) GetMessageSegments(hash []byte, sigPubKey *ecdsa.PublicKey) ([]*protobuf.SegmentMessage, error) {
+func (db *RawMessagesPersistence) GetMessageSegments(hash []byte, sigPubKey *ecdsa.PublicKey) ([]*SegmentMessage, error) {
 	sigPubKeyBlob := crypto.CompressPubkey(sigPubKey)
 
-	rows, err := db.db.Query("SELECT hash, segment_index, segments_count, payload FROM message_segments WHERE hash = ? AND sig_pub_key = ? ORDER BY segment_index", hash, sigPubKeyBlob)
+	rows, err := db.db.Query(`
+		SELECT
+			hash, segment_index, segments_count, parity_segment_index, parity_segments_count, payload
+		FROM
+			message_segments
+		WHERE
+			hash = ? AND sig_pub_key = ?
+		ORDER BY
+			(segments_count = 0) ASC, -- Prioritize segments_count > 0
+			segment_index ASC,
+			parity_segment_index ASC`,
+		hash, sigPubKeyBlob)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var segments []*protobuf.SegmentMessage
+	var segments []*SegmentMessage
 	for rows.Next() {
-		var segment protobuf.SegmentMessage
-		err := rows.Scan(&segment.EntireMessageHash, &segment.Index, &segment.SegmentsCount, &segment.Payload)
+		segment := &SegmentMessage{
+			SegmentMessage: &protobuf.SegmentMessage{},
+		}
+		err := rows.Scan(&segment.EntireMessageHash, &segment.Index, &segment.SegmentsCount, &segment.ParitySegmentIndex, &segment.ParitySegmentsCount, &segment.Payload)
 		if err != nil {
 			return nil, err
 		}
-		segments = append(segments, &segment)
+		segments = append(segments, segment)
 	}
 	err = rows.Err()
 	if err != nil {
@@ -420,5 +472,10 @@ func (db *RawMessagesPersistence) CompleteMessageSegments(hash []byte, sigPubKey
 
 func (db *RawMessagesPersistence) RemoveMessageSegmentsCompletedOlderThan(timestamp int64) error {
 	_, err := db.db.Exec("DELETE FROM message_segments_completed WHERE timestamp < ?", timestamp)
+	return err
+}
+
+func (db RawMessagesPersistence) UpdateRawMessageSent(id string, sent bool, lastSent uint64) error {
+	_, err := db.db.Exec("UPDATE raw_messages SET sent = ?, last_sent = ? WHERE id = ?", sent, lastSent, id)
 	return err
 }

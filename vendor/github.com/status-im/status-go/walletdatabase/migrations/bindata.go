@@ -24,6 +24,10 @@
 // 1707160323_add_contract_type_table.up.sql (282B)
 // 1708089811_add_nullable_fiesl_blocks_ranges.up.sql (450B)
 // 1710189541_add_nonce_to_pending_transactions.up.sql (54B)
+// 1712567001_add_soulbound_collectible_cache.up.sql (75B)
+// 1714670633_add_id_to_multi_transaction_table.up.sql (1.15kB)
+// 1715637927_add_collection_socials.up.sql (356B)
+// 1715839555_rename_chain_prefixes.up.sql (259B)
 // doc.go (94B)
 
 package migrations
@@ -572,6 +576,86 @@ func _1710189541_add_nonce_to_pending_transactionsUpSql() (*asset, error) {
 	return a, nil
 }
 
+var __1712567001_add_soulbound_collectible_cacheUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x04\xc0\x31\x0e\xc3\x20\x0c\x05\xd0\xab\xfc\x7b\x74\x32\xc5\x4c\x6e\x91\x5a\x98\x11\x18\xa4\x44\xb2\xc2\x10\xb8\x7f\x1e\x49\xe2\x1f\x12\x39\x61\xe8\x34\x1b\xba\xce\x66\xa3\xf4\xba\x6a\xd1\xaa\xc7\x00\x79\x8f\x77\x94\xfc\xf9\xe2\x9e\xdb\xda\xdc\x57\x87\x8b\x51\xe0\x39\x50\x96\x84\x40\xf2\xe7\xd7\x13\x00\x00\xff\xff\x77\x57\xe4\x5f\x4b\x00\x00\x00")
+
+func _1712567001_add_soulbound_collectible_cacheUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1712567001_add_soulbound_collectible_cacheUpSql,
+		"1712567001_add_soulbound_collectible_cache.up.sql",
+	)
+}
+
+func _1712567001_add_soulbound_collectible_cacheUpSql() (*asset, error) {
+	bytes, err := _1712567001_add_soulbound_collectible_cacheUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1712567001_add_soulbound_collectible_cache.up.sql", size: 75, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x2e, 0x6c, 0x8b, 0x92, 0x49, 0x6c, 0x6, 0x66, 0x4c, 0xbb, 0x63, 0x4a, 0xc6, 0x7, 0xf2, 0x75, 0xef, 0xa9, 0xe5, 0xd9, 0x6c, 0x90, 0x9, 0xe4, 0x5f, 0xd1, 0xf3, 0x0, 0xd2, 0xf3, 0x0, 0xb8}}
+	return a, nil
+}
+
+var __1714670633_add_id_to_multi_transaction_tableUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\xcc\x53\xc1\x6e\x1a\x31\x14\xbc\xef\x57\x8c\x72\x6a\x24\xf3\x05\x3d\x19\xd6\x49\x56\x5d\x76\x23\x63\x1a\xe5\xb4\x72\xb1\x29\x56\x58\x7b\x65\x1b\x01\x7f\x5f\x79\x93\x12\x93\x12\x72\xed\xd5\x9e\x37\xef\xbd\x99\x37\x93\x09\x66\x5e\xcb\xa8\x21\xb1\x72\xc3\x11\x6e\x8d\x7e\xb7\x8d\xa6\x8b\x5e\xda\x20\x57\xd1\x38\x1b\x10\xe5\xaf\xad\xc6\xde\xc4\x0d\xa4\x85\x54\xca\xa4\x77\xb9\xc5\xca\x6d\x77\xbd\xc5\xda\x79\xc4\x8d\xc6\xe0\x4d\x2f\xfd\x11\x2f\xfa\x58\xcc\x38\xa3\x82\x41\xd0\x69\xcd\x60\xf5\xbe\x7b\x25\xf9\x56\x00\x80\x51\xa8\x1a\xc1\xee\x19\xc7\x23\xaf\xe6\x94\x3f\xe3\x07\x7b\x26\x98\x4c\x40\x95\x82\x4c\x05\xd7\xc8\x13\xc7\xda\xbb\xbe\x93\x4a\x79\x1d\x02\x7e\x52\x3e\x7b\xa0\x1c\x4d\x2b\xd0\x2c\xeb\x9a\x64\x90\x10\x74\xbc\x0a\xe8\xdd\xce\x7e\x86\x88\xee\x8b\x1e\x09\x70\xa5\x43\x3c\x0e\xfa\xb3\x2f\xd3\xeb\x10\x65\x3f\x60\xd9\x2c\xaa\xfb\x86\x95\x98\x56\xf7\x55\x23\x2e\x74\x38\x1b\x31\x9b\xdd\xea\xb8\x77\xfe\xa5\x33\xea\x23\xc9\xa9\xf6\x2b\xc8\xca\xbb\x10\xba\x78\x48\x80\xbf\x83\x96\xec\x8e\x2e\x6b\x81\x9b\x9b\xac\x57\x3c\x74\x1b\x19\x36\x98\xd6\xed\xf4\xc4\x9e\x3f\x16\xb7\x78\xaa\xc4\x43\xbb\x14\xe0\xed\x53\x55\x7e\x2f\x8a\x74\x60\xe9\xae\x94\x8c\xb2\xa8\x9a\x05\xe3\x22\x39\xdf\xe6\x17\x61\x14\x39\x33\x93\x64\xbe\x91\xdc\x22\x92\xb9\x41\x4e\xc2\x93\x51\x63\xf2\x2e\x27\x79\x57\x8c\x7c\x54\x89\x9c\x2b\x42\xf2\xed\xc9\xd9\x9a\x24\xdb\xee\x76\xdc\x76\xc1\x6a\x36\x13\xf0\x6e\xff\xff\x4f\x3c\x0e\x7c\xc7\xdb\xf9\x85\x38\xbf\xda\x52\x7a\x37\x8c\xb9\xd2\x07\x13\xa2\xb1\xbf\xdf\x52\x2e\xad\x82\xd7\x56\xf6\x7a\xfc\x4d\x41\x1c\x3f\x8a\x92\xb7\x8f\x6f\x71\xbe\xc4\x49\x6b\xc1\xf8\x3f\x71\xe7\xac\xa1\x73\x06\xd1\x5e\xaa\xf9\x13\x00\x00\xff\xff\xaa\xa3\x4b\x14\x7e\x04\x00\x00")
+
+func _1714670633_add_id_to_multi_transaction_tableUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1714670633_add_id_to_multi_transaction_tableUpSql,
+		"1714670633_add_id_to_multi_transaction_table.up.sql",
+	)
+}
+
+func _1714670633_add_id_to_multi_transaction_tableUpSql() (*asset, error) {
+	bytes, err := _1714670633_add_id_to_multi_transaction_tableUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1714670633_add_id_to_multi_transaction_table.up.sql", size: 1150, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0xa2, 0x17, 0x7e, 0x5a, 0x17, 0x7c, 0xf8, 0x9c, 0x60, 0xe4, 0xca, 0xd9, 0x32, 0xe5, 0x37, 0xd1, 0xa5, 0xcb, 0x56, 0xf4, 0x1e, 0x9e, 0x8d, 0x1b, 0x8d, 0x66, 0xaa, 0xd9, 0xce, 0x68, 0x3e, 0xcd}}
+	return a, nil
+}
+
+var __1715637927_add_collection_socialsUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x7c\x90\xc1\x6a\xc4\x20\x10\x86\xef\x79\x8a\xff\xb8\x0b\xfb\x06\x3d\xb9\x66\x92\x4a\x83\x01\xe3\x96\xf6\x24\x56\x85\x08\x41\x8b\x4a\xf7\xf5\x0b\x0d\x3d\xb4\x25\x3d\x7f\xdf\x0c\xdf\x0c\x57\xc4\x34\x41\xb3\xeb\x44\x10\x03\xe4\xac\x41\x2f\x62\xd1\x0b\x5c\xde\xb6\xe0\x5a\xcc\xc9\xd4\xec\xa2\xdd\xaa\x71\xd6\xad\x01\xa7\x0e\x00\xdc\x6a\x63\x32\xd1\xe3\x26\x17\x31\x4a\xea\x71\x15\xa3\x90\xfa\x6b\x85\xbc\x4d\xd3\x65\xd7\x72\x6a\xc5\xba\x66\xac\xf7\x25\xd4\x8a\x67\xa6\xf8\x23\x53\xbf\xb4\xf7\x92\x3f\xa2\x0f\xe5\x00\xdf\xc3\x5b\x8d\x2d\x1c\xd0\x76\x8f\xad\x85\x62\x56\x9b\xfc\x76\x24\x0d\xb3\x22\x31\x4a\x3c\xd1\xeb\xe9\xbb\xfd\xf2\x27\xef\x0c\x45\x03\x29\x92\x9c\x7e\x7c\xc0\xdb\x66\xf7\xf3\xff\x1d\x9e\x25\x7a\x9a\x48\x13\x38\x5b\x38\xeb\xa9\x3b\x3f\x74\x9f\x01\x00\x00\xff\xff\xe1\x4d\x07\x98\x64\x01\x00\x00")
+
+func _1715637927_add_collection_socialsUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1715637927_add_collection_socialsUpSql,
+		"1715637927_add_collection_socials.up.sql",
+	)
+}
+
+func _1715637927_add_collection_socialsUpSql() (*asset, error) {
+	bytes, err := _1715637927_add_collection_socialsUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1715637927_add_collection_socials.up.sql", size: 356, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x63, 0x61, 0xb1, 0x1a, 0x75, 0x85, 0x89, 0x81, 0x1f, 0x84, 0x64, 0x62, 0x57, 0x6c, 0x85, 0xef, 0x17, 0x1a, 0xf2, 0x14, 0xcb, 0xd5, 0x7, 0x25, 0x98, 0x3a, 0x93, 0x7e, 0xd5, 0x9, 0xf6, 0xa0}}
+	return a, nil
+}
+
+var __1715839555_rename_chain_prefixesUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x0a\x0d\x70\x71\x0c\x71\x55\x28\x4e\x2c\x4b\x4d\x89\x4f\x4c\x49\x29\x4a\x2d\x2e\x4e\x2d\x56\x08\x76\x0d\x51\x48\xce\x48\xcc\xcc\x8b\x2f\xce\xc8\x2f\x2a\x89\xcf\x4b\xcc\x4d\x2d\x56\xb0\x55\x08\x72\x0d\xf0\x71\x74\x76\xd5\xc0\x90\xd3\x51\x50\x4f\x2c\x4a\xb2\x52\x87\xd0\x86\x56\xea\x9a\x0a\xe1\x1e\xae\x41\xae\x58\x4c\xf1\xf1\xf4\x76\x55\x50\x57\x05\x29\x57\x55\xb7\xe6\xa2\xa2\x0b\xf2\x0b\x4a\xc0\x2e\xc8\x4f\x2d\xc9\x20\xc2\x05\x20\xe5\xaa\xea\xd6\x80\x00\x00\x00\xff\xff\x88\x5e\xa1\x0f\x03\x01\x00\x00")
+
+func _1715839555_rename_chain_prefixesUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1715839555_rename_chain_prefixesUpSql,
+		"1715839555_rename_chain_prefixes.up.sql",
+	)
+}
+
+func _1715839555_rename_chain_prefixesUpSql() (*asset, error) {
+	bytes, err := _1715839555_rename_chain_prefixesUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1715839555_rename_chain_prefixes.up.sql", size: 259, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x35, 0x2c, 0x47, 0xd1, 0x87, 0x83, 0x91, 0x2c, 0xd0, 0xac, 0x73, 0x5a, 0x36, 0x5f, 0xeb, 0xdc, 0xb2, 0x1e, 0x8, 0x11, 0x98, 0x53, 0x82, 0x34, 0x32, 0x11, 0xe9, 0x13, 0x60, 0x87, 0x80, 0xc6}}
+	return a, nil
+}
+
 var _docGo = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x2c\xcb\x41\x0e\x02\x31\x08\x05\xd0\x7d\x4f\xf1\x2f\x00\xe8\xca\xc4\xc4\xc3\xa0\x43\x08\x19\x5b\xc6\x96\xfb\xc7\x4d\xdf\xfe\x5d\xfa\x39\xd5\x0d\xeb\xf7\x6d\x4d\xc4\xf3\xe9\x36\x6c\x6a\x19\x3c\xe9\x1d\xe3\xd0\x52\x50\xcf\xa3\xa2\xdb\xeb\xfe\xb8\x6d\xa0\xeb\x74\xf4\xf0\xa9\x15\x39\x16\x28\xc1\x2c\x7b\xb0\x27\x58\xda\x3f\x00\x00\xff\xff\x57\xd4\xd5\x90\x5e\x00\x00\x00")
 
 func docGoBytes() ([]byte, error) {
@@ -707,6 +791,10 @@ var _bindata = map[string]func() (*asset, error){
 	"1707160323_add_contract_type_table.up.sql":                                     _1707160323_add_contract_type_tableUpSql,
 	"1708089811_add_nullable_fiesl_blocks_ranges.up.sql":                            _1708089811_add_nullable_fiesl_blocks_rangesUpSql,
 	"1710189541_add_nonce_to_pending_transactions.up.sql":                           _1710189541_add_nonce_to_pending_transactionsUpSql,
+	"1712567001_add_soulbound_collectible_cache.up.sql":                             _1712567001_add_soulbound_collectible_cacheUpSql,
+	"1714670633_add_id_to_multi_transaction_table.up.sql":                           _1714670633_add_id_to_multi_transaction_tableUpSql,
+	"1715637927_add_collection_socials.up.sql":                                      _1715637927_add_collection_socialsUpSql,
+	"1715839555_rename_chain_prefixes.up.sql":                                       _1715839555_rename_chain_prefixesUpSql,
 	"doc.go": docGo,
 }
 
@@ -780,6 +868,10 @@ var _bintree = &bintree{nil, map[string]*bintree{
 	"1707160323_add_contract_type_table.up.sql":                                     {_1707160323_add_contract_type_tableUpSql, map[string]*bintree{}},
 	"1708089811_add_nullable_fiesl_blocks_ranges.up.sql":                            {_1708089811_add_nullable_fiesl_blocks_rangesUpSql, map[string]*bintree{}},
 	"1710189541_add_nonce_to_pending_transactions.up.sql":                           {_1710189541_add_nonce_to_pending_transactionsUpSql, map[string]*bintree{}},
+	"1712567001_add_soulbound_collectible_cache.up.sql":                             {_1712567001_add_soulbound_collectible_cacheUpSql, map[string]*bintree{}},
+	"1714670633_add_id_to_multi_transaction_table.up.sql":                           {_1714670633_add_id_to_multi_transaction_tableUpSql, map[string]*bintree{}},
+	"1715637927_add_collection_socials.up.sql":                                      {_1715637927_add_collection_socialsUpSql, map[string]*bintree{}},
+	"1715839555_rename_chain_prefixes.up.sql":                                       {_1715839555_rename_chain_prefixesUpSql, map[string]*bintree{}},
 	"doc.go": {docGo, map[string]*bintree{}},
 }}
 
