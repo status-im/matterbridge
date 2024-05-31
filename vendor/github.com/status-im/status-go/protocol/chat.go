@@ -243,6 +243,9 @@ type ChatPreview struct {
 	From             string `json:"from"`
 	Deleted          bool   `json:"deleted"`
 	DeletedForMe     bool   `json:"deletedForMe"`
+
+	// Image of the chat in Base64 format
+	Base64Image string `json:"image,omitempty"`
 }
 
 func (c *Chat) PublicKey() (*ecdsa.PublicKey, error) {
@@ -283,6 +286,19 @@ func (c *Chat) PrivateGroupChat() bool {
 
 func (c *Chat) IsActivePersonalChat() bool {
 	return c.Active && (c.OneToOne() || c.PrivateGroupChat() || c.Public()) && c.CommunityID == ""
+}
+
+// DefaultResendType returns the resend type for a chat.
+// This function currently infers the ResendType from the chat type.
+// Note that specific message might have different resent types. At times
+// some messages dictate their ResendType based on their own properties and
+// context, rather than the chat type it is associated with.
+func (c *Chat) DefaultResendType() common.ResendType {
+	if c.OneToOne() || c.PrivateGroupChat() {
+		return common.ResendTypeDataSync
+	}
+
+	return common.ResendTypeRawMessage
 }
 
 func (c *Chat) shouldBeSynced() bool {
@@ -511,6 +527,10 @@ func CreateCommunityChat(orgID, chatID string, orgChat *protobuf.CommunityChat, 
 	}
 }
 
+func (c *Chat) CommunityChannelID() string {
+	return strings.TrimPrefix(c.ID, c.CommunityID)
+}
+
 func (c *Chat) DeepLink() string {
 	if c.OneToOne() {
 		return "status-app://p/" + c.ID
@@ -520,7 +540,7 @@ func (c *Chat) DeepLink() string {
 	}
 
 	if c.CommunityChat() {
-		communityChannelID := strings.TrimPrefix(c.ID, c.CommunityID)
+		communityChannelID := c.CommunityChannelID()
 		pubkey, err := types.DecodeHex(c.CommunityID)
 		if err != nil {
 			return ""

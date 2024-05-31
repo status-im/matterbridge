@@ -127,10 +127,10 @@ func (c *PeerConnectionStrategy) consumeSubscription(s subscription) {
 				triggerImmediateConnection := false
 				//Not connecting to peer as soon as it is discovered,
 				// rather expecting this to be pushed from PeerManager based on the need.
-				if len(c.host.Network().Peers()) < waku_proto.GossipSubOptimalFullMeshSize {
+				if len(c.host.Network().Peers()) < waku_proto.GossipSubDMin {
 					triggerImmediateConnection = true
 				}
-				c.logger.Debug("adding discovered peer", logging.HostID("peer", p.AddrInfo.ID))
+				c.logger.Debug("adding discovered peer", logging.HostID("peerID", p.AddrInfo.ID))
 				c.pm.AddDiscoveredPeer(p, triggerImmediateConnection)
 
 			case <-time.After(1 * time.Second):
@@ -193,21 +193,35 @@ func (c *PeerConnectionStrategy) canDialPeer(pi peer.AddrInfo) bool {
 	c.mux.Lock()
 	defer c.mux.Unlock()
 	val, ok := c.cache.Get(pi.ID)
-	var cachedPeer *connCacheData
 	if ok {
 		tv := val.(*connCacheData)
 		now := time.Now()
 		if now.Before(tv.nextTry) {
+			c.logger.Debug("Skipping connecting to peer due to backoff strategy",
+				zap.Time("currentTime", now), zap.Time("until", tv.nextTry))
 			return false
 		}
+		c.logger.Debug("Proceeding with connecting to peer",
+			zap.Time("currentTime", now), zap.Time("nextTry", tv.nextTry))
+	}
+	return true
+}
 
-		tv.nextTry = now.Add(tv.strat.Delay())
+func (c *PeerConnectionStrategy) addConnectionBackoff(peerID peer.ID) {
+	c.mux.Lock()
+	defer c.mux.Unlock()
+	val, ok := c.cache.Get(peerID)
+	var cachedPeer *connCacheData
+	if ok {
+		tv := val.(*connCacheData)
+		tv.nextTry = time.Now().Add(tv.strat.Delay())
 	} else {
 		cachedPeer = &connCacheData{strat: c.backoff()}
 		cachedPeer.nextTry = time.Now().Add(cachedPeer.strat.Delay())
-		c.cache.Add(pi.ID, cachedPeer)
+		c.logger.Debug("Initializing connectionCache for peer ",
+			logging.HostID("peerID", peerID), zap.Time("until", cachedPeer.nextTry))
+		c.cache.Add(peerID, cachedPeer)
 	}
-	return true
 }
 
 func (c *PeerConnectionStrategy) dialPeers() {
@@ -250,6 +264,7 @@ func (c *PeerConnectionStrategy) dialPeer(pi peer.AddrInfo, sem chan struct{}) {
 	defer cancel()
 	err := c.host.Connect(ctx, pi)
 	if err != nil && !errors.Is(err, context.Canceled) {
+		c.addConnectionBackoff(pi.ID)
 		c.host.Peerstore().(wps.WakuPeerstore).AddConnFailure(pi)
 		c.logger.Warn("connecting to peer", logging.HostID("peerID", pi.ID), zap.Error(err))
 	}

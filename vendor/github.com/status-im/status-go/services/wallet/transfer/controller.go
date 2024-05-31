@@ -119,12 +119,14 @@ func (c *Controller) CheckRecentHistory(chainIDs []uint64, accounts []common.Add
 		return nil
 	}
 
+	omitHistory := false
 	multiaccSettings, err := c.accountsDB.GetSettings()
 	if err != nil {
-		return err
+		log.Error("Failed to get multiacc settings") // not critical
+	} else {
+		omitHistory = multiaccSettings.OmitTransfersHistoryScan
 	}
 
-	omitHistory := multiaccSettings.OmitTransfersHistoryScan
 	if omitHistory {
 		err := c.accountsDB.SaveSettingField(settings.OmitTransfersHistoryScan, false)
 		if err != nil {
@@ -265,6 +267,11 @@ func (c *Controller) cleanUpRemovedAccount(address common.Address) {
 	err = c.blockRangesSeqDAO.deleteRange(address)
 	if err != nil {
 		log.Error("Failed to delete blocks ranges sequential", "error", err)
+	}
+
+	err = c.transactionManager.removeMultiTransactionByAddress(address)
+	if err != nil {
+		log.Error("Failed to delete multitransactions", "error", err)
 	}
 }
 

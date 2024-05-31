@@ -21,13 +21,15 @@ import (
 	"github.com/status-im/status-go/contracts/ethscan"
 	"github.com/status-im/status-go/contracts/ierc20"
 	eth_node_types "github.com/status-im/status-go/eth-node/types"
+	"github.com/status-im/status-go/multiaccounts/accounts"
 	"github.com/status-im/status-go/params"
 	"github.com/status-im/status-go/protocol/communities/token"
 	"github.com/status-im/status-go/rpc"
 	"github.com/status-im/status-go/rpc/chain"
 	"github.com/status-im/status-go/rpc/network"
 	"github.com/status-im/status-go/server"
-	"github.com/status-im/status-go/services/communitytokens"
+	"github.com/status-im/status-go/services/accounts/accountsevent"
+	"github.com/status-im/status-go/services/communitytokens/communitytokensdatabase"
 	"github.com/status-im/status-go/services/utils"
 	"github.com/status-im/status-go/services/wallet/async"
 	"github.com/status-im/status-go/services/wallet/bigint"
@@ -70,7 +72,7 @@ type ReceivedToken struct {
 }
 
 func (t *Token) IsNative() bool {
-	return t.Address == nativeChainAddress
+	return strings.EqualFold(t.Symbol, "ETH")
 }
 
 type List struct {
@@ -100,10 +102,13 @@ type Manager struct {
 	ContractMaker     *contracts.ContractMaker
 	networkManager    *network.Manager
 	stores            []store // Set on init, not changed afterwards
-	communityTokensDB *communitytokens.Database
+	communityTokensDB *communitytokensdatabase.Database
 	communityManager  *community.Manager
 	mediaServer       *server.MediaServer
 	walletFeed        *event.Feed
+	accountFeed       *event.Feed
+	accountWatcher    *accountsevent.Watcher
+	accountsDB        *accounts.Database
 
 	tokens []*Token
 
@@ -125,17 +130,7 @@ func mergeTokens(sliceLists [][]*Token) []*Token {
 	return res
 }
 
-func NewTokenManager(
-	db *sql.DB,
-	RPCClient *rpc.Client,
-	communityManager *community.Manager,
-	networkManager *network.Manager,
-	appDB *sql.DB,
-	mediaServer *server.MediaServer,
-	walletFeed *event.Feed,
-) *Manager {
-	maker, _ := contracts.NewContractMaker(RPCClient)
-	stores := []store{newUniswapStore(), newDefaultStore()}
+func prepareTokens(networkManager *network.Manager, stores []store) []*Token {
 	tokens := make([]*Token, 0)
 
 	networks, err := networkManager.GetAll()
@@ -158,6 +153,23 @@ func NewTokenManager(
 
 		tokens = mergeTokens([][]*Token{tokens, validTokens})
 	}
+	return tokens
+}
+
+func NewTokenManager(
+	db *sql.DB,
+	RPCClient *rpc.Client,
+	communityManager *community.Manager,
+	networkManager *network.Manager,
+	appDB *sql.DB,
+	mediaServer *server.MediaServer,
+	walletFeed *event.Feed,
+	accountFeed *event.Feed,
+	accountsDB *accounts.Database,
+) *Manager {
+	maker, _ := contracts.NewContractMaker(RPCClient)
+	stores := []store{newUniswapStore(), newDefaultStore()}
+	tokens := prepareTokens(networkManager, stores)
 
 	return &Manager{
 		db:                db,
@@ -166,10 +178,36 @@ func NewTokenManager(
 		networkManager:    networkManager,
 		communityManager:  communityManager,
 		stores:            stores,
-		communityTokensDB: communitytokens.NewCommunityTokensDatabase(appDB),
+		communityTokensDB: communitytokensdatabase.NewCommunityTokensDatabase(appDB),
 		tokens:            tokens,
 		mediaServer:       mediaServer,
 		walletFeed:        walletFeed,
+		accountFeed:       accountFeed,
+		accountsDB:        accountsDB,
+	}
+}
+
+func (tm *Manager) Start() {
+	tm.startAccountsWatcher()
+}
+
+func (tm *Manager) startAccountsWatcher() {
+	if tm.accountWatcher != nil {
+		return
+	}
+
+	tm.accountWatcher = accountsevent.NewWatcher(tm.accountsDB, tm.accountFeed, tm.onAccountsChange)
+	tm.accountWatcher.Start()
+}
+
+func (tm *Manager) Stop() {
+	tm.stopAccountsWatcher()
+}
+
+func (tm *Manager) stopAccountsWatcher() {
+	if tm.accountWatcher != nil {
+		tm.accountWatcher.Stop()
+		tm.accountWatcher = nil
 	}
 }
 
@@ -314,6 +352,7 @@ func (tm *Manager) FindOrCreateTokenByAddress(ctx context.Context, chainID uint6
 }
 
 func (tm *Manager) MarkAsPreviouslyOwnedToken(token *Token, owner common.Address) (bool, error) {
+	log.Info("Marking token as previously owned", "token", token, "owner", owner)
 	if token == nil {
 		return false, errors.New("token is nil")
 	}
@@ -875,4 +914,53 @@ func (tm *Manager) GetTokenHistoricalBalance(account common.Address, chainID uin
 		return nil, err
 	}
 	return &balance, nil
+}
+
+func (tm *Manager) GetPreviouslyOwnedTokens() (map[common.Address][]*Token, error) {
+	tokenMap := make(map[common.Address][]*Token)
+	rows, err := tm.db.Query("SELECT user_address, token_name, token_symbol, token_address, token_decimals, chain_id FROM token_balances")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		token := &Token{}
+		var addressStr, tokenAddressStr string
+		err := rows.Scan(&addressStr, &token.Name, &token.Symbol, &tokenAddressStr, &token.Decimals, &token.ChainID)
+		if err != nil {
+			return nil, err
+		}
+		address := common.HexToAddress(addressStr)
+		if (address == common.Address{}) {
+			continue
+		}
+		token.Address = common.HexToAddress(tokenAddressStr)
+		if (token.Address == common.Address{}) {
+			continue
+		}
+
+		if _, ok := tokenMap[address]; !ok {
+			tokenMap[address] = make([]*Token, 0)
+		}
+		tokenMap[address] = append(tokenMap[address], token)
+	}
+
+	return tokenMap, nil
+}
+
+func (tm *Manager) removeTokenBalances(account common.Address) error {
+	_, err := tm.db.Exec("DELETE FROM token_balances WHERE user_address = ?", account.String())
+	return err
+}
+
+func (tm *Manager) onAccountsChange(changedAddresses []common.Address, eventType accountsevent.EventType, currentAddresses []common.Address) {
+	if eventType == accountsevent.EventTypeRemoved {
+		for _, account := range changedAddresses {
+			err := tm.removeTokenBalances(account)
+			if err != nil {
+				log.Error("token.Manager: can't remove token balances", "error", err)
+			}
+		}
+	}
 }

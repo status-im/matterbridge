@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	crand "crypto/rand"
@@ -15,6 +16,7 @@ import (
 
 	eth_common "github.com/ethereum/go-ethereum/common"
 
+	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/multiaccounts/accounts"
 	"github.com/status-im/status-go/protocol/common"
@@ -116,20 +118,17 @@ func (m *Messenger) validateCommunityMembershipEntry(
 	}
 
 	if community.Encrypted() {
-		// NOTE: commentend for 0.177.x release, actual fix is here:
-		// https://github.com/status-im/status-go/pull/5024
-		return identity.ProfileShowcaseMembershipStatusProvenMember, nil
-		// grant, err := community.VerifyGrantSignature(entry.Grant)
-		// if err != nil {
-		// 	m.logger.Warn("failed to verify grant signature ", zap.Error(err))
-		// 	return identity.ProfileShowcaseMembershipStatusNotAMember, nil
-		// }
+		verifiedGrant, err := community.VerifyGrantSignature(entry.Grant)
+		if err != nil {
+			m.logger.Warn("failed to verify grant signature ", zap.Error(err))
+			return identity.ProfileShowcaseMembershipStatusUnproven, nil
+		}
 
-		// if grant != nil && bytes.Equal(grant.MemberId, crypto.CompressPubkey(contactPubKey)) {
-		// 	return identity.ProfileShowcaseMembershipStatusProvenMember, nil
-		// }
-		// // Show as not a member if membership can't be proven
-		// return identity.ProfileShowcaseMembershipStatusNotAMember, nil
+		if bytes.Equal(verifiedGrant.MemberId, crypto.CompressPubkey(contactPubKey)) {
+			return identity.ProfileShowcaseMembershipStatusProvenMember, nil
+		}
+		// Show as not a member if membership can't be proven
+		return identity.ProfileShowcaseMembershipStatusNotAMember, nil
 	}
 
 	if community.HasMember(contactPubKey) {
@@ -433,8 +432,6 @@ func (m *Messenger) GetProfileShowcaseForContact(contactID string, validate bool
 		return nil, err
 	}
 
-	// TODO: validate collectibles & assets ownership, https://github.com/status-im/status-desktop/issues/14129
-
 	return profileShowcase, nil
 }
 
@@ -714,6 +711,19 @@ func (m *Messenger) DeleteProfileShowcaseWalletAccount(account *accounts.Account
 	return nil
 }
 
+func (m *Messenger) UpdateProfileShowcaseCommunity(community *communities.Community) error {
+	profileCommunity, err := m.persistence.GetProfileShowcaseCommunityPreference(community.IDString())
+	if err != nil {
+		return err
+	}
+
+	if profileCommunity == nil {
+		// No corresponding profile entry, exit
+		return nil
+	}
+	return m.DispatchProfileShowcase()
+}
+
 func (m *Messenger) DeleteProfileShowcaseCommunity(community *communities.Community) error {
 	deleted, err := m.persistence.DeleteProfileShowcaseCommunityPreference(community.IDString())
 	if err != nil {
@@ -748,10 +758,10 @@ func (m *Messenger) syncProfileShowcasePreferences(ctx context.Context, rawMessa
 
 	_, chat := m.getLastClockWithRelatedChat()
 	rawMessage := common.RawMessage{
-		LocalChatID:         chat.ID,
-		Payload:             encodedMessage,
-		MessageType:         protobuf.ApplicationMetadataMessage_SYNC_PROFILE_SHOWCASE_PREFERENCES,
-		ResendAutomatically: true,
+		LocalChatID: chat.ID,
+		Payload:     encodedMessage,
+		MessageType: protobuf.ApplicationMetadataMessage_SYNC_PROFILE_SHOWCASE_PREFERENCES,
+		ResendType:  common.ResendTypeDataSync,
 	}
 
 	_, err = rawMessageHandler(ctx, rawMessage)

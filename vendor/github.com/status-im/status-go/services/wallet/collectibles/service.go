@@ -35,12 +35,18 @@ const (
 
 	EventOwnedCollectiblesFilteringDone walletevent.EventType = "wallet-owned-collectibles-filtering-done"
 	EventGetCollectiblesDetailsDone     walletevent.EventType = "wallet-get-collectibles-details-done"
+	EventGetCollectionSocialsDone       walletevent.EventType = "wallet-get-collection-socials-done"
 )
 
 type OwnershipUpdateMessage struct {
 	Added   []thirdparty.CollectibleUniqueID `json:"added"`
 	Updated []thirdparty.CollectibleUniqueID `json:"updated"`
 	Removed []thirdparty.CollectibleUniqueID `json:"removed"`
+}
+
+type CollectionSocialsMessage struct {
+	ID      thirdparty.ContractID         `json:"id"`
+	Socials *thirdparty.CollectionSocials `json:"socials"`
 }
 
 type CollectibleDataType byte
@@ -499,7 +505,9 @@ func (s *Service) notifyCommunityCollectiblesReceived(ownedCollectibles OwnedCol
 	}
 
 	groups := make(map[CollectibleGroup]Collectible)
-	for _, collectible := range communityCollectibles {
+	for _, localCollectible := range communityCollectibles {
+		// to satisfy gosec: C601 checks
+		collectible := localCollectible
 		txHash := ""
 		for key, value := range hashMap {
 			if key.Same(&collectible.ID) {

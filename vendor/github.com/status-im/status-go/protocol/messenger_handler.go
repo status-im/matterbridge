@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 
+	utils "github.com/status-im/status-go/common"
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/images"
@@ -674,6 +675,7 @@ func (m *Messenger) HandleSyncInstallationContactV2(state *ReceivedMessageState,
 		if message.DisplayName != "" {
 			contact.DisplayName = message.DisplayName
 		}
+		contact.CustomizationColor = multiaccountscommon.IDToColorFallbackToBlue(message.CustomizationColor)
 		state.ModifiedContacts.Store(contact.ID, true)
 		state.AllContacts.Store(contact.ID, contact)
 	}
@@ -700,6 +702,7 @@ func (m *Messenger) HandleSyncInstallationContactV2(state *ReceivedMessageState,
 			}
 			contact.ENSVerified = true
 		}
+		contact.CustomizationColor = multiaccountscommon.IDToColorFallbackToBlue(message.CustomizationColor)
 		contact.LastUpdatedLocally = message.LastUpdatedLocally
 		contact.LocalNickname = message.LocalNickname
 		contact.TrustStatus = verification.TrustStatus(message.TrustStatus)
@@ -1212,7 +1215,7 @@ func (m *Messenger) HandleContactUpdate(state *ReceivedMessageState, message *pr
 		return ErrMessageNotAllowed
 	}
 
-	if err = ValidateDisplayName(&message.DisplayName); err != nil {
+	if err = utils.ValidateDisplayName(&message.DisplayName); err != nil {
 		return err
 	}
 
@@ -1231,7 +1234,7 @@ func (m *Messenger) HandleContactUpdate(state *ReceivedMessageState, message *pr
 			logger.Debug("sending back state")
 			// This is a bit dangerous, since it might trigger a ping-pong of contact updates
 			// also it should backoff/debounce
-			_, err = m.sendContactUpdate(context.Background(), contact.ID, "", "", "", m.dispatchMessage)
+			_, err = m.sendContactUpdate(context.Background(), contact.ID, contact.DisplayName, contact.EnsName, "", contact.CustomizationColor, m.dispatchMessage)
 			if err != nil {
 				return err
 			}
@@ -1263,6 +1266,8 @@ func (m *Messenger) HandleContactUpdate(state *ReceivedMessageState, message *pr
 		if len(message.DisplayName) != 0 {
 			contact.DisplayName = message.DisplayName
 		}
+
+		contact.CustomizationColor = multiaccountscommon.IDToColorFallbackToBlue(message.CustomizationColor)
 
 		r := contact.ContactRequestReceived(message.ContactRequestClock)
 		if r.newContactRequestReceived {
@@ -1534,6 +1539,7 @@ func (m *Messenger) HandleCommunityRequestToJoin(state *ReceivedMessageState, re
 	switch requestToJoin.State {
 	case communities.RequestToJoinStatePending:
 		contact, _ := state.AllContacts.Load(contactIDFromPublicKey(signer))
+		contact.CustomizationColor = multiaccountscommon.IDToColorFallbackToBlue(requestToJoinProto.CustomizationColor)
 		if len(requestToJoinProto.DisplayName) != 0 {
 			contact.DisplayName = requestToJoinProto.DisplayName
 			state.ModifiedContacts.Store(contact.ID, true)
@@ -2269,7 +2275,7 @@ func (m *Messenger) handleChatMessage(state *ReceivedMessageState, forceSeen boo
 	if receivedMessage.ContactRequestPropagatedState != nil && !isSyncMessage {
 		result := contact.ContactRequestPropagatedStateReceived(receivedMessage.ContactRequestPropagatedState)
 		if result.sendBackState {
-			_, err = m.sendContactUpdate(context.Background(), contact.ID, "", "", "", m.dispatchMessage)
+			_, err = m.sendContactUpdate(context.Background(), contact.ID, "", "", "", "", m.dispatchMessage)
 			if err != nil {
 				return err
 			}
@@ -2313,6 +2319,10 @@ func (m *Messenger) handleChatMessage(state *ReceivedMessageState, forceSeen boo
 			if err != nil {
 				return err
 			}
+		}
+
+		if receivedMessage.CustomizationColor != 0 {
+			chatContact.CustomizationColor = multiaccountscommon.IDToColorFallbackToBlue(receivedMessage.CustomizationColor)
 		}
 
 		if chatContact.mutual() || chatContact.dismissed() {
@@ -2395,6 +2405,11 @@ func (m *Messenger) handleChatMessage(state *ReceivedMessageState, forceSeen boo
 		state.ModifiedContacts.Store(contact.ID, true)
 	}
 
+	if customizationColor := multiaccountscommon.IDToColorFallbackToBlue(receivedMessage.CustomizationColor); !isSyncMessage && receivedMessage.CustomizationColor != 0 && contact.CustomizationColor != customizationColor {
+		contact.CustomizationColor = customizationColor
+		state.ModifiedContacts.Store(contact.ID, true)
+	}
+
 	if receivedMessage.ContentType == protobuf.ChatMessage_COMMUNITY {
 		m.logger.Debug("Handling community content type")
 
@@ -2442,7 +2457,7 @@ func (m *Messenger) addPeersyncingMessage(chat *Chat, msg *v1protocol.StatusMess
 	syncMessage := peersyncing.SyncMessage{
 		Type:      syncMessageType,
 		ID:        msg.ApplicationLayer.ID,
-		GroupID:   []byte(chat.ID),
+		ChatID:    []byte(chat.ID),
 		Payload:   msg.EncryptionLayer.Payload,
 		Timestamp: uint64(msg.TransportLayer.Message.Timestamp),
 	}
@@ -2517,6 +2532,7 @@ func (m *Messenger) HandleSyncAccountCustomizationColor(state *ReceivedMessageSt
 	}
 
 	if affected > 0 {
+		m.account.CustomizationColor = multiaccountscommon.CustomizationColor(message.GetCustomizationColor())
 		state.Response.CustomizationColor = message.GetCustomizationColor()
 	}
 	return nil
@@ -3023,12 +3039,17 @@ func (m *Messenger) HandleChatIdentity(state *ReceivedMessageState, ci *protobuf
 	}
 
 	if clockChanged {
-		if err = ValidateDisplayName(&ci.DisplayName); err != nil {
+		if err = utils.ValidateDisplayName(&ci.DisplayName); err != nil {
 			return err
 		}
 
 		if contact.DisplayName != ci.DisplayName && len(ci.DisplayName) != 0 {
 			contact.DisplayName = ci.DisplayName
+			contactModified = true
+		}
+
+		if customizationColor := multiaccountscommon.IDToColorFallbackToBlue(ci.CustomizationColor); contact.CustomizationColor != customizationColor {
+			contact.CustomizationColor = customizationColor
 			contactModified = true
 		}
 
@@ -3763,17 +3784,15 @@ func (m *Messenger) HandleSyncContactRequestDecision(state *ReceivedMessageState
 	var response *MessengerResponse
 
 	if message.DecisionStatus == protobuf.SyncContactRequestDecision_ACCEPTED {
-		response, err = m.updateAcceptedContactRequest(nil, message.RequestId, true)
+		response, err = m.updateAcceptedContactRequest(nil, message.RequestId, message.ContactId, true)
 	} else {
-		response, err = m.declineContactRequest(message.RequestId, true)
+		response, err = m.declineContactRequest(message.RequestId, message.ContactId, true)
 	}
 	if err != nil {
 		return err
 	}
 
-	state.Response = response
-
-	return nil
+	return state.Response.Merge(response)
 }
 
 func (m *Messenger) HandlePushNotificationRegistration(state *ReceivedMessageState, encryptedRegistration []byte, statusMessage *v1protocol.StatusMessage) error {

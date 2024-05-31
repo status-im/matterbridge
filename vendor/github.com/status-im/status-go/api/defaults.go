@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"math/big"
+	"path/filepath"
 
 	"github.com/google/uuid"
 
@@ -11,7 +12,9 @@ import (
 	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/multiaccounts/settings"
 	"github.com/status-im/status-go/params"
+	"github.com/status-im/status-go/protocol"
 	"github.com/status-im/status-go/protocol/identity/alias"
+	"github.com/status-im/status-go/protocol/protobuf"
 	"github.com/status-im/status-go/protocol/requests"
 )
 
@@ -23,7 +26,20 @@ const defaultMnemonicLength = 12
 const shardsTestClusterID = 16
 const walletAccountDefaultName = "Account 1"
 const keystoreRelativePath = "keystore"
-const defaultKeycardPairingDataFile = "/ethereum/mainnet_rpc/keycard/pairings.json"
+const DefaultKeycardPairingDataFile = "/ethereum/mainnet_rpc/keycard/pairings.json"
+
+const DefaultArchivesRelativePath = "data/archivedata"
+const DefaultTorrentTorrentsRelativePath = "data/torrents"
+
+const DefaultDataDir = "/ethereum/mainnet_rpc"
+const DefaultNodeName = "StatusIM"
+const DefaultLogFile = "geth.log"
+const DefaultLogLevel = "ERROR"
+const DefaultMaxPeers = 20
+const DefaultMaxPendingPeers = 20
+const DefaultListenAddr = ":0"
+const DefaultMaxMessageDeliveryAttempts = 6
+const DefaultVerifyTransactionChainID = 1
 
 var paths = []string{pathWalletRoot, pathEIP1581, pathDefaultChat, pathDefaultWallet}
 
@@ -93,8 +109,21 @@ func defaultSettings(generatedAccountInfo generator.GeneratedAccountInfo, derive
 	s.TokenGroupByCommunity = false
 	s.ShowCommunityAssetWhenSendingTokens = true
 	s.DisplayAssetsBelowBalance = false
-	// NOTE 9 decimals of precision. Default value is translated to 0.1
-	s.DisplayAssetsBelowBalanceThreshold = 100000000
+
+	s.TestNetworksEnabled = false
+
+	// Default user status
+	currentUserStatus, err := json.Marshal(protocol.UserStatus{
+		PublicKey:  chatKeyString,
+		StatusType: int(protobuf.StatusUpdate_AUTOMATIC),
+		Clock:      0,
+		CustomText: "",
+	})
+	if err != nil {
+		return nil, err
+	}
+	userRawMessage := json.RawMessage(currentUserStatus)
+	s.CurrentUserStatus = &userRawMessage
 
 	return s, nil
 }
@@ -104,12 +133,16 @@ func SetDefaultFleet(nodeConfig *params.NodeConfig) error {
 }
 
 func SetFleet(fleet string, nodeConfig *params.NodeConfig) error {
+	specifiedWakuV2Config := nodeConfig.WakuV2Config
 	nodeConfig.WakuV2Config = params.WakuV2Config{
 		Enabled:        true,
 		EnableDiscV5:   true,
 		DiscoveryLimit: 20,
 		Host:           "0.0.0.0",
 		AutoUpdate:     true,
+		// mobile may need override following options
+		LightClient: specifiedWakuV2Config.LightClient,
+		Nameserver:  specifiedWakuV2Config.Nameserver,
 	}
 
 	clusterConfig, err := params.LoadClusterConfigFromFleet(fleet)
@@ -189,16 +222,27 @@ func buildWalletConfig(request *requests.WalletSecretsConfig) params.WalletConfi
 func defaultNodeConfig(installationID string, request *requests.CreateAccount, opts ...params.Option) (*params.NodeConfig, error) {
 	// Set mainnet
 	nodeConfig := &params.NodeConfig{}
-	nodeConfig.NetworkID = request.NetworkID
 	nodeConfig.LogEnabled = request.LogEnabled
-	nodeConfig.LogFile = "geth.log"
+	nodeConfig.LogFile = DefaultLogFile
 	nodeConfig.LogDir = request.LogFilePath
-	nodeConfig.LogLevel = "ERROR"
-	nodeConfig.DataDir = "/ethereum/mainnet_rpc"
-	nodeConfig.KeycardPairingDataFile = defaultKeycardPairingDataFile
+	nodeConfig.LogLevel = DefaultLogLevel
+	nodeConfig.DataDir = DefaultDataDir
+	nodeConfig.KeycardPairingDataFile = DefaultKeycardPairingDataFile
+	nodeConfig.ProcessBackedupMessages = false
 
 	if request.LogLevel != nil {
 		nodeConfig.LogLevel = *request.LogLevel
+		nodeConfig.LogEnabled = true
+	} else {
+		nodeConfig.LogEnabled = false
+	}
+
+	nodeConfig.Networks = BuildDefaultNetworks(&request.WalletSecretsConfig)
+
+	if request.NetworkID != nil {
+		nodeConfig.NetworkID = *request.NetworkID
+	} else {
+		nodeConfig.NetworkID = nodeConfig.Networks[0].ChainID
 	}
 
 	if request.UpstreamConfig != "" {
@@ -206,13 +250,16 @@ func defaultNodeConfig(installationID string, request *requests.CreateAccount, o
 			Enabled: true,
 			URL:     request.UpstreamConfig,
 		}
+	} else {
+		nodeConfig.UpstreamConfig.URL = defaultNetworks[0].RPCURL
+		nodeConfig.UpstreamConfig.Enabled = true
 	}
 
-	nodeConfig.Name = "StatusIM"
+	nodeConfig.Name = DefaultNodeName
 	nodeConfig.Rendezvous = false
 	nodeConfig.NoDiscovery = true
-	nodeConfig.MaxPeers = 20
-	nodeConfig.MaxPendingPeers = 20
+	nodeConfig.MaxPeers = DefaultMaxPeers
+	nodeConfig.MaxPendingPeers = DefaultMaxPendingPeers
 
 	nodeConfig.WalletConfig = buildWalletConfig(&request.WalletSecretsConfig)
 
@@ -221,7 +268,7 @@ func defaultNodeConfig(installationID string, request *requests.CreateAccount, o
 	nodeConfig.PermissionsConfig = params.PermissionsConfig{Enabled: true}
 	nodeConfig.MailserversConfig = params.MailserversConfig{Enabled: true}
 
-	nodeConfig.ListenAddr = ":0"
+	nodeConfig.ListenAddr = DefaultListenAddr
 
 	err := SetDefaultFleet(nodeConfig)
 	if err != nil {
@@ -239,19 +286,23 @@ func defaultNodeConfig(installationID string, request *requests.CreateAccount, o
 	nodeConfig.ShhextConfig = params.ShhextConfig{
 		BackupDisabledDataDir:      request.BackupDisabledDataDir,
 		InstallationID:             installationID,
-		MaxMessageDeliveryAttempts: 6,
+		MaxMessageDeliveryAttempts: DefaultMaxMessageDeliveryAttempts,
 		MailServerConfirmations:    true,
-		VerifyTransactionChainID:   1,
+		VerifyTransactionChainID:   DefaultVerifyTransactionChainID,
 		DataSyncEnabled:            true,
 		PFSEnabled:                 true,
 	}
 
 	if request.VerifyTransactionURL != nil {
 		nodeConfig.ShhextConfig.VerifyTransactionURL = *request.VerifyTransactionURL
+	} else {
+		nodeConfig.ShhextConfig.VerifyTransactionURL = defaultNetworks[0].FallbackURL
 	}
 
 	if request.VerifyENSURL != nil {
 		nodeConfig.ShhextConfig.VerifyENSURL = *request.VerifyENSURL
+	} else {
+		nodeConfig.ShhextConfig.VerifyENSURL = defaultNetworks[0].FallbackURL
 	}
 
 	if request.VerifyTransactionChainID != nil {
@@ -262,15 +313,31 @@ func defaultNodeConfig(installationID string, request *requests.CreateAccount, o
 		nodeConfig.ShhextConfig.VerifyENSContractAddress = *request.VerifyENSContractAddress
 	}
 
-	if request.LogLevel != nil {
-		nodeConfig.LogLevel = *request.LogLevel
-		nodeConfig.LogEnabled = true
-
-	} else {
-		nodeConfig.LogEnabled = false
+	if request.NetworkID != nil {
+		nodeConfig.NetworkID = *request.NetworkID
 	}
 
-	nodeConfig.Networks = BuildDefaultNetworks(request)
+	nodeConfig.TorrentConfig = params.TorrentConfig{
+		Enabled:    false,
+		Port:       0,
+		DataDir:    filepath.Join(nodeConfig.RootDataDir, DefaultArchivesRelativePath),
+		TorrentDir: filepath.Join(nodeConfig.RootDataDir, DefaultTorrentTorrentsRelativePath),
+	}
+
+	if request.TorrentConfigEnabled != nil {
+		nodeConfig.TorrentConfig.Enabled = *request.TorrentConfigEnabled
+
+	}
+	if request.TorrentConfigPort != nil {
+		nodeConfig.TorrentConfig.Port = *request.TorrentConfigPort
+	}
+
+	if request.APIConfig != nil {
+		nodeConfig.HTTPEnabled = true
+		nodeConfig.HTTPHost = request.APIConfig.HTTPHost
+		nodeConfig.HTTPPort = request.APIConfig.HTTPPort
+		nodeConfig.APIModules = request.APIConfig.APIModules
+	}
 
 	for _, opt := range opts {
 		if err := opt(nodeConfig); err != nil {

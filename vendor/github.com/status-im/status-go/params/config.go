@@ -327,7 +327,7 @@ type NodeConfig struct {
 
 	// KeycardPairingDataFile is the file where we keep keycard pairings data.
 	// note: this field won't be saved into db, it's local to the device.
-	KeycardPairingDataFile string `validate:"required"`
+	KeycardPairingDataFile string
 
 	// NodeKey is the hex-encoded node ID (private key). Should be a valid secp256k1 private key that will be used for both
 	// remote peer identification as well as network traffic encryption.
@@ -716,6 +716,20 @@ func WithLES() Option {
 func WithMailserver() Option {
 	return func(c *NodeConfig) error {
 		return loadConfigFromAsset("../config/cli/mailserver-enabled.json", c)
+	}
+}
+
+func WithDiscV5BootstrapNodes(nodes []string) Option {
+	return func(c *NodeConfig) error {
+		c.ClusterConfig.DiscV5BootstrapNodes = nodes
+		return nil
+	}
+}
+
+func WithWakuNodes(nodes []string) Option {
+	return func(c *NodeConfig) error {
+		c.ClusterConfig.WakuNodes = nodes
+		return nil
 	}
 }
 

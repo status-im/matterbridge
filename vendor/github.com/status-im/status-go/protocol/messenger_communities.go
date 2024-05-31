@@ -25,6 +25,8 @@ import (
 	utils "github.com/status-im/status-go/common"
 
 	"github.com/status-im/status-go/account"
+	multiaccountscommon "github.com/status-im/status-go/multiaccounts/common"
+
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/images"
@@ -49,6 +51,12 @@ var messageArchiveInterval = 7 * 24 * time.Hour
 // 1 day interval
 var updateActiveMembersInterval = 24 * time.Hour
 
+// 1 day interval
+var grantUpdateInterval = 24 * time.Hour
+
+// 4 hours interval
+var grantInvokesProfileDispatchInterval = 4 * time.Hour
+
 const discordTimestampLayout = time.RFC3339
 
 const (
@@ -61,6 +69,18 @@ const (
 const (
 	maxChunkSizeMessages = 1000
 	maxChunkSizeBytes    = 1500000
+)
+
+const (
+	ErrOwnerTokenNeeded                     = "Owner token is needed" // #nosec G101
+	ErrMissingCommunityID                   = "CommunityID has to be provided"
+	ErrForbiddenProfileOrWatchOnlyAccount   = "Cannot join a community using profile chat or watch-only account"
+	ErrSigningJoinRequestForKeycardAccounts = "Signing a joining community request for accounts migrated to keycard must be done with a keycard"
+	ErrNotPartOfCommunity                   = "Not part of the community"
+	ErrNotAdminOrOwner                      = "Not admin or owner"
+	ErrSignerIsNil                          = "Signer can't be nil"
+	ErrSyncMessagesSentByNonControlNode     = "Accepted/requested to join sync messages can be send only by the control node"
+	ErrReceiverIsNil                        = "Receiver can't be nil"
 )
 
 type FetchCommunityRequest struct {
@@ -101,11 +121,12 @@ func (m *Messenger) publishOrg(org *communities.Community, shouldRekey bool) err
 		return nil
 	}
 
-	communityJSON, err := json.Marshal(org)
-	if err != nil {
-		return err
-	}
-	m.logger.Debug("publishing org", zap.String("org-id", org.IDString()), zap.Uint64("clock", org.Clock()), zap.String("org", string(communityJSON)))
+	m.logger.Debug("publishing community",
+		zap.Uint64("clock", org.Clock()),
+		zap.String("communityID", org.IDString()),
+		zap.Any("community", org),
+	)
+
 	payload, err := org.MarshaledDescription()
 
 	if err != nil {
@@ -282,6 +303,10 @@ func (m *Messenger) handleCommunitiesSubscription(c chan *communities.Subscripti
 
 	publishOrgAndDistributeEncryptionKeys := func(community *communities.Community) {
 		recentlyPublishedOrg := recentlyPublishedOrgs[community.IDString()]
+
+		if recentlyPublishedOrg != nil && community.Clock() <= recentlyPublishedOrg.Clock() {
+			return
+		}
 
 		// evaluate and distribute encryption keys (if any)
 		encryptionKeyActions := communities.EvaluateCommunityEncryptionKeyActions(recentlyPublishedOrg, community)
@@ -479,8 +504,8 @@ func (m *Messenger) handleCommunitiesSubscription(c chan *communities.Subscripti
 				lastPublished = time.Now().Unix()
 
 			case <-m.quit:
+				ticker.Stop()
 				return
-
 			}
 		}
 	}()
@@ -524,6 +549,188 @@ func (m *Messenger) updateCommunitiesActiveMembersPeriodically() {
 				}
 
 			case <-m.quit:
+				ticker.Stop()
+				return
+			}
+		}
+	}()
+}
+
+func (m *Messenger) HandleCommunityUpdateGrant(state *ReceivedMessageState, message *protobuf.CommunityUpdateGrant, statusMessage *v1protocol.StatusMessage) error {
+	community, err := m.communitiesManager.GetByID(message.CommunityId)
+	if err != nil {
+		return err
+	}
+
+	grant, err := m.encryptor.DecryptCommunityGrant(m.identity, state.CurrentMessageState.PublicKey, message.Grants)
+	if err != nil {
+		return err
+	}
+
+	return m.handleCommunityGrant(community, grant, message.Timestamp)
+}
+
+func (m *Messenger) HandleCommunityEncryptionKeysRequest(state *ReceivedMessageState, message *protobuf.CommunityEncryptionKeysRequest, statusMessage *v1protocol.StatusMessage) error {
+	community, err := m.communitiesManager.GetByID(message.CommunityId)
+	if err != nil {
+		return err
+	}
+
+	if !community.IsControlNode() {
+		return communities.ErrNotControlNode
+	}
+	signer := state.CurrentMessageState.PublicKey
+	return m.handleCommunityEncryptionKeysRequest(community, signer)
+}
+
+func (m *Messenger) handleCommunityEncryptionKeysRequest(community *communities.Community, signer *ecdsa.PublicKey) error {
+	if !community.HasMember(signer) {
+		return communities.ErrMemberNotFound
+	}
+
+	keyActions := &communities.EncryptionKeyActions{
+		CommunityKeyAction: communities.EncryptionKeyAction{},
+		ChannelKeysActions: map[string]communities.EncryptionKeyAction{},
+	}
+
+	pkStr := common.PubkeyToHex(signer)
+	members := make(map[string]*protobuf.CommunityMember)
+	members[pkStr] = community.GetMember(signer)
+
+	if community.Encrypted() {
+		keyActions.CommunityKeyAction = communities.EncryptionKeyAction{
+			ActionType: communities.EncryptionKeySendToMembers,
+			Members:    members,
+		}
+	}
+
+	for channelID, channel := range community.Chats() {
+		channelMembers := channel.GetMembers()
+		member, exists := channelMembers[pkStr]
+		if exists && community.ChannelEncrypted(channelID) {
+			members[pkStr] = member
+			keyActions.ChannelKeysActions[channelID] = communities.EncryptionKeyAction{
+				ActionType: communities.EncryptionKeySendToMembers,
+				Members:    members,
+			}
+		}
+	}
+
+	err := m.communitiesKeyDistributor.Distribute(community, keyActions)
+	if err != nil {
+		m.logger.Error("failed to send community keys", zap.Error(err), zap.String("community ID", community.IDString()))
+	}
+
+	return nil
+}
+
+func (m *Messenger) handleCommunityGrant(community *communities.Community, grant []byte, clock uint64) error {
+	difference, err := m.communitiesManager.HandleCommunityGrant(community, grant, clock)
+	if err == communities.ErrGrantOlder || err == communities.ErrGrantExpired {
+		// Don't log an error for these cases
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	// if grant is significantly newer than the one we have, we should check the profile showcase
+	if time.Duration(difference)*time.Millisecond > grantInvokesProfileDispatchInterval {
+		err = m.UpdateProfileShowcaseCommunity(community)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *Messenger) publishGroupGrantMessage(community *communities.Community, timestamp uint64, recipientGrants map[*ecdsa.PublicKey][]byte) error {
+	grants, err := m.encryptor.EncryptCommunityGrants(community.PrivateKey(), recipientGrants)
+	if err != nil {
+		return err
+	}
+
+	message := &protobuf.CommunityUpdateGrant{
+		Timestamp:   timestamp,
+		CommunityId: community.ID(),
+		Grants:      grants,
+	}
+
+	payload, err := proto.Marshal(message)
+	if err != nil {
+		return err
+	}
+
+	rawMessage := common.RawMessage{
+		Payload:             payload,
+		Sender:              community.PrivateKey(),
+		SkipEncryptionLayer: true,
+		MessageType:         protobuf.ApplicationMetadataMessage_COMMUNITY_UPDATE_GRANT,
+		PubsubTopic:         community.PubsubTopic(),
+	}
+
+	_, err = m.sender.SendPublic(context.Background(), community.IDString(), rawMessage)
+	return err
+}
+
+func (m *Messenger) updateGrantsForControlledCommunities() {
+	controlledCommunities, err := m.communitiesManager.Controlled()
+	if err != nil {
+		m.logger.Error("failed fetch controlled communities for grants update", zap.Error(err))
+	}
+
+	for _, community := range controlledCommunities {
+		// Skip unencrypted communities
+		if !community.Encrypted() {
+			continue
+		}
+
+		memberGrants := map[*ecdsa.PublicKey][]byte{}
+		for memberKey := range community.Members() {
+			if memberKey == m.IdentityPublicKeyString() {
+				grant, err := community.BuildGrant(m.IdentityPublicKey(), "")
+				if err != nil {
+					m.logger.Error("can't build own grant for controlled community", zap.Error(err))
+				}
+
+				err = m.handleCommunityGrant(community, grant, uint64(time.Now().UnixMilli()))
+				if err != nil {
+					m.logger.Error("error handling grant for controlled community", zap.Error(err))
+				}
+			} else {
+				memberPubKey, err := common.HexToPubkey(memberKey)
+				if err != nil {
+					m.logger.Error("Pubkey decode ", zap.Error(err))
+				}
+
+				grant, err := community.BuildGrant(memberPubKey, "")
+				if err != nil {
+					m.logger.Error("can't build member's grant for controlled community", zap.Error(err))
+				}
+
+				memberGrants[memberPubKey] = grant
+			}
+		}
+		err = m.publishGroupGrantMessage(community, uint64(time.Now().UnixMilli()), memberGrants)
+		if err != nil {
+			m.logger.Error("failed to update grant for community members", zap.Error(err))
+		}
+	}
+}
+
+func (m *Messenger) schedulePublishGrantsForControlledCommunities() {
+	// Send once immediately
+	m.updateGrantsForControlledCommunities()
+
+	ticker := time.NewTicker(grantUpdateInterval)
+
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				m.updateGrantsForControlledCommunities()
+			case <-m.quit:
+				ticker.Stop()
 				return
 			}
 		}
@@ -776,8 +983,9 @@ func (m *Messenger) unsubscribeFromShard(shard *shard.Shard) error {
 
 func (m *Messenger) joinCommunity(ctx context.Context, communityID types.HexBytes, forceJoin bool) (*MessengerResponse, error) {
 	logger := m.logger.Named("joinCommunity")
-
 	response := &MessengerResponse{}
+	community, _ := m.communitiesManager.GetByID(communityID)
+	isCommunityMember := community.Joined()
 
 	community, err := m.communitiesManager.JoinCommunity(communityID, forceJoin)
 	if err != nil {
@@ -821,6 +1029,19 @@ func (m *Messenger) joinCommunity(ctx context.Context, communityID types.HexByte
 
 	if err = m.PublishIdentityImage(); err != nil {
 		return nil, err
+	}
+	// Was applicant not a member and successfully joined?
+	if !isCommunityMember && community.Joined() {
+		joinedNotification := &localnotifications.Notification{
+			ID:       gethcommon.Hash(types.BytesToHash([]byte(`you-joined-` + communityID.String()))),
+			Title:    community.Name(),
+			Message:  community.Name(),
+			BodyType: localnotifications.CategoryCommunityJoined,
+			Category: localnotifications.CategoryCommunityJoined,
+			Deeplink: "status-app://cr/" + community.IDString(),
+			Image:    "",
+		}
+		response.AddNotification(joinedNotification)
 	}
 
 	return response, nil
@@ -1020,7 +1241,7 @@ func (m *Messenger) generateCommunityRequestsForSigning(memberPubKey string, com
 
 func (m *Messenger) GenerateJoiningCommunityRequestsForSigning(memberPubKey string, communityID types.HexBytes, addressesToReveal []string) ([]account.SignParams, error) {
 	if len(communityID) == 0 {
-		return nil, errors.New("communityID has to be provided")
+		return nil, errors.New(ErrMissingCommunityID)
 	}
 	return m.generateCommunityRequestsForSigning(memberPubKey, communityID, addressesToReveal, false)
 }
@@ -1045,7 +1266,7 @@ func (m *Messenger) SignData(signParams []account.SignParams) ([]string, error) 
 		}
 
 		if account.Chat || account.Type == accounts.AccountTypeWatch {
-			return nil, errors.New("cannot join a community using profile chat or watch-only account")
+			return nil, errors.New(ErrForbiddenProfileOrWatchOnlyAccount)
 		}
 
 		keypair, err := m.settings.GetKeypairByKeyUID(account.KeyUID)
@@ -1054,7 +1275,7 @@ func (m *Messenger) SignData(signParams []account.SignParams) ([]string, error) 
 		}
 
 		if keypair.MigratedToKeycard() {
-			return nil, errors.New("signing a joining community request for accounts migrated to keycard must be done with a keycard")
+			return nil, errors.New(ErrSigningJoinRequestForKeycardAccounts)
 		}
 
 		verifiedAccount, err := m.accountsManager.GetVerifiedWalletAccount(m.settings, param.Address, param.Password)
@@ -1077,6 +1298,8 @@ func (m *Messenger) RequestToJoinCommunity(request *requests.RequestToJoinCommun
 	// TODO: Because of changes that need to be done in tests, calling this function and providing `request` without `AddressesToReveal`
 	//       is not an error, but it should be.
 	logger := m.logger.Named("RequestToJoinCommunity")
+	logger.Debug("Addresses to reveal", zap.Any("Addresses:", request.AddressesToReveal))
+
 	if err := request.Validate(len(request.AddressesToReveal) > 0); err != nil {
 		logger.Debug("request failed to validate", zap.Error(err), zap.Any("request", request))
 		return nil, err
@@ -1092,7 +1315,7 @@ func (m *Messenger) RequestToJoinCommunity(request *requests.RequestToJoinCommun
 		return nil, communities.ErrAlreadyJoined
 	}
 
-	requestToJoin := m.communitiesManager.CreateRequestToJoin(request)
+	requestToJoin := m.communitiesManager.CreateRequestToJoin(request, m.account.GetCustomizationColor())
 
 	if len(request.AddressesToReveal) > 0 {
 		revealedAddresses := make([]gethcommon.Address, 0)
@@ -1123,11 +1346,12 @@ func (m *Messenger) RequestToJoinCommunity(request *requests.RequestToJoinCommun
 	}
 
 	requestToJoinProto := &protobuf.CommunityRequestToJoin{
-		Clock:            requestToJoin.Clock,
-		EnsName:          requestToJoin.ENSName,
-		DisplayName:      displayName,
-		CommunityId:      request.CommunityID,
-		RevealedAccounts: requestToJoin.RevealedAccounts,
+		Clock:              requestToJoin.Clock,
+		EnsName:            requestToJoin.ENSName,
+		DisplayName:        displayName,
+		CommunityId:        request.CommunityID,
+		RevealedAccounts:   requestToJoin.RevealedAccounts,
+		CustomizationColor: multiaccountscommon.ColorToIDFallbackToBlue(requestToJoin.CustomizationColor),
 	}
 
 	community, _, err = m.communitiesManager.SaveRequestToJoinAndCommunity(requestToJoin, community)
@@ -1147,12 +1371,13 @@ func (m *Messenger) RequestToJoinCommunity(request *requests.RequestToJoinCommun
 	rawMessage := common.RawMessage{
 		Payload:             payload,
 		CommunityID:         community.ID(),
+		ResendType:          common.ResendTypeRawMessage,
 		SkipEncryptionLayer: true,
 		MessageType:         protobuf.ApplicationMetadataMessage_COMMUNITY_REQUEST_TO_JOIN,
 		PubsubTopic:         shard.DefaultNonProtectedPubsubTopic(),
 	}
 
-	_, err = m.SendMessageToControlNode(community, rawMessage)
+	_, err = m.SendMessageToControlNode(community, &rawMessage)
 	if err != nil {
 		return nil, err
 	}
@@ -1161,12 +1386,14 @@ func (m *Messenger) RequestToJoinCommunity(request *requests.RequestToJoinCommun
 		privilegedMembers := community.GetFilteredPrivilegedMembers(map[string]struct{}{})
 
 		for _, member := range privilegedMembers[protobuf.CommunityMember_ROLE_OWNER] {
+			rawMessage.Recipients = append(rawMessage.Recipients, member)
 			_, err := m.sender.SendPrivate(context.Background(), member, &rawMessage)
 			if err != nil {
 				return nil, err
 			}
 		}
 		for _, member := range privilegedMembers[protobuf.CommunityMember_ROLE_TOKEN_MASTER] {
+			rawMessage.Recipients = append(rawMessage.Recipients, member)
 			_, err := m.sender.SendPrivate(context.Background(), member, &rawMessage)
 			if err != nil {
 				return nil, err
@@ -1182,11 +1409,16 @@ func (m *Messenger) RequestToJoinCommunity(request *requests.RequestToJoinCommun
 		rawMessage.Payload = payload
 
 		for _, member := range privilegedMembers[protobuf.CommunityMember_ROLE_ADMIN] {
+			rawMessage.Recipients = append(rawMessage.Recipients, member)
 			_, err := m.sender.SendPrivate(context.Background(), member, &rawMessage)
 			if err != nil {
 				return nil, err
 			}
 		}
+	}
+
+	if _, err = m.UpsertRawMessageToWatch(&rawMessage); err != nil {
+		return nil, err
 	}
 
 	response := &MessengerResponse{}
@@ -1253,7 +1485,7 @@ func (m *Messenger) EditSharedAddressesForCommunity(request *requests.EditShared
 	}
 
 	if !community.HasMember(m.IdentityPublicKey()) {
-		return nil, errors.New("not part of the community")
+		return nil, errors.New(ErrNotPartOfCommunity)
 	}
 
 	revealedAddresses := make([]gethcommon.Address, 0)
@@ -1312,9 +1544,10 @@ func (m *Messenger) EditSharedAddressesForCommunity(request *requests.EditShared
 		SkipEncryptionLayer: true,
 		MessageType:         protobuf.ApplicationMetadataMessage_COMMUNITY_EDIT_SHARED_ADDRESSES,
 		PubsubTopic:         community.PubsubTopic(), // TODO: confirm if it should be sent in community pubsub topic
+		ResendType:          common.ResendTypeRawMessage,
 	}
 
-	_, err = m.SendMessageToControlNode(community, rawMessage)
+	_, err = m.SendMessageToControlNode(community, &rawMessage)
 	if err != nil {
 		return nil, err
 	}
@@ -1329,11 +1562,15 @@ func (m *Messenger) EditSharedAddressesForCommunity(request *requests.EditShared
 			continue
 		}
 		for _, member := range members {
+			rawMessage.Recipients = append(rawMessage.Recipients, member)
 			_, err := m.sender.SendPrivate(context.Background(), member, &rawMessage)
 			if err != nil {
 				return nil, err
 			}
 		}
+	}
+	if _, err = m.UpsertRawMessageToWatch(&rawMessage); err != nil {
+		return nil, err
 	}
 
 	response := &MessengerResponse{}
@@ -1459,10 +1696,11 @@ func (m *Messenger) CancelRequestToJoinCommunity(ctx context.Context, request *r
 	}
 
 	cancelRequestToJoinProto := &protobuf.CommunityCancelRequestToJoin{
-		Clock:       community.Clock(),
-		EnsName:     requestToJoin.ENSName,
-		DisplayName: displayName,
-		CommunityId: community.ID(),
+		Clock:              community.Clock(),
+		EnsName:            requestToJoin.ENSName,
+		DisplayName:        displayName,
+		CommunityId:        community.ID(),
+		CustomizationColor: multiaccountscommon.ColorToIDFallbackToBlue(requestToJoin.CustomizationColor),
 	}
 
 	payload, err := proto.Marshal(cancelRequestToJoinProto)
@@ -1476,9 +1714,10 @@ func (m *Messenger) CancelRequestToJoinCommunity(ctx context.Context, request *r
 		SkipEncryptionLayer: true,
 		MessageType:         protobuf.ApplicationMetadataMessage_COMMUNITY_CANCEL_REQUEST_TO_JOIN,
 		PubsubTopic:         shard.DefaultNonProtectedPubsubTopic(),
+		ResendType:          common.ResendTypeRawMessage,
 	}
 
-	_, err = m.SendMessageToControlNode(community, rawMessage)
+	_, err = m.SendMessageToControlNode(community, &rawMessage)
 	if err != nil {
 		return nil, err
 	}
@@ -1489,11 +1728,16 @@ func (m *Messenger) CancelRequestToJoinCommunity(ctx context.Context, request *r
 
 		privilegedMembers := community.GetPrivilegedMembers()
 		for _, privilegedMember := range privilegedMembers {
+			rawMessage.Recipients = append(rawMessage.Recipients, privilegedMember)
 			_, err := m.sender.SendPrivate(context.Background(), privilegedMember, &rawMessage)
 			if err != nil {
 				return nil, err
 			}
 		}
+	}
+
+	if _, err = m.UpsertRawMessageToWatch(&rawMessage); err != nil {
+		return nil, err
 	}
 
 	response := &MessengerResponse{}
@@ -1585,9 +1829,13 @@ func (m *Messenger) acceptRequestToJoinCommunity(requestToJoin *communities.Requ
 		rawMessage := &common.RawMessage{
 			Payload:             payload,
 			Sender:              community.PrivateKey(),
+			CommunityID:         community.ID(),
 			SkipEncryptionLayer: true,
 			MessageType:         protobuf.ApplicationMetadataMessage_COMMUNITY_REQUEST_TO_JOIN_RESPONSE,
 			PubsubTopic:         shard.DefaultNonProtectedPubsubTopic(),
+			ResendType:          common.ResendTypeRawMessage,
+			ResendMethod:        common.ResendMethodSendPrivate,
+			Recipients:          []*ecdsa.PublicKey{pk},
 		}
 
 		if community.Encrypted() {
@@ -1597,6 +1845,10 @@ func (m *Messenger) acceptRequestToJoinCommunity(requestToJoin *communities.Requ
 
 		_, err = m.sender.SendPrivate(context.Background(), pk, rawMessage)
 		if err != nil {
+			return nil, err
+		}
+
+		if _, err = m.UpsertRawMessageToWatch(rawMessage); err != nil {
 			return nil, err
 		}
 	}
@@ -1776,10 +2028,15 @@ func (m *Messenger) LeaveCommunity(communityID types.HexBytes) (*MessengerRespon
 			SkipEncryptionLayer: true,
 			MessageType:         protobuf.ApplicationMetadataMessage_COMMUNITY_REQUEST_TO_LEAVE,
 			PubsubTopic:         community.PubsubTopic(), // TODO: confirm if it should be sent in the community pubsub topic
+			ResendType:          common.ResendTypeRawMessage,
 		}
 
-		_, err = m.SendMessageToControlNode(community, rawMessage)
+		_, err = m.SendMessageToControlNode(community, &rawMessage)
 		if err != nil {
+			return nil, err
+		}
+
+		if _, err = m.UpsertRawMessageToWatch(&rawMessage); err != nil {
 			return nil, err
 		}
 	}
@@ -2141,7 +2398,7 @@ func (m *Messenger) SetCommunityShard(request *requests.SetCommunityShard) (*Mes
 	}
 
 	if !community.IsControlNode() {
-		return nil, errors.New("not admin or owner")
+		return nil, errors.New(ErrNotAdminOrOwner)
 	}
 
 	// Reset the community private key
@@ -2220,7 +2477,7 @@ func (m *Messenger) SetCommunityStorenodes(request *requests.SetCommunityStoreno
 		return nil, err
 	}
 	if !community.IsControlNode() {
-		return nil, errors.New("not admin or owner")
+		return nil, errors.New(ErrNotAdminOrOwner)
 	}
 
 	if err := m.communityStorenodes.UpdateStorenodesInDB(request.CommunityID, request.Storenodes, 0); err != nil {
@@ -2311,14 +2568,7 @@ func (m *Messenger) CreateCommunityTokenPermission(request *requests.CreateCommu
 	}
 
 	if community.IsControlNode() {
-		// check existing member permission once, then check periodically
-		go func() {
-			if err := m.communitiesManager.ReevaluateCommunityMembersPermissions(community); err != nil {
-				m.logger.Debug("failed to check member permissions", zap.Error(err))
-			}
-
-			m.communitiesManager.ReevaluateMembersPeriodically(community.ID())
-		}()
+		m.communitiesManager.StartMembersReevaluationLoop(community.ID(), true)
 	}
 
 	// ensure HRkeys are synced
@@ -2351,11 +2601,10 @@ func (m *Messenger) EditCommunityTokenPermission(request *requests.EditCommunity
 	//
 	// We do this in a separate routine to not block this function
 	if community.IsControlNode() {
-		go func() {
-			if err := m.communitiesManager.ReevaluateCommunityMembersPermissions(community); err != nil {
-				m.logger.Debug("failed to check member permissions", zap.Error(err))
-			}
-		}()
+		err = m.communitiesManager.ScheduleMembersReevaluation(community.ID())
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	response := &MessengerResponse{}
@@ -2378,11 +2627,10 @@ func (m *Messenger) DeleteCommunityTokenPermission(request *requests.DeleteCommu
 	// check if members still fulfill the token criteria
 	// We do this in a separate routine to not block this function
 	if community.IsControlNode() {
-		go func() {
-			if err = m.communitiesManager.ReevaluateCommunityMembersPermissions(community); err != nil {
-				m.logger.Debug("failed to check member permissions", zap.Error(err))
-			}
-		}()
+		err = m.communitiesManager.ScheduleMembersReevaluation(community.ID())
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	response := &MessengerResponse{}
@@ -2441,7 +2689,7 @@ func (m *Messenger) ReevaluateCommunityMembersPermissions(request *requests.Reev
 			MessageType:         protobuf.ApplicationMetadataMessage_COMMUNITY_REEVALUATE_PERMISSIONS_REQUEST,
 			PubsubTopic:         community.PubsubTopic(),
 		}
-		_, err = m.SendMessageToControlNode(community, rawMessage)
+		_, err = m.SendMessageToControlNode(community, &rawMessage)
 		if err != nil {
 			return nil, err
 		}
@@ -2711,10 +2959,10 @@ func (m *Messenger) SendCommunityShardKey(community *communities.Community, pubk
 	}
 
 	rawMessage := common.RawMessage{
-		Recipients:          pubkeys,
-		ResendAutomatically: true,
-		MessageType:         protobuf.ApplicationMetadataMessage_COMMUNITY_SHARD_KEY,
-		Payload:             encodedMessage,
+		Recipients:  pubkeys,
+		ResendType:  common.ResendTypeDataSync,
+		MessageType: protobuf.ApplicationMetadataMessage_COMMUNITY_SHARD_KEY,
+		Payload:     encodedMessage,
 	}
 
 	_, err = m.sender.SendPubsubTopicKey(context.Background(), &rawMessage)
@@ -2925,7 +3173,7 @@ func (m *Messenger) handleCommunityResponse(state *ReceivedMessageState, communi
 
 	removedChatIDs := make([]string, 0)
 	for id := range communityResponse.Changes.ChatsRemoved {
-		chatID := community.IDString() + id
+		chatID := community.ChatID(id)
 		_, ok := state.AllChats.Load(chatID)
 		if ok {
 			removedChatIDs = append(removedChatIDs, chatID)
@@ -2933,6 +3181,24 @@ func (m *Messenger) handleCommunityResponse(state *ReceivedMessageState, communi
 			err := m.DeleteChat(chatID)
 			if err != nil {
 				m.logger.Error("couldn't delete chat", zap.Error(err))
+			}
+		}
+	}
+
+	// Check if we have been removed from a chat (ie no longer have access)
+	for channelID, changes := range communityResponse.Changes.ChatsModified {
+		if _, ok := changes.MembersRemoved[common.PubkeyToHex(&m.identity.PublicKey)]; ok {
+			chatID := community.ChatID(channelID)
+
+			if chat, ok := state.AllChats.Load(chatID); ok {
+				// Reset the chat's message counts
+				chat.UnviewedMessagesCount = 0
+				chat.UnviewedMentionsCount = 0
+				err := m.saveChat(chat)
+				if err != nil {
+					return err
+				}
+				state.Response.AddChat(chat)
 			}
 		}
 	}
@@ -3068,30 +3334,6 @@ func (m *Messenger) HandleCommunityEventsMessage(state *ReceivedMessageState, me
 	return m.handleCommunityResponse(state, communityResponse)
 }
 
-// Re-sends rejected events, if any.
-func (m *Messenger) HandleCommunityEventsMessageRejected(state *ReceivedMessageState, message *protobuf.CommunityEventsMessageRejected, statusMessage *v1protocol.StatusMessage) error {
-	signer := state.CurrentMessageState.PublicKey
-	reapplyEventsMessage, err := m.communitiesManager.HandleCommunityEventsMessageRejected(signer, message)
-	if err != nil {
-		return err
-	}
-	if reapplyEventsMessage == nil {
-		return nil
-	}
-
-	community, err := m.communitiesManager.GetByID(reapplyEventsMessage.CommunityID)
-	if err != nil {
-		return err
-	}
-
-	err = m.publishCommunityEvents(community, reapplyEventsMessage)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
 // HandleCommunityShardKey handles the private keys for the community shards
 func (m *Messenger) HandleCommunityShardKey(state *ReceivedMessageState, message *protobuf.CommunityShardKey, statusMessage *v1protocol.StatusMessage) error {
 	community, err := m.communitiesManager.GetByID(message.CommunityId)
@@ -3106,7 +3348,7 @@ func (m *Messenger) HandleCommunityShardKey(state *ReceivedMessageState, message
 
 	signer := state.CurrentMessageState.PublicKey
 	if signer == nil {
-		return errors.New("signer can't be nil")
+		return errors.New(ErrReceiverIsNil)
 	}
 
 	err = m.handleCommunityShardAndFiltersFromProto(community, message)
@@ -3166,7 +3408,7 @@ func (m *Messenger) handleCommunityShardAndFiltersFromProto(community *communiti
 
 func (m *Messenger) handleCommunityPrivilegedUserSyncMessage(state *ReceivedMessageState, signer *ecdsa.PublicKey, message *protobuf.CommunityPrivilegedUserSyncMessage) error {
 	if signer == nil {
-		return errors.New("signer can't be nil")
+		return errors.New(ErrSignerIsNil)
 	}
 
 	community, err := m.communitiesManager.GetByID(message.CommunityId)
@@ -3179,7 +3421,7 @@ func (m *Messenger) handleCommunityPrivilegedUserSyncMessage(state *ReceivedMess
 	// CONTROL_NODE were sent by a control node
 	isControlNodeMsg := common.IsPubKeyEqual(community.ControlNode(), signer)
 	if !isControlNodeMsg {
-		return errors.New("accepted/requested to join sync messages can be send only by the control node")
+		return errors.New(ErrSyncMessagesSentByNonControlNode)
 	}
 
 	err = m.communitiesManager.ValidateCommunityPrivilegedUserSyncMessage(message)
@@ -3215,7 +3457,7 @@ func (m *Messenger) HandleCommunityPrivilegedUserSyncMessage(state *ReceivedMess
 
 func (m *Messenger) sendSharedAddressToControlNode(receiver *ecdsa.PublicKey, community *communities.Community) (*communities.RequestToJoin, error) {
 	if receiver == nil {
-		return nil, errors.New("receiver can't be nil")
+		return nil, errors.New(ErrReceiverIsNil)
 	}
 
 	if community == nil {
@@ -3265,6 +3507,9 @@ func (m *Messenger) sendSharedAddressToControlNode(receiver *ecdsa.PublicKey, co
 		SkipEncryptionLayer: true,
 		MessageType:         protobuf.ApplicationMetadataMessage_COMMUNITY_REQUEST_TO_JOIN,
 		PubsubTopic:         community.PubsubTopic(), // TODO: confirm if it should be sent in community pubsub topic
+		ResendType:          common.ResendTypeRawMessage,
+		ResendMethod:        common.ResendMethodSendPrivate,
+		Recipients:          []*ecdsa.PublicKey{receiver},
 	}
 
 	if err = m.communitiesManager.SaveRequestToJoin(requestToJoin); err != nil {
@@ -3272,6 +3517,12 @@ func (m *Messenger) sendSharedAddressToControlNode(receiver *ecdsa.PublicKey, co
 	}
 
 	_, err = m.sender.SendPrivate(context.Background(), receiver, &rawMessage)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = m.UpsertRawMessageToWatch(&rawMessage)
+
 	return requestToJoin, err
 }
 
@@ -3857,10 +4108,10 @@ func (m *Messenger) SyncCommunitySettings(ctx context.Context, settings *communi
 	}
 
 	_, err = m.dispatchMessage(ctx, common.RawMessage{
-		LocalChatID:         chat.ID,
-		Payload:             encodedMessage,
-		MessageType:         protobuf.ApplicationMetadataMessage_SYNC_COMMUNITY_SETTINGS,
-		ResendAutomatically: true,
+		LocalChatID: chat.ID,
+		Payload:     encodedMessage,
+		MessageType: protobuf.ApplicationMetadataMessage_SYNC_COMMUNITY_SETTINGS,
+		ResendType:  common.ResendTypeDataSync,
 	})
 	if err != nil {
 		return err
@@ -3970,6 +4221,10 @@ func (m *Messenger) GetCommunityToken(communityID string, chainID int, address s
 	return m.communitiesManager.GetCommunityToken(communityID, chainID, address)
 }
 
+func (m *Messenger) GetCommunityTokenByChainAndAddress(chainID int, address string) (*token.CommunityToken, error) {
+	return m.communitiesManager.GetCommunityTokenByChainAndAddress(chainID, address)
+}
+
 func (m *Messenger) GetCommunityTokens(communityID string) ([]*token.CommunityToken, error) {
 	return m.communitiesManager.GetCommunityTokens(communityID)
 }
@@ -4067,6 +4322,14 @@ func (m *Messenger) CheckPermissionsToJoinCommunity(request *requests.CheckPermi
 	return m.communitiesManager.CheckPermissionToJoin(request.CommunityID, addresses)
 }
 
+func (m *Messenger) CheckPermissionsToJoinCommunityLight(request *requests.CheckPermissionToJoinCommunity) (bool, error) {
+	if err := request.Validate(); err != nil {
+		return false, err
+	}
+
+	return m.communitiesManager.CheckPermissionToJoinLight(request.CommunityID)
+}
+
 func (m *Messenger) getSharedAddresses(communityID types.HexBytes, requestAddresses []string) ([]gethcommon.Address, error) {
 	addressesMap := make(map[string]struct{})
 
@@ -4128,6 +4391,22 @@ func (m *Messenger) CheckAllCommunityChannelsPermissions(request *requests.Check
 	}
 
 	return m.communitiesManager.CheckAllChannelsPermissions(request.CommunityID, addresses)
+}
+
+func (m *Messenger) CheckCommunityChannelPermissionsLight(request *requests.CheckCommunityChannelPermissions) (*communities.CheckChannelPermissionsResponse, error) {
+	if err := request.Validate(); err != nil {
+		return nil, err
+	}
+
+	return m.communitiesManager.CheckChannelPermissionsLight(request.CommunityID, request.ChatID)
+}
+
+func (m *Messenger) CheckAllCommunityChannelsPermissionsLight(request *requests.CheckAllCommunityChannelsPermissions) (*communities.CheckAllChannelsPermissionsResponse, error) {
+	if err := request.Validate(); err != nil {
+		return nil, err
+	}
+
+	return m.communitiesManager.CheckAllChannelsPermissionsLight(request.CommunityID)
 }
 
 func (m *Messenger) GetCommunityCheckChannelPermissionResponses(communityID types.HexBytes) (*communities.CheckAllChannelsPermissionsResponse, error) {
@@ -4334,6 +4613,10 @@ func (m *Messenger) PromoteSelfToControlNode(communityID types.HexBytes) (*Messe
 		return nil, err
 	}
 
+	if !communities.HasTokenOwnership(community.Description()) {
+		return nil, errors.New(ErrOwnerTokenNeeded)
+	}
+
 	changes, err := m.communitiesManager.PromoteSelfToControlNode(community, clock)
 	if err != nil {
 		return nil, err
@@ -4399,11 +4682,20 @@ func (m *Messenger) CreateResponseWithACNotification(communityID string, acType 
 	return response, nil
 }
 
-func (m *Messenger) SendMessageToControlNode(community *communities.Community, rawMessage common.RawMessage) ([]byte, error) {
+// SendMessageToControlNode sends a message to the control node of the community.
+// use pointer to rawMessage to get the message ID and other updated properties.
+func (m *Messenger) SendMessageToControlNode(community *communities.Community, rawMessage *common.RawMessage) ([]byte, error) {
 	if !community.PublicKey().Equal(community.ControlNode()) {
-		return m.sender.SendPrivate(context.Background(), community.ControlNode(), &rawMessage)
+		rawMessage.ResendMethod = common.ResendMethodSendPrivate
+		rawMessage.Recipients = append(rawMessage.Recipients, community.ControlNode())
+		return m.sender.SendPrivate(context.Background(), community.ControlNode(), rawMessage)
 	}
-
+	rawMessage.ResendMethod = common.ResendMethodSendCommunityMessage
+	// Note: There are multiple instances where SendMessageToControlNode is invoked throughout the codebase.
+	// Additionally, some callers may invoke SendPrivate before SendMessageToControlNode. This could potentially
+	// lead to a situation where the same raw message is sent using different methods, which, from a code perspective,
+	// seems erroneous when implementing raw message resending. However, this behavior is intentional and is not considered
+	// an issue. For a detailed explanation, refer https://github.com/status-im/status-go/pull/4969#issuecomment-2040891184
 	return m.sender.SendCommunityMessage(context.Background(), rawMessage)
 }
 
@@ -4475,7 +4767,10 @@ func (m *Messenger) GetCommunityMemberAllMessages(request *requests.CommunityMem
 
 		messages = append(messages, updatedMessages...)
 	}
-
+	err = m.prepareMessagesList(messages)
+	if err != nil {
+		return nil, err
+	}
 	return messages, nil
 
 }

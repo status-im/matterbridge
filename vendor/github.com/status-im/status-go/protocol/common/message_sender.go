@@ -1,16 +1,13 @@
 package common
 
 import (
-	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"database/sql"
-	"math"
 	"sync"
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/jinzhu/copier"
 	"github.com/pkg/errors"
 	datasyncnode "github.com/status-im/mvds/node"
 	datasyncproto "github.com/status-im/mvds/protobuf"
@@ -169,7 +166,7 @@ func (s *MessageSender) SendPrivate(
 	// Currently we don't support sending through datasync and setting custom waku fields,
 	// as the datasync interface is not rich enough to propagate that information, so we
 	// would have to add some complexity to handle this.
-	if rawMessage.ResendAutomatically && (rawMessage.Sender != nil || rawMessage.SkipEncryptionLayer || rawMessage.SendOnPersonalTopic) {
+	if rawMessage.ResendType == ResendTypeDataSync && (rawMessage.Sender != nil || rawMessage.SkipEncryptionLayer || rawMessage.SendOnPersonalTopic) {
 		return nil, errors.New("setting identity, skip-encryption or personal topic and datasync not supported")
 	}
 
@@ -185,7 +182,7 @@ func (s *MessageSender) SendPrivate(
 // using the community topic and their key
 func (s *MessageSender) SendCommunityMessage(
 	ctx context.Context,
-	rawMessage RawMessage,
+	rawMessage *RawMessage,
 ) ([]byte, error) {
 	s.logger.Debug(
 		"sending a community message",
@@ -194,7 +191,7 @@ func (s *MessageSender) SendCommunityMessage(
 	)
 	rawMessage.Sender = s.identity
 
-	return s.sendCommunity(ctx, &rawMessage)
+	return s.sendCommunity(ctx, rawMessage)
 }
 
 // SendPubsubTopicKey sends the protected topic key for a community to a list of recipients
@@ -424,7 +421,7 @@ func (s *MessageSender) sendPrivate(
 	// earlier than the scheduled
 	s.notifyOnScheduledMessage(recipient, rawMessage)
 
-	if s.datasync != nil && s.featureFlags.Datasync && rawMessage.ResendAutomatically {
+	if s.datasync != nil && s.featureFlags.Datasync && rawMessage.ResendType == ResendTypeDataSync {
 		// No need to call transport tracking.
 		// It is done in a data sync dispatch step.
 		datasyncID, err := s.addToDataSync(recipient, wrappedMessage)
@@ -897,7 +894,7 @@ func (s *MessageSender) handleMessage(wakuMessage *types.Message) (*handleMessag
 		return nil, err
 	}
 
-	err = s.handleSegmentationLayer(message)
+	err = s.handleSegmentationLayerV2(message)
 	if err != nil {
 		hlogger.Debug("failed to handle segmentation layer message", zap.Error(err))
 
@@ -1282,147 +1279,10 @@ func (s *MessageSender) GetKeysForGroup(groupID []byte) ([]*encryption.HashRatch
 	return s.protocol.GetKeysForGroup(groupID)
 }
 
-// Segments message into smaller chunks if the size exceeds the maximum allowed
-func segmentMessage(newMessage *types.NewMessage, maxSegmentSize int) ([]*types.NewMessage, error) {
-	if len(newMessage.Payload) <= maxSegmentSize {
-		return []*types.NewMessage{newMessage}, nil
-	}
-
-	createSegment := func(chunkPayload []byte) (*types.NewMessage, error) {
-		copy := &types.NewMessage{}
-		err := copier.Copy(copy, newMessage)
-		if err != nil {
-			return nil, err
-		}
-
-		copy.Payload = chunkPayload
-		copy.PowTarget = calculatePoW(chunkPayload)
-		return copy, nil
-	}
-
-	entireMessageHash := crypto.Keccak256(newMessage.Payload)
-	payloadSize := len(newMessage.Payload)
-	segmentsCount := int(math.Ceil(float64(payloadSize) / float64(maxSegmentSize)))
-
-	var segmentMessages []*types.NewMessage
-
-	for start, index := 0, 0; start < payloadSize; start += maxSegmentSize {
-		end := start + maxSegmentSize
-		if end > payloadSize {
-			end = payloadSize
-		}
-
-		chunk := newMessage.Payload[start:end]
-
-		segmentMessageProto := &protobuf.SegmentMessage{
-			EntireMessageHash: entireMessageHash,
-			Index:             uint32(index),
-			SegmentsCount:     uint32(segmentsCount),
-			Payload:           chunk,
-		}
-		chunkPayload, err := proto.Marshal(segmentMessageProto)
-		if err != nil {
-			return nil, err
-		}
-		segmentMessage, err := createSegment(chunkPayload)
-		if err != nil {
-			return nil, err
-		}
-
-		segmentMessages = append(segmentMessages, segmentMessage)
-		index++
-	}
-
-	return segmentMessages, nil
-}
-
-func (s *MessageSender) segmentMessage(newMessage *types.NewMessage) ([]*types.NewMessage, error) {
-	// We set the max message size to 3/4 of the allowed message size, to leave
-	// room for segment message metadata.
-	newMessages, err := segmentMessage(newMessage, int(s.transport.MaxMessageSize()/4*3))
-	s.logger.Debug("message segmented", zap.Int("segments", len(newMessages)))
-	return newMessages, err
-}
-
-var ErrMessageSegmentsIncomplete = errors.New("message segments incomplete")
-var ErrMessageSegmentsAlreadyCompleted = errors.New("message segments already completed")
-var ErrMessageSegmentsInvalidCount = errors.New("invalid segments count")
-var ErrMessageSegmentsHashMismatch = errors.New("hash of entire payload does not match")
-
-func (s *MessageSender) handleSegmentationLayer(message *v1protocol.StatusMessage) error {
-	logger := s.logger.With(zap.String("site", "handleSegmentationLayer"))
-	hlogger := logger.With(zap.String("hash", types.HexBytes(message.TransportLayer.Hash).String()))
-
-	var segmentMessage protobuf.SegmentMessage
-	err := proto.Unmarshal(message.TransportLayer.Payload, &segmentMessage)
-	if err != nil {
-		return errors.Wrap(err, "failed to unmarshal SegmentMessage")
-	}
-
-	hlogger.Debug("handling message segment", zap.String("EntireMessageHash", types.HexBytes(segmentMessage.EntireMessageHash).String()),
-		zap.Uint32("Index", segmentMessage.Index), zap.Uint32("SegmentsCount", segmentMessage.SegmentsCount))
-
-	alreadyCompleted, err := s.persistence.IsMessageAlreadyCompleted(segmentMessage.EntireMessageHash)
-	if err != nil {
-		return err
-	}
-	if alreadyCompleted {
-		return ErrMessageSegmentsAlreadyCompleted
-	}
-
-	if segmentMessage.SegmentsCount < 2 {
-		return ErrMessageSegmentsInvalidCount
-	}
-
-	err = s.persistence.SaveMessageSegment(&segmentMessage, message.TransportLayer.SigPubKey, time.Now().Unix())
-	if err != nil {
-		return err
-	}
-
-	segments, err := s.persistence.GetMessageSegments(segmentMessage.EntireMessageHash, message.TransportLayer.SigPubKey)
-	if err != nil {
-		return err
-	}
-
-	if len(segments) != int(segmentMessage.SegmentsCount) {
-		return ErrMessageSegmentsIncomplete
-	}
-
-	// Combine payload
-	var entirePayload bytes.Buffer
-	for _, segment := range segments {
-		_, err := entirePayload.Write(segment.Payload)
-		if err != nil {
-			return errors.Wrap(err, "failed to write segment payload")
-		}
-	}
-
-	// Sanity check
-	entirePayloadHash := crypto.Keccak256(entirePayload.Bytes())
-	if !bytes.Equal(entirePayloadHash, segmentMessage.EntireMessageHash) {
-		return ErrMessageSegmentsHashMismatch
-	}
-
-	err = s.persistence.CompleteMessageSegments(segmentMessage.EntireMessageHash, message.TransportLayer.SigPubKey, time.Now().Unix())
-	if err != nil {
-		return err
-	}
-
-	message.TransportLayer.Payload = entirePayload.Bytes()
-
-	return nil
-}
-
-func (s *MessageSender) CleanupSegments() error {
-	weekAgo := time.Now().AddDate(0, 0, -7).Unix()
+func (s *MessageSender) CleanupHashRatchetEncryptedMessages() error {
 	monthAgo := time.Now().AddDate(0, -1, 0).Unix()
 
-	err := s.persistence.RemoveMessageSegmentsOlderThan(weekAgo)
-	if err != nil {
-		return err
-	}
-
-	err = s.persistence.RemoveMessageSegmentsCompletedOlderThan(monthAgo)
+	err := s.persistence.DeleteHashRatchetMessagesOlderThan(monthAgo)
 	if err != nil {
 		return err
 	}
