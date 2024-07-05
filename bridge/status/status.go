@@ -223,6 +223,10 @@ func (b *Bstatus) propagateMessage(msg *common.Message) {
 	}
 }
 
+func (b *Bstatus) nl2br(input string) string {
+	return strings.Replace(input, "\n", "<br/>", -1)
+}
+
 // Converts a bridge message into a Status message
 func (b *Bstatus) toStatusMsg(msg config.Message) *common.Message {
 	message := common.NewMessage()
@@ -282,6 +286,8 @@ func (b *Bstatus) Send(msg config.Message) (string, error) {
 	if !b.connected() {
 		return "", fmt.Errorf("bridge %s not connected, dropping message %#v to bridge", b.Account, msg)
 	}
+
+	msg.Text = b.nl2br(msg.Text)
 
 	b.Log.Debugf("=> Sending message %#v", msg)
 
