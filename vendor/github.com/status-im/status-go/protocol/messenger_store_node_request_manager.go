@@ -99,7 +99,7 @@ func (m *StoreNodeRequestManager) FetchCommunity(community communities.Community
 	communityShard := community.Shard
 	if communityShard == nil {
 		id := transport.CommunityShardInfoTopic(community.CommunityID)
-		fetchedShard, err := m.subscribeToRequest(storeNodeShardRequest, id, shard.DefaultShard(), cfg)
+		fetchedShard, err := m.subscribeToRequest(storeNodeShardRequest, id, shard.DefaultNonProtectedShard(), cfg)
 		if err != nil {
 			return nil, StoreNodeRequestStats{}, fmt.Errorf("failed to create a shard info request: %w", err)
 		}
@@ -150,6 +150,8 @@ func (m *StoreNodeRequestManager) FetchCommunities(communities []communities.Com
 	return outErr
 }
 
+// FetchContact - similar to FetchCommunity
+// If a `nil` contact and a `nil` error are returned, it means that the contact wasn't found at the store node.
 func (m *StoreNodeRequestManager) FetchContact(contactID string, opts []StoreNodeRequestOption) (*Contact, StoreNodeRequestStats, error) {
 
 	cfg := buildStoreNodeRequestConfig(opts)
@@ -276,6 +278,8 @@ func (m *StoreNodeRequestManager) getFilter(requestType storeNodeRequestType, da
 	default:
 		return nil, false, fmt.Errorf("invalid store node request type: %d", requestType)
 	}
+
+	filter.Ephemeral = true
 
 	return filter, true, nil
 }

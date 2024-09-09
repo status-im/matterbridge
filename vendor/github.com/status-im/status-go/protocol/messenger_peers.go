@@ -13,7 +13,7 @@ func (m *Messenger) AddStorePeer(address string) (peer.ID, error) {
 }
 
 func (m *Messenger) AddRelayPeer(address string) (peer.ID, error) {
-	return m.transport.AddStorePeer(address)
+	return m.transport.AddRelayPeer(address)
 }
 
 func (m *Messenger) DialPeer(address string) error {
@@ -32,8 +32,16 @@ func (m *Messenger) Peers() map[string]types.WakuV2Peer {
 	return m.transport.Peers()
 }
 
+func (m *Messenger) RelayPeersByTopic(topic string) (*types.PeerList, error) {
+	return m.transport.RelayPeersByTopic(topic)
+}
+
 func (m *Messenger) ListenAddresses() ([]string, error) {
 	return m.transport.ListenAddresses()
+}
+
+func (m *Messenger) ENR() (string, error) {
+	return m.transport.ENR()
 }
 
 // Subscribe to a pubsub topic, passing an optional public key if the pubsub topic is protected

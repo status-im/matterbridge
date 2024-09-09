@@ -37,6 +37,7 @@ import (
 	"github.com/status-im/status-go/services/browsers"
 	"github.com/status-im/status-go/services/chat"
 	"github.com/status-im/status-go/services/communitytokens"
+	"github.com/status-im/status-go/services/connector"
 	"github.com/status-im/status-go/services/ens"
 	"github.com/status-im/status-go/services/ext"
 	"github.com/status-im/status-go/services/gif"
@@ -99,6 +100,7 @@ func (b *StatusNode) initServices(config *params.NodeConfig, mediaServer *server
 	services = appendIf(config.PermissionsConfig.Enabled, services, b.permissionsService())
 	services = appendIf(config.MailserversConfig.Enabled, services, b.mailserversService())
 	services = appendIf(config.Web3ProviderConfig.Enabled, services, b.providerService(accDB))
+	services = appendIf(config.ConnectorConfig.Enabled, services, b.connectorService())
 	services = append(services, b.gifService(accDB))
 	services = append(services, b.ChatService(accDB))
 
@@ -142,9 +144,11 @@ func (b *StatusNode) initServices(config *params.NodeConfig, mediaServer *server
 			if err != nil {
 				return err
 			}
+			if telemetryServerURL != "" {
+				config.WakuV2Config.TelemetryServerURL = telemetryServerURL
+			}
 		}
-
-		waku2Service, err := b.wakuV2Service(config, telemetryServerURL)
+		waku2Service, err := b.wakuV2Service(config)
 		if err != nil {
 			return err
 		}
@@ -312,28 +316,29 @@ func (b *StatusNode) wakuService(wakuCfg *params.WakuConfig, clusterCfg *params.
 
 }
 
-func (b *StatusNode) wakuV2Service(nodeConfig *params.NodeConfig, telemetryServerURL string) (*wakuv2.Waku, error) {
+func (b *StatusNode) wakuV2Service(nodeConfig *params.NodeConfig) (*wakuv2.Waku, error) {
 	if b.wakuV2Srvc == nil {
 		cfg := &wakuv2.Config{
-			MaxMessageSize:          wakucommon.DefaultMaxMessageSize,
-			Host:                    nodeConfig.WakuV2Config.Host,
-			Port:                    nodeConfig.WakuV2Config.Port,
-			LightClient:             nodeConfig.WakuV2Config.LightClient,
-			KeepAliveInterval:       nodeConfig.WakuV2Config.KeepAliveInterval,
-			Rendezvous:              nodeConfig.Rendezvous,
-			WakuNodes:               nodeConfig.ClusterConfig.WakuNodes,
-			EnableStore:             nodeConfig.WakuV2Config.EnableStore,
-			StoreCapacity:           nodeConfig.WakuV2Config.StoreCapacity,
-			StoreSeconds:            nodeConfig.WakuV2Config.StoreSeconds,
-			DiscoveryLimit:          nodeConfig.WakuV2Config.DiscoveryLimit,
-			DiscV5BootstrapNodes:    nodeConfig.ClusterConfig.DiscV5BootstrapNodes,
-			Nameserver:              nodeConfig.WakuV2Config.Nameserver,
-			UDPPort:                 nodeConfig.WakuV2Config.UDPPort,
-			AutoUpdate:              nodeConfig.WakuV2Config.AutoUpdate,
-			DefaultShardPubsubTopic: shard.DefaultShardPubsubTopic(),
-			UseShardAsDefaultTopic:  nodeConfig.WakuV2Config.UseShardAsDefaultTopic,
-			TelemetryServerURL:      telemetryServerURL,
-			ClusterID:               nodeConfig.ClusterConfig.ClusterID,
+			MaxMessageSize:                         wakucommon.DefaultMaxMessageSize,
+			Host:                                   nodeConfig.WakuV2Config.Host,
+			Port:                                   nodeConfig.WakuV2Config.Port,
+			LightClient:                            nodeConfig.WakuV2Config.LightClient,
+			Rendezvous:                             nodeConfig.Rendezvous,
+			WakuNodes:                              nodeConfig.ClusterConfig.WakuNodes,
+			EnableStore:                            nodeConfig.WakuV2Config.EnableStore,
+			StoreCapacity:                          nodeConfig.WakuV2Config.StoreCapacity,
+			StoreSeconds:                           nodeConfig.WakuV2Config.StoreSeconds,
+			DiscoveryLimit:                         nodeConfig.WakuV2Config.DiscoveryLimit,
+			DiscV5BootstrapNodes:                   nodeConfig.ClusterConfig.DiscV5BootstrapNodes,
+			Nameserver:                             nodeConfig.WakuV2Config.Nameserver,
+			UDPPort:                                nodeConfig.WakuV2Config.UDPPort,
+			AutoUpdate:                             nodeConfig.WakuV2Config.AutoUpdate,
+			DefaultShardPubsubTopic:                shard.DefaultShardPubsubTopic(),
+			TelemetryServerURL:                     nodeConfig.WakuV2Config.TelemetryServerURL,
+			ClusterID:                              nodeConfig.ClusterConfig.ClusterID,
+			EnableMissingMessageVerification:       nodeConfig.WakuV2Config.EnableMissingMessageVerification,
+			EnableStoreConfirmationForMessagesSent: nodeConfig.WakuV2Config.EnableStoreConfirmationForMessagesSent,
+			UseThrottledPublish:                    true,
 		}
 
 		// Configure peer exchange and discv5 settings based on node type
@@ -421,6 +426,13 @@ func wakuRateLimiter(wakuCfg *params.WakuConfig, clusterCfg *params.ClusterConfi
 			Tolerance: wakuCfg.RateLimitTolerance,
 		},
 	)
+}
+
+func (b *StatusNode) connectorService() *connector.Service {
+	if b.connectorSrvc == nil {
+		b.connectorSrvc = connector.NewService(b.walletDB, b.rpcClient, b.rpcClient.NetworkManager)
+	}
+	return b.connectorSrvc
 }
 
 func (b *StatusNode) rpcFiltersService() *rpcfilters.Service {

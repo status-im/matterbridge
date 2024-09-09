@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"database/sql"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -33,8 +34,9 @@ const (
 	whisperLargeSizePoW = 0.000002
 	// largeSizeInBytes is when should we be using a lower POW.
 	// Roughly this is 50KB
-	largeSizeInBytes = 50000
-	whisperPoWTime   = 5
+	largeSizeInBytes              = 50000
+	whisperPoWTime                = 5
+	maxMessageSenderEphemeralKeys = 3
 )
 
 // RekeyCompatibility indicates whether we should be sending
@@ -126,7 +128,7 @@ func (s *MessageSender) SetHandleSharedSecrets(handler func([]*sharedsecret.Secr
 	s.handleSharedSecrets = handler
 }
 
-func (s *MessageSender) StartDatasync(handler func(peer state.PeerID, payload *datasyncproto.Payload) error) error {
+func (s *MessageSender) StartDatasync(statusChangeEvent chan datasyncnode.PeerStatusChangeEvent, handler func(peer state.PeerID, payload *datasyncproto.Payload) error) error {
 	if !s.datasyncEnabled {
 		return nil
 	}
@@ -138,6 +140,7 @@ func (s *MessageSender) StartDatasync(handler func(peer state.PeerID, payload *d
 		datasyncpeer.PublicKeyToPeerID(s.identity.PublicKey),
 		datasyncnode.BATCH,
 		datasync.CalculateSendTime,
+		statusChangeEvent,
 		s.logger,
 	)
 	if err != nil {
@@ -210,7 +213,9 @@ func (s *MessageSender) SendPubsubTopicKey(
 		return nil, err
 	}
 
-	rawMessage.ID = types.EncodeHex(messageID)
+	if err = s.setMessageID(messageID, rawMessage); err != nil {
+		return nil, err
+	}
 
 	// Notify before dispatching, otherwise the dispatch subscription might happen
 	// earlier than the scheduled
@@ -244,12 +249,14 @@ func (s *MessageSender) SendGroup(
 	}
 
 	// Calculate messageID first and set on raw message
-	wrappedMessage, err := s.wrapMessageV1(&rawMessage)
+	messageID, err := s.getMessageID(&rawMessage)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to wrap message")
+		return nil, err
 	}
-	messageID := v1protocol.MessageID(&rawMessage.Sender.PublicKey, wrappedMessage)
-	rawMessage.ID = types.EncodeHex(messageID)
+
+	if err = s.setMessageID(messageID, &rawMessage); err != nil {
+		return nil, err
+	}
 
 	// We call it only once, and we nil the function after so it doesn't get called again
 	if rawMessage.BeforeDispatch != nil {
@@ -275,8 +282,40 @@ func (s *MessageSender) getMessageID(rawMessage *RawMessage) (types.HexBytes, er
 	}
 
 	messageID := v1protocol.MessageID(&rawMessage.Sender.PublicKey, wrappedMessage)
-
 	return messageID, nil
+}
+
+func (s *MessageSender) ValidateRawMessage(rawMessage *RawMessage) error {
+	id, err := s.getMessageID(rawMessage)
+	if err != nil {
+		return err
+	}
+	messageID := types.EncodeHex(id)
+
+	return s.validateMessageID(messageID, rawMessage)
+
+}
+
+func (s *MessageSender) validateMessageID(messageID string, rawMessage *RawMessage) error {
+	if len(rawMessage.ID) > 0 && rawMessage.ID != messageID {
+		s.logger.Error("failed to validate message ID, RawMessage content was modified",
+			zap.String("prevID", rawMessage.ID),
+			zap.String("newID", messageID),
+			zap.Any("contentType", rawMessage.MessageType))
+		return ErrModifiedRawMessage
+	}
+	return nil
+}
+
+func (s *MessageSender) setMessageID(messageID types.HexBytes, rawMessage *RawMessage) error {
+	msgID := types.EncodeHex(messageID)
+
+	if err := s.validateMessageID(msgID, rawMessage); err != nil {
+		return err
+	}
+
+	rawMessage.ID = msgID
+	return nil
 }
 
 func ShouldCommunityMessageBeEncrypted(msgType protobuf.ApplicationMetadataMessage_Type) bool {
@@ -305,7 +344,10 @@ func (s *MessageSender) sendCommunity(
 	if err != nil {
 		return nil, err
 	}
-	rawMessage.ID = types.EncodeHex(messageID)
+
+	if err = s.setMessageID(messageID, rawMessage); err != nil {
+		return nil, err
+	}
 
 	if rawMessage.BeforeDispatch != nil {
 		if err := rawMessage.BeforeDispatch(rawMessage); err != nil {
@@ -384,7 +426,12 @@ func (s *MessageSender) sendCommunity(
 		}
 	}
 
-	s.logger.Debug("sent community message ", zap.String("messageID", messageID.String()), zap.Strings("hashes", types.EncodeHexes(hashes)))
+	s.logger.Debug("sent-message: community ",
+		zap.Strings("recipient", PubkeysToHex(rawMessage.Recipients)),
+		zap.String("messageID", messageID.String()),
+		zap.String("messageType", "community"),
+		zap.Any("contentType", rawMessage.MessageType),
+		zap.Strings("hashes", types.EncodeHexes(hashes)))
 	s.transport.Track(messageID, hashes, newMessages)
 
 	return messageID, nil
@@ -410,7 +457,11 @@ func (s *MessageSender) sendPrivate(
 	}
 
 	messageID := v1protocol.MessageID(&rawMessage.Sender.PublicKey, wrappedMessage)
-	rawMessage.ID = types.EncodeHex(messageID)
+
+	if err = s.setMessageID(messageID, rawMessage); err != nil {
+		return nil, err
+	}
+
 	if rawMessage.BeforeDispatch != nil {
 		if err := rawMessage.BeforeDispatch(rawMessage); err != nil {
 			return nil, err
@@ -470,7 +521,12 @@ func (s *MessageSender) sendPrivate(
 			return nil, errors.Wrap(err, "failed to send a message spec")
 		}
 
-		s.logger.Debug("sent private message skipProtocolLayer", zap.String("messageID", messageID.String()), zap.Strings("hashes", types.EncodeHexes(hashes)))
+		s.logger.Debug("sent-message: private skipProtocolLayer",
+			zap.String("recipient", PubkeyToHex(recipient)),
+			zap.String("messageID", messageID.String()),
+			zap.String("messageType", "private"),
+			zap.Any("contentType", rawMessage.MessageType),
+			zap.Strings("hashes", types.EncodeHexes(hashes)))
 		s.transport.Track(messageID, hashes, newMessages)
 
 	} else {
@@ -485,7 +541,12 @@ func (s *MessageSender) sendPrivate(
 			return nil, errors.Wrap(err, "failed to send a message spec")
 		}
 
-		s.logger.Debug("sent private message without datasync", zap.String("messageID", messageID.String()), zap.Strings("hashes", types.EncodeHexes(hashes)))
+		s.logger.Debug("sent-message: private without datasync",
+			zap.String("recipient", PubkeyToHex(recipient)),
+			zap.String("messageID", messageID.String()),
+			zap.Any("contentType", rawMessage.MessageType),
+			zap.String("messageType", "private"),
+			zap.Strings("hashes", types.EncodeHexes(hashes)))
 		s.transport.Track(messageID, hashes, newMessages)
 	}
 
@@ -703,9 +764,13 @@ func (s *MessageSender) SendPublic(
 
 	newMessage.Ephemeral = rawMessage.Ephemeral
 	newMessage.PubsubTopic = rawMessage.PubsubTopic
+	newMessage.Priority = rawMessage.Priority
 
 	messageID := v1protocol.MessageID(&rawMessage.Sender.PublicKey, wrappedMessage)
-	rawMessage.ID = types.EncodeHex(messageID)
+
+	if err = s.setMessageID(messageID, &rawMessage); err != nil {
+		return nil, err
+	}
 
 	if rawMessage.BeforeDispatch != nil {
 		if err := rawMessage.BeforeDispatch(&rawMessage); err != nil {
@@ -737,7 +802,12 @@ func (s *MessageSender) SendPublic(
 
 	s.notifyOnSentMessage(sentMessage)
 
-	s.logger.Debug("sent public message", zap.String("messageID", messageID.String()), zap.Strings("hashes", types.EncodeHexes(hashes)))
+	s.logger.Debug("sent-message: public message",
+		zap.Strings("recipient", PubkeysToHex(rawMessage.Recipients)),
+		zap.String("messageID", messageID.String()),
+		zap.Any("contentType", rawMessage.MessageType),
+		zap.String("messageType", "public"),
+		zap.Strings("hashes", types.EncodeHexes(hashes)))
 	s.transport.Track(messageID, hashes, newMessages)
 
 	return messageID, nil
@@ -1224,15 +1294,37 @@ func (s *MessageSender) JoinPublic(id string) (*transport.Filter, error) {
 	return s.transport.JoinPublic(id)
 }
 
-// AddEphemeralKey adds an ephemeral key that we will be listening to
-// note that we never removed them from now, as waku/whisper does not
-// recalculate topics on removal, so effectively there's no benefit.
-// On restart they will be gone.
-func (s *MessageSender) AddEphemeralKey(privateKey *ecdsa.PrivateKey) (*transport.Filter, error) {
+func (s *MessageSender) getRandomEphemeralKey() *ecdsa.PrivateKey {
+	k := rand.Intn(len(s.ephemeralKeys)) //nolint: gosec
+	for _, key := range s.ephemeralKeys {
+		if k == 0 {
+			return key
+		}
+		k--
+	}
+	return nil
+}
+
+func (s *MessageSender) GetEphemeralKey() (*ecdsa.PrivateKey, error) {
 	s.ephemeralKeysMutex.Lock()
+	if len(s.ephemeralKeys) >= maxMessageSenderEphemeralKeys {
+		s.ephemeralKeysMutex.Unlock()
+		return s.getRandomEphemeralKey(), nil
+	}
+	privateKey, err := crypto.GenerateKey()
+	if err != nil {
+		s.ephemeralKeysMutex.Unlock()
+		return nil, err
+	}
+
 	s.ephemeralKeys[types.EncodeHex(crypto.FromECDSAPub(&privateKey.PublicKey))] = privateKey
 	s.ephemeralKeysMutex.Unlock()
-	return s.transport.LoadKeyFilters(privateKey)
+	_, err = s.transport.LoadKeyFilters(privateKey)
+	if err != nil {
+		return nil, err
+	}
+
+	return privateKey, nil
 }
 
 func MessageSpecToWhisper(spec *encryption.ProtocolMessageSpec) (*types.NewMessage, error) {

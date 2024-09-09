@@ -19,7 +19,6 @@ import (
 	"github.com/status-im/status-go/protocol/communities"
 	"github.com/status-im/status-go/protocol/discord"
 	"github.com/status-im/status-go/protocol/encryption/multidevice"
-	"github.com/status-im/status-go/protocol/identity"
 	"github.com/status-im/status-go/protocol/protobuf"
 	"github.com/status-im/status-go/protocol/storenodes"
 	"github.com/status-im/status-go/protocol/verification"
@@ -47,7 +46,6 @@ type SeenUnseenMessages struct {
 
 type MessengerResponse struct {
 	Contacts                      []*Contact
-	Installations                 []*multidevice.Installation
 	Invitations                   []*GroupChatInvitation
 	CommunityChanges              []*communities.CommunityChanges
 	AnonymousMetrics              []*appmetrics.AppMetric
@@ -69,6 +67,7 @@ type MessengerResponse struct {
 
 	// notifications a list of notifications derived from messenger events
 	// that are useful to notify the user about
+	installations                    map[string]*multidevice.Installation
 	notifications                    map[string]*localnotifications.Notification
 	requestsToJoinCommunity          map[string]*communities.RequestToJoin
 	chats                            map[string]*Chat
@@ -91,7 +90,6 @@ type MessengerResponse struct {
 	trustStatus                      map[string]verification.TrustStatus
 	emojiReactions                   map[string]*EmojiReaction
 	savedAddresses                   map[string]*wallet.SavedAddress
-	SocialLinksInfo                  *identity.SocialLinksInfo
 	ensUsernameDetails               []*ensservice.UsernameDetail
 	updatedProfileShowcaseContactIDs map[string]bool
 	seenAndUnseenMessages            map[string]*SeenUnseenMessages
@@ -140,13 +138,12 @@ func (r *MessengerResponse) MarshalJSON() ([]byte, error) {
 		DiscordMessages                  []*protobuf.DiscordMessage              `json:"discordMessages,omitempty"`
 		DiscordMessageAttachments        []*protobuf.DiscordMessageAttachment    `json:"discordMessageAtachments,omitempty"`
 		SavedAddresses                   []*wallet.SavedAddress                  `json:"savedAddresses,omitempty"`
-		SocialLinksInfo                  *identity.SocialLinksInfo               `json:"socialLinksInfo,omitempty"`
 		EnsUsernameDetails               []*ensservice.UsernameDetail            `json:"ensUsernameDetails,omitempty"`
 		UpdatedProfileShowcaseContactIDs []string                                `json:"updatedProfileShowcaseContactIDs,omitempty"`
 		SeenAndUnseenMessages            []*SeenUnseenMessages                   `json:"seenAndUnseenMessages,omitempty"`
 	}{
 		Contacts:                r.Contacts,
-		Installations:           r.Installations,
+		Installations:           r.Installations(),
 		Invitations:             r.Invitations,
 		CommunityChanges:        r.CommunityChanges,
 		RequestsToJoinCommunity: r.RequestsToJoinCommunity(),
@@ -182,7 +179,6 @@ func (r *MessengerResponse) MarshalJSON() ([]byte, error) {
 		DiscordCategories:                r.DiscordCategories,
 		DiscordChannels:                  r.DiscordChannels,
 		DiscordOldestMessageTimestamp:    r.DiscordOldestMessageTimestamp,
-		SocialLinksInfo:                  r.SocialLinksInfo,
 		EnsUsernameDetails:               r.EnsUsernameDetails(),
 		UpdatedProfileShowcaseContactIDs: r.GetUpdatedProfileShowcaseContactIDs(),
 		SeenAndUnseenMessages:            r.GetSeenAndUnseenMessages(),
@@ -198,6 +194,14 @@ func (r *MessengerResponse) Chats() []*Chat {
 		chats = append(chats, chat)
 	}
 	return chats
+}
+
+func (r *MessengerResponse) Installations() []*multidevice.Installation {
+	var is []*multidevice.Installation
+	for _, i := range r.installations {
+		is = append(is, i)
+	}
+	return is
 }
 
 func (r *MessengerResponse) RemovedChats() []string {
@@ -305,7 +309,7 @@ func (r *MessengerResponse) IsEmpty() bool {
 		len(r.Bookmarks)+
 		len(r.clearedHistories)+
 		len(r.Settings)+
-		len(r.Installations)+
+		len(r.installations)+
 		len(r.Invitations)+
 		len(r.emojiReactions)+
 		len(r.communities)+
@@ -333,7 +337,6 @@ func (r *MessengerResponse) IsEmpty() bool {
 		len(r.ensUsernameDetails) == 0 &&
 		r.currentStatus == nil &&
 		r.activityCenterState == nil &&
-		r.SocialLinksInfo == nil &&
 		r.CustomizationColor == ""
 }
 
@@ -363,7 +366,7 @@ func (r *MessengerResponse) Merge(response *MessengerResponse) error {
 	r.AddActivityCenterNotifications(response.ActivityCenterNotifications())
 	r.SetActivityCenterState(response.ActivityCenterState())
 	r.AddEmojiReactions(response.EmojiReactions())
-	r.AddInstallations(response.Installations)
+	r.AddInstallations(response.Installations())
 	r.AddSavedAddresses(response.SavedAddresses())
 	r.AddEnsUsernameDetails(response.EnsUsernameDetails())
 	r.AddRequestsToJoinCommunity(response.RequestsToJoinCommunity())
@@ -378,7 +381,6 @@ func (r *MessengerResponse) Merge(response *MessengerResponse) error {
 	r.AccountsPositions = append(r.AccountsPositions, response.AccountsPositions...)
 	r.TokenPreferences = append(r.TokenPreferences, response.TokenPreferences...)
 	r.CollectiblePreferences = append(r.CollectiblePreferences, response.CollectiblePreferences...)
-	r.SocialLinksInfo = response.SocialLinksInfo
 
 	return nil
 }
@@ -801,15 +803,10 @@ func (r *MessengerResponse) AddContacts(contacts []*Contact) {
 }
 
 func (r *MessengerResponse) AddInstallation(i *multidevice.Installation) {
-
-	for idx, i1 := range r.Installations {
-		if i1.ID == i.ID {
-			r.Installations[idx] = i
-			return
-		}
+	if len(r.installations) == 0 {
+		r.installations = make(map[string]*multidevice.Installation)
 	}
-
-	r.Installations = append(r.Installations, i)
+	r.installations[i.UniqueKey()] = i
 }
 
 func (r *MessengerResponse) AddInstallations(installations []*multidevice.Installation) {

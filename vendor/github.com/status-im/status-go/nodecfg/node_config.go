@@ -39,11 +39,12 @@ func insertNodeConfig(tx *sql.Tx, c *params.NodeConfig) error {
 		max_peers, max_pending_peers, enable_status_service, enable_ntp_sync,
 		bridge_enabled, wallet_enabled, local_notifications_enabled,
 		browser_enabled, permissions_enabled, mailservers_enabled,
-		swarm_enabled, mailserver_registry_address, web3provider_enabled, synthetic_id
+		swarm_enabled, mailserver_registry_address, web3provider_enabled, connector_enabled,
+		synthetic_id
 	) VALUES (
 		?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 		?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-		?, ?, ?, ?, ?, 'id'
+		?, ?, ?, ?, ?, ?, 'id'
 	)`,
 		c.NetworkID, c.DataDir, c.KeyStoreDir, c.NodeKey, c.NoDiscovery, c.Rendezvous,
 		c.ListenAddr, c.AdvertiseAddr, c.Name, c.Version, c.APIModules,
@@ -52,6 +53,7 @@ func insertNodeConfig(tx *sql.Tx, c *params.NodeConfig) error {
 		c.BridgeConfig.Enabled, c.WalletConfig.Enabled, c.LocalNotificationsConfig.Enabled,
 		c.BrowsersConfig.Enabled, c.PermissionsConfig.Enabled, c.MailserversConfig.Enabled,
 		c.SwarmConfig.Enabled, c.MailServerRegistryAddress, c.Web3ProviderConfig.Enabled,
+		c.ConnectorConfig.Enabled,
 	)
 	return err
 }
@@ -162,13 +164,13 @@ func insertLightETHConfig(tx *sql.Tx, c *params.NodeConfig) error {
 func insertShhExtConfig(tx *sql.Tx, c *params.NodeConfig) error {
 	_, err := tx.Exec(`
 	INSERT OR REPLACE INTO shhext_config (
-		pfs_enabled, backup_disabled_data_dir, installation_id, mailserver_confirmations, enable_connection_manager,
+		pfs_enabled, installation_id, mailserver_confirmations, enable_connection_manager,
 		enable_last_used_monitor, connection_target, request_delay, max_server_failures, max_message_delivery_attempts,
 		whisper_cache_dir, disable_generic_discovery_topic, send_v1_messages, data_sync_enabled, verify_transaction_url,
 		verify_ens_url, verify_ens_contract_address, verify_transaction_chain_id, anon_metrics_server_enabled,
 		anon_metrics_send_id, anon_metrics_server_postgres_uri, bandwidth_stats_enabled, synthetic_id
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'id')`,
-		c.ShhextConfig.PFSEnabled, c.ShhextConfig.BackupDisabledDataDir, c.ShhextConfig.InstallationID, c.ShhextConfig.MailServerConfirmations, c.ShhextConfig.EnableConnectionManager,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'id')`,
+		c.ShhextConfig.PFSEnabled, c.ShhextConfig.InstallationID, c.ShhextConfig.MailServerConfirmations, c.ShhextConfig.EnableConnectionManager,
 		c.ShhextConfig.EnableLastUsedMonitor, c.ShhextConfig.ConnectionTarget, c.ShhextConfig.RequestsDelay, c.ShhextConfig.MaxServerFailures, c.ShhextConfig.MaxMessageDeliveryAttempts,
 		c.ShhextConfig.WhisperCacheDir, c.ShhextConfig.DisableGenericDiscoveryTopic, c.ShhextConfig.SendV1Messages, c.ShhextConfig.DataSyncEnabled, c.ShhextConfig.VerifyTransactionURL,
 		c.ShhextConfig.VerifyENSURL, c.ShhextConfig.VerifyENSContractAddress, c.ShhextConfig.VerifyTransactionChainID, c.ShhextConfig.AnonMetricsServerEnabled,
@@ -201,13 +203,13 @@ func insertTorrentConfig(tx *sql.Tx, c *params.NodeConfig) error {
 	return err
 }
 
-func insertWakuV2Config(tx *sql.Tx, c *params.NodeConfig) error {
+func insertWakuV2ConfigPreMigration(tx *sql.Tx, c *params.NodeConfig) error {
 	_, err := tx.Exec(`
 	INSERT OR REPLACE INTO wakuv2_config (
-		enabled, host, port, keep_alive_interval, light_client, full_node, discovery_limit, data_dir,
+		enabled, host, port, light_client, full_node, discovery_limit, data_dir,
 		max_message_size, enable_confirmations, peer_exchange, enable_discv5, udp_port,  auto_update, synthetic_id
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'id')`,
-		c.WakuV2Config.Enabled, c.WakuV2Config.Host, c.WakuV2Config.Port, c.WakuV2Config.KeepAliveInterval, c.WakuV2Config.LightClient, c.WakuV2Config.FullNode, c.WakuV2Config.DiscoveryLimit, c.WakuV2Config.DataDir,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'id')`,
+		c.WakuV2Config.Enabled, c.WakuV2Config.Host, c.WakuV2Config.Port, c.WakuV2Config.LightClient, c.WakuV2Config.FullNode, c.WakuV2Config.DiscoveryLimit, c.WakuV2Config.DataDir,
 		c.WakuV2Config.MaxMessageSize, c.WakuV2Config.EnableConfirmations, c.WakuV2Config.PeerExchange, c.WakuV2Config.EnableDiscV5, c.WakuV2Config.UDPPort, c.WakuV2Config.AutoUpdate,
 	)
 	if err != nil {
@@ -232,24 +234,19 @@ func setWakuV2CustomNodes(tx *sql.Tx, customNodes map[string]string) error {
 	return nil
 }
 
-func insertWakuV2StoreConfig(tx *sql.Tx, c *params.NodeConfig) error {
+func insertWakuV2ConfigPostMigration(tx *sql.Tx, c *params.NodeConfig) error {
 	_, err := tx.Exec(`
 	UPDATE wakuv2_config
-	SET enable_store = ?, store_capacity = ?, store_seconds = ?
+	SET enable_store = ?,
+		store_capacity = ?,
+		store_seconds = ?,
+		enable_missing_message_verification = ?,
+		enable_store_confirmation_for_messages_sent = ?
 	WHERE synthetic_id = 'id'`,
 		c.WakuV2Config.EnableStore, c.WakuV2Config.StoreCapacity, c.WakuV2Config.StoreSeconds,
+		c.WakuV2Config.EnableMissingMessageVerification, c.WakuV2Config.EnableStoreConfirmationForMessagesSent,
 	)
 
-	return err
-}
-
-func insertWakuV2ShardConfig(tx *sql.Tx, c *params.NodeConfig) error {
-	_, err := tx.Exec(`
-	UPDATE wakuv2_config
-	SET use_shard_default_topic = ?
-	WHERE synthetic_id = 'id'`,
-		c.WakuV2Config.UseShardAsDefaultTopic,
-	)
 	if err != nil {
 		return err
 	}
@@ -264,7 +261,7 @@ func insertWakuV2ShardConfig(tx *sql.Tx, c *params.NodeConfig) error {
 	return err
 }
 
-func insertWakuConfig(tx *sql.Tx, c *params.NodeConfig) error {
+func insertWakuV1Config(tx *sql.Tx, c *params.NodeConfig) error {
 	_, err := tx.Exec(`
 	INSERT OR REPLACE INTO waku_config (
 		enabled, light_client, full_node, enable_mailserver, data_dir, minimum_pow, mailserver_password, mailserver_rate_limit, mailserver_data_retention,
@@ -349,8 +346,8 @@ func nodeConfigUpgradeInserts() []insertFn {
 		insertRequireTopics,
 		insertPushNotificationsServerConfig,
 		insertShhExtConfig,
-		insertWakuConfig,
-		insertWakuV2Config,
+		insertWakuV1Config,
+		insertWakuV2ConfigPreMigration,
 	}
 }
 
@@ -373,11 +370,10 @@ func nodeConfigNormalInserts() []insertFn {
 		insertRequireTopics,
 		insertPushNotificationsServerConfig,
 		insertShhExtConfig,
-		insertWakuConfig,
-		insertWakuV2Config,
+		insertWakuV1Config,
+		insertWakuV2ConfigPreMigration,
 		insertTorrentConfig,
-		insertWakuV2StoreConfig,
-		insertWakuV2ShardConfig,
+		insertWakuV2ConfigPostMigration,
 	}
 }
 
@@ -449,14 +445,14 @@ func loadNodeConfig(tx *sql.Tx) (*params.NodeConfig, error) {
 		listen_addr, advertise_addr, name, version, api_modules, tls_enabled, max_peers, max_pending_peers,
 		enable_status_service, bridge_enabled, wallet_enabled, local_notifications_enabled,
 		browser_enabled, permissions_enabled, mailservers_enabled, swarm_enabled,
-		mailserver_registry_address, web3provider_enabled FROM node_config
+		mailserver_registry_address, web3provider_enabled, connector_enabled FROM node_config
 		WHERE synthetic_id = 'id'
 	`).Scan(
 		&nodecfg.NetworkID, &nodecfg.DataDir, &nodecfg.KeyStoreDir, &nodecfg.NodeKey, &nodecfg.NoDiscovery, &nodecfg.Rendezvous,
 		&nodecfg.ListenAddr, &nodecfg.AdvertiseAddr, &nodecfg.Name, &nodecfg.Version, &nodecfg.APIModules, &nodecfg.TLSEnabled, &nodecfg.MaxPeers, &nodecfg.MaxPendingPeers,
 		&nodecfg.EnableStatusService, &nodecfg.BridgeConfig.Enabled, &nodecfg.WalletConfig.Enabled, &nodecfg.LocalNotificationsConfig.Enabled,
 		&nodecfg.BrowsersConfig.Enabled, &nodecfg.PermissionsConfig.Enabled, &nodecfg.MailserversConfig.Enabled, &nodecfg.SwarmConfig.Enabled,
-		&nodecfg.MailServerRegistryAddress, &nodecfg.Web3ProviderConfig.Enabled,
+		&nodecfg.MailServerRegistryAddress, &nodecfg.Web3ProviderConfig.Enabled, &nodecfg.ConnectorConfig.Enabled,
 	)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, err
@@ -627,13 +623,13 @@ func loadNodeConfig(tx *sql.Tx) (*params.NodeConfig, error) {
 	}
 
 	err = tx.QueryRow(`
-	SELECT pfs_enabled, backup_disabled_data_dir, installation_id, mailserver_confirmations, enable_connection_manager,
+	SELECT pfs_enabled, installation_id, mailserver_confirmations, enable_connection_manager,
 	enable_last_used_monitor, connection_target, request_delay, max_server_failures, max_message_delivery_attempts,
 	whisper_cache_dir, disable_generic_discovery_topic, send_v1_messages, data_sync_enabled, verify_transaction_url,
 	verify_ens_url, verify_ens_contract_address, verify_transaction_chain_id, anon_metrics_server_enabled,
 	anon_metrics_send_id, anon_metrics_server_postgres_uri, bandwidth_stats_enabled FROM shhext_config WHERE synthetic_id = 'id'
 	`).Scan(
-		&nodecfg.ShhextConfig.PFSEnabled, &nodecfg.ShhextConfig.BackupDisabledDataDir, &nodecfg.ShhextConfig.InstallationID, &nodecfg.ShhextConfig.MailServerConfirmations, &nodecfg.ShhextConfig.EnableConnectionManager,
+		&nodecfg.ShhextConfig.PFSEnabled, &nodecfg.ShhextConfig.InstallationID, &nodecfg.ShhextConfig.MailServerConfirmations, &nodecfg.ShhextConfig.EnableConnectionManager,
 		&nodecfg.ShhextConfig.EnableLastUsedMonitor, &nodecfg.ShhextConfig.ConnectionTarget, &nodecfg.ShhextConfig.RequestsDelay, &nodecfg.ShhextConfig.MaxServerFailures, &nodecfg.ShhextConfig.MaxMessageDeliveryAttempts,
 		&nodecfg.ShhextConfig.WhisperCacheDir, &nodecfg.ShhextConfig.DisableGenericDiscoveryTopic, &nodecfg.ShhextConfig.SendV1Messages, &nodecfg.ShhextConfig.DataSyncEnabled, &nodecfg.ShhextConfig.VerifyTransactionURL,
 		&nodecfg.ShhextConfig.VerifyENSURL, &nodecfg.ShhextConfig.VerifyENSContractAddress, &nodecfg.ShhextConfig.VerifyTransactionChainID, &nodecfg.ShhextConfig.AnonMetricsServerEnabled,
@@ -680,15 +676,17 @@ func loadNodeConfig(tx *sql.Tx) (*params.NodeConfig, error) {
 	}
 
 	err = tx.QueryRow(`
-	SELECT enabled, host, port, keep_alive_interval, light_client, full_node, discovery_limit, data_dir,
+	SELECT enabled, host, port, light_client, full_node, discovery_limit, data_dir,
 	max_message_size, enable_confirmations, peer_exchange, enable_discv5, udp_port, auto_update,
-	enable_store, store_capacity, store_seconds, use_shard_default_topic
+	enable_store, store_capacity, store_seconds, enable_missing_message_verification,
+	enable_store_confirmation_for_messages_sent
 	FROM wakuv2_config WHERE synthetic_id = 'id'
 	`).Scan(
-		&nodecfg.WakuV2Config.Enabled, &nodecfg.WakuV2Config.Host, &nodecfg.WakuV2Config.Port, &nodecfg.WakuV2Config.KeepAliveInterval, &nodecfg.WakuV2Config.LightClient, &nodecfg.WakuV2Config.FullNode,
+		&nodecfg.WakuV2Config.Enabled, &nodecfg.WakuV2Config.Host, &nodecfg.WakuV2Config.Port, &nodecfg.WakuV2Config.LightClient, &nodecfg.WakuV2Config.FullNode,
 		&nodecfg.WakuV2Config.DiscoveryLimit, &nodecfg.WakuV2Config.DataDir, &nodecfg.WakuV2Config.MaxMessageSize, &nodecfg.WakuV2Config.EnableConfirmations,
 		&nodecfg.WakuV2Config.PeerExchange, &nodecfg.WakuV2Config.EnableDiscV5, &nodecfg.WakuV2Config.UDPPort, &nodecfg.WakuV2Config.AutoUpdate,
-		&nodecfg.WakuV2Config.EnableStore, &nodecfg.WakuV2Config.StoreCapacity, &nodecfg.WakuV2Config.StoreSeconds, &nodecfg.WakuV2Config.UseShardAsDefaultTopic,
+		&nodecfg.WakuV2Config.EnableStore, &nodecfg.WakuV2Config.StoreCapacity, &nodecfg.WakuV2Config.StoreSeconds,
+		&nodecfg.WakuV2Config.EnableMissingMessageVerification, &nodecfg.WakuV2Config.EnableStoreConfirmationForMessagesSent,
 	)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, err
@@ -797,8 +795,23 @@ func SetLightClient(db *sql.DB, enabled bool) error {
 	return err
 }
 
+func SetStoreConfirmationForMessagesSent(db *sql.DB, enabled bool) error {
+	_, err := db.Exec(`UPDATE wakuv2_config SET enable_store_confirmation_for_messages_sent = ?`, enabled)
+	return err
+}
+
 func SetLogLevel(db *sql.DB, logLevel string) error {
 	_, err := db.Exec(`UPDATE log_config SET log_level = ?`, logLevel)
+	return err
+}
+
+func SetMaxLogBackups(db *sql.DB, maxLogBackups uint) error {
+	_, err := db.Exec(`UPDATE log_config SET max_backups = ?`, maxLogBackups)
+	return err
+}
+
+func SaveNewWakuNode(db *sql.DB, nodeAddress string) error {
+	_, err := db.Exec(`INSERT OR REPLACE INTO cluster_nodes (node, type, synthetic_id) VALUES (?, ?, 'id')`, nodeAddress, WakuNodes)
 	return err
 }
 

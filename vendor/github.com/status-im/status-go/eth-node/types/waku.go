@@ -15,14 +15,18 @@ import (
 )
 
 type ConnStatus struct {
-	IsOnline   bool                  `json:"isOnline"`
-	HasHistory bool                  `json:"hasHistory"`
-	Peers      map[string]WakuV2Peer `json:"peers"`
+	IsOnline bool                  `json:"isOnline"`
+	Peers    map[string]WakuV2Peer `json:"peers"`
 }
 
 type WakuV2Peer struct {
 	Protocols []protocol.ID `json:"protocols"`
 	Addresses []string      `json:"addresses"`
+}
+
+type PeerList struct {
+	FullMeshPeers []peer.ID `json:"fullMesh"`
+	AllPeers      []peer.ID `json:"all"`
 }
 
 type ConnStatusSubscription struct {
@@ -92,6 +96,10 @@ type Waku interface {
 
 	ListenAddresses() ([]string, error)
 
+	RelayPeersByTopic(topic string) (*PeerList, error)
+
+	ENR() (string, error)
+
 	Peers() map[string]WakuV2Peer
 
 	StartDiscV5() error
@@ -119,6 +127,8 @@ type Waku interface {
 	DropPeer(peerID string) error
 
 	SubscribeToConnStatusChanges() (*ConnStatusSubscription, error)
+
+	SetCriteriaForMissingMessageVerification(peerID peer.ID, pubsubTopic string, contentTopics []string) error
 
 	// MinPow returns the PoW value required by this node.
 	MinPow() float64
@@ -165,7 +175,7 @@ type Waku interface {
 	SendMessagesRequest(peerID []byte, request MessagesRequest) error
 
 	// RequestStoreMessages uses the WAKU2-STORE protocol to request historic messages
-	RequestStoreMessages(ctx context.Context, peerID []byte, request MessagesRequest, processEnvelopes bool) (*StoreRequestCursor, int, error)
+	RequestStoreMessages(ctx context.Context, peerID []byte, request MessagesRequest, processEnvelopes bool) (StoreRequestCursor, int, error)
 
 	// ProcessingP2PMessages indicates whether there are in-flight p2p messages
 	ProcessingP2PMessages() bool
@@ -178,4 +188,13 @@ type Waku interface {
 
 	// ClearEnvelopesCache clears waku envelopes cache
 	ClearEnvelopesCache()
+
+	// ConfirmMessageDelivered updates a message has been delivered in waku
+	ConfirmMessageDelivered(hash []common.Hash)
+
+	// SetStorePeerID updates the peer id of store node
+	SetStorePeerID(peerID peer.ID)
+
+	// PeerID returns node's PeerID
+	PeerID() peer.ID
 }

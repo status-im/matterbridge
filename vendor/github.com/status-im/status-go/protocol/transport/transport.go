@@ -14,6 +14,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/status-im/status-go/connection"
@@ -164,8 +165,8 @@ func (t *Transport) LoadFilters(filters []*Filter) ([]*Filter, error) {
 	return t.filters.InitWithFilters(filters)
 }
 
-func (t *Transport) InitCommunityFilters(communityFiltersToInitialize []CommunityFilterToInitialize, useShards bool) ([]*Filter, error) {
-	return t.filters.InitCommunityFilters(communityFiltersToInitialize, useShards)
+func (t *Transport) InitCommunityFilters(communityFiltersToInitialize []CommunityFilterToInitialize) ([]*Filter, error) {
+	return t.filters.InitCommunityFilters(communityFiltersToInitialize)
 }
 
 func (t *Transport) RemoveFilters(filters []*Filter) error {
@@ -369,8 +370,6 @@ func (t *Transport) SendCommunityMessage(ctx context.Context, newMessage *types.
 	newMessage.Topic = filter.ContentTopic
 	newMessage.PublicKey = crypto.FromECDSAPub(publicKey)
 
-	t.logger.Debug("SENDING message", zap.Binary("topic", filter.ContentTopic[:]))
-
 	return t.api.Post(ctx, *newMessage)
 }
 
@@ -499,18 +498,18 @@ func (t *Transport) createMessagesRequestV2(
 	ctx context.Context,
 	peerID []byte,
 	from, to uint32,
-	previousStoreCursor *types.StoreRequestCursor,
+	previousStoreCursor types.StoreRequestCursor,
 	pubsubTopic string,
 	contentTopics []types.TopicType,
 	limit uint32,
 	waitForResponse bool,
 	processEnvelopes bool,
-) (storeCursor *types.StoreRequestCursor, envelopesCount int, err error) {
+) (storeCursor types.StoreRequestCursor, envelopesCount int, err error) {
 	r := createMessagesRequest(from, to, nil, previousStoreCursor, pubsubTopic, contentTopics, limit)
 
 	if waitForResponse {
 		resultCh := make(chan struct {
-			storeCursor    *types.StoreRequestCursor
+			storeCursor    types.StoreRequestCursor
 			envelopesCount int
 			err            error
 		})
@@ -518,7 +517,7 @@ func (t *Transport) createMessagesRequestV2(
 		go func() {
 			storeCursor, envelopesCount, err = t.waku.RequestStoreMessages(ctx, peerID, r, processEnvelopes)
 			resultCh <- struct {
-				storeCursor    *types.StoreRequestCursor
+				storeCursor    types.StoreRequestCursor
 				envelopesCount int
 				err            error
 			}{storeCursor, envelopesCount, err}
@@ -547,13 +546,13 @@ func (t *Transport) SendMessagesRequestForTopics(
 	peerID []byte,
 	from, to uint32,
 	previousCursor []byte,
-	previousStoreCursor *types.StoreRequestCursor,
+	previousStoreCursor types.StoreRequestCursor,
 	pubsubTopic string,
 	contentTopics []types.TopicType,
 	limit uint32,
 	waitForResponse bool,
 	processEnvelopes bool,
-) (cursor []byte, storeCursor *types.StoreRequestCursor, envelopesCount int, err error) {
+) (cursor []byte, storeCursor types.StoreRequestCursor, envelopesCount int, err error) {
 	switch t.waku.Version() {
 	case 2:
 		storeCursor, envelopesCount, err = t.createMessagesRequestV2(ctx, peerID, from, to, previousStoreCursor, pubsubTopic, contentTopics, limit, waitForResponse, processEnvelopes)
@@ -565,7 +564,7 @@ func (t *Transport) SendMessagesRequestForTopics(
 	return
 }
 
-func createMessagesRequest(from, to uint32, cursor []byte, storeCursor *types.StoreRequestCursor, pubsubTopic string, topics []types.TopicType, limit uint32) types.MessagesRequest {
+func createMessagesRequest(from, to uint32, cursor []byte, storeCursor types.StoreRequestCursor, pubsubTopic string, topics []types.TopicType, limit uint32) types.MessagesRequest {
 	aUUID := uuid.New()
 	// uuid is 16 bytes, converted to hex it's 32 bytes as expected by types.MessagesRequest
 	id := []byte(hex.EncodeToString(aUUID[:]))
@@ -651,6 +650,14 @@ func (t *Transport) ListenAddresses() ([]string, error) {
 	return t.waku.ListenAddresses()
 }
 
+func (t *Transport) RelayPeersByTopic(topic string) (*types.PeerList, error) {
+	return t.waku.RelayPeersByTopic(topic)
+}
+
+func (t *Transport) ENR() (string, error) {
+	return t.waku.ENR()
+}
+
 func (t *Transport) AddStorePeer(address string) (peer.ID, error) {
 	return t.waku.AddStorePeer(address)
 }
@@ -716,4 +723,56 @@ func (t *Transport) RemovePubsubTopicKey(topic string) error {
 		return t.waku.RemovePubsubTopicKey(topic)
 	}
 	return nil
+}
+
+func (t *Transport) ConfirmMessageDelivered(messageID string) {
+	if t.envelopesMonitor == nil {
+		return
+	}
+	hashes, ok := t.envelopesMonitor.messageEnvelopeHashes[messageID]
+	if !ok {
+		return
+	}
+	commHashes := make([]common.Hash, len(hashes))
+	for i, h := range hashes {
+		commHashes[i] = common.BytesToHash(h[:])
+	}
+	t.waku.ConfirmMessageDelivered(commHashes)
+}
+
+func (t *Transport) SetStorePeerID(peerID peer.ID) {
+	t.waku.SetStorePeerID(peerID)
+}
+
+func (t *Transport) SetCriteriaForMissingMessageVerification(peerID peer.ID, filters []*Filter) {
+	if t.waku.Version() != 2 {
+		return
+	}
+
+	topicMap := make(map[string]map[string]struct{})
+	for _, f := range filters {
+		if !f.Listen || f.Ephemeral {
+			continue
+		}
+
+		_, ok := topicMap[f.PubsubTopic]
+		if !ok {
+			topicMap[f.PubsubTopic] = make(map[string]struct{})
+		}
+
+		topicMap[f.PubsubTopic][f.ContentTopic.String()] = struct{}{}
+	}
+
+	for pubsubTopic, contentTopics := range topicMap {
+		ctList := maps.Keys(contentTopics)
+		err := t.waku.SetCriteriaForMissingMessageVerification(peerID, pubsubTopic, ctList)
+		if err != nil {
+			t.logger.Error("could not check for missing messages",
+				zap.Error(err),
+				zap.Stringer("peerID", peerID),
+				zap.String("pubsubTopic", pubsubTopic),
+				zap.Strings("contentTopics", ctList))
+			return
+		}
+	}
 }

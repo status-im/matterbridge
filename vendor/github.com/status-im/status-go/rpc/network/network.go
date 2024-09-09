@@ -81,6 +81,14 @@ func (nq *networksQuery) exec(db *sql.DB) ([]*params.Network, error) {
 	return res, err
 }
 
+type ManagerInterface interface {
+	Get(onlyEnabled bool) ([]*params.Network, error)
+	GetAll() ([]*params.Network, error)
+	Find(chainID uint64) *params.Network
+	GetConfiguredNetworks() []params.Network
+	GetTestNetworksEnabled() (bool, error)
+}
+
 type Manager struct {
 	db                 *sql.DB
 	configuredNetworks []params.Network
@@ -161,6 +169,7 @@ func (nm *Manager) Init(networks []params.Network) error {
 				if err != nil {
 					errors += fmt.Sprintf("error updating network original url for ChainID: %d, %s", currentNetworks[j].ChainID, err.Error())
 				}
+
 				break
 			}
 		}
@@ -222,12 +231,15 @@ func (nm *Manager) Find(chainID uint64) *params.Network {
 	if len(networks) != 1 || err != nil {
 		return nil
 	}
+	setDefaultRPCURL(networks, nm.configuredNetworks)
 	return networks[0]
 }
 
 func (nm *Manager) GetAll() ([]*params.Network, error) {
 	query := newNetworksQuery()
-	return query.exec(nm.db)
+	networks, err := query.exec(nm.db)
+	setDefaultRPCURL(networks, nm.configuredNetworks)
+	return networks, err
 }
 
 func (nm *Manager) Get(onlyEnabled bool) ([]*params.Network, error) {
@@ -274,6 +286,12 @@ func (nm *Manager) Get(onlyEnabled bool) ([]*params.Network, error) {
 				continue
 			}
 		}
+
+		configuredNetwork, err := findNetwork(nm.configuredNetworks, network.ChainID)
+		if err != nil {
+			addDefaultRPCURL(network, configuredNetwork)
+		}
+
 		results = append(results, network)
 	}
 
@@ -323,4 +341,52 @@ func (nm *Manager) GetConfiguredNetworks() []params.Network {
 
 func (nm *Manager) GetTestNetworksEnabled() (result bool, err error) {
 	return nm.accountsDB.GetTestNetworksEnabled()
+}
+
+// Returns all networks for active mode (test/prod) and in case of test mode,
+// returns either Goerli or Sepolia networks based on the value of isGoerliEnabled
+func (nm *Manager) GetActiveNetworks() ([]*params.Network, error) {
+	areTestNetworksEnabled, err := nm.GetTestNetworksEnabled()
+	if err != nil {
+		return nil, err
+	}
+
+	networks, err := nm.Get(false)
+	if err != nil {
+		return nil, err
+	}
+	availableNetworks := make([]*params.Network, 0)
+	for _, network := range networks {
+		if network.IsTest != areTestNetworksEnabled {
+			continue
+		}
+		availableNetworks = append(availableNetworks, network)
+	}
+
+	return availableNetworks, nil
+}
+
+func findNetwork(networks []params.Network, chainID uint64) (params.Network, error) {
+	for _, network := range networks {
+		if network.ChainID == chainID {
+			return network, nil
+		}
+	}
+	return params.Network{}, fmt.Errorf("network not found")
+}
+
+func addDefaultRPCURL(target *params.Network, source params.Network) {
+	target.DefaultRPCURL = source.DefaultRPCURL
+	target.DefaultFallbackURL = source.DefaultFallbackURL
+}
+
+func setDefaultRPCURL(target []*params.Network, source []params.Network) {
+	for i := range target {
+		for j := range source {
+			if target[i].ChainID == source[j].ChainID {
+				addDefaultRPCURL(target[i], source[j])
+				break
+			}
+		}
+	}
 }

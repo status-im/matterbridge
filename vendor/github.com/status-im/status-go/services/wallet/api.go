@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math/big"
 	"strings"
@@ -15,29 +14,73 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/log"
 	gethrpc "github.com/ethereum/go-ethereum/rpc"
+	signercore "github.com/ethereum/go-ethereum/signer/core/apitypes"
+	abi_spec "github.com/status-im/status-go/abi-spec"
 	"github.com/status-im/status-go/account"
+	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/params"
 	"github.com/status-im/status-go/rpc/network"
+	"github.com/status-im/status-go/services/typeddata"
 	"github.com/status-im/status-go/services/wallet/activity"
-	"github.com/status-im/status-go/services/wallet/bridge"
 	"github.com/status-im/status-go/services/wallet/collectibles"
 	wcommon "github.com/status-im/status-go/services/wallet/common"
 	"github.com/status-im/status-go/services/wallet/currency"
 	"github.com/status-im/status-go/services/wallet/history"
+	"github.com/status-im/status-go/services/wallet/onramp"
 	"github.com/status-im/status-go/services/wallet/router"
+	"github.com/status-im/status-go/services/wallet/router/pathprocessor"
 	"github.com/status-im/status-go/services/wallet/thirdparty"
 	"github.com/status-im/status-go/services/wallet/token"
 	"github.com/status-im/status-go/services/wallet/transfer"
 	"github.com/status-im/status-go/services/wallet/walletconnect"
-	wc "github.com/status-im/status-go/services/wallet/walletconnect"
-	"github.com/status-im/status-go/services/wallet/walletevent"
 	"github.com/status-im/status-go/transactions"
 )
 
 func NewAPI(s *Service) *API {
-	router := router.NewRouter(s.GetRPCClient(), s.GetTransactor(), s.GetTokenManager(), s.GetMarketManager(), s.GetCollectiblesService(),
-		s.GetCollectiblesManager(), s.GetEnsService(), s.GetStickersService())
+	rpcClient := s.GetRPCClient()
+	transactor := s.GetTransactor()
+	tokenManager := s.GetTokenManager()
+	ensService := s.GetEnsService()
+	stickersService := s.GetStickersService()
+	featureFlags := s.FeatureFlags()
+
+	router := router.NewRouter(rpcClient, transactor, tokenManager, s.GetMarketManager(), s.GetCollectiblesService(),
+		s.GetCollectiblesManager(), ensService, stickersService)
+
+	transfer := pathprocessor.NewTransferProcessor(rpcClient, transactor)
+	router.AddPathProcessor(transfer)
+
+	erc721Transfer := pathprocessor.NewERC721Processor(rpcClient, transactor)
+	router.AddPathProcessor(erc721Transfer)
+
+	erc1155Transfer := pathprocessor.NewERC1155Processor(rpcClient, transactor)
+	router.AddPathProcessor(erc1155Transfer)
+
+	hop := pathprocessor.NewHopBridgeProcessor(rpcClient, transactor, tokenManager, rpcClient.NetworkManager)
+	router.AddPathProcessor(hop)
+
+	if featureFlags.EnableCelerBridge {
+		// TODO: Celar Bridge is out of scope for 2.30, check it thoroughly once we decide to include it again
+		cbridge := pathprocessor.NewCelerBridgeProcessor(rpcClient, transactor, tokenManager)
+		router.AddPathProcessor(cbridge)
+	}
+
+	paraswap := pathprocessor.NewSwapParaswapProcessor(rpcClient, transactor, tokenManager)
+	router.AddPathProcessor(paraswap)
+
+	ensRegister := pathprocessor.NewENSRegisterProcessor(rpcClient, transactor, ensService)
+	router.AddPathProcessor(ensRegister)
+
+	ensRelease := pathprocessor.NewENSReleaseProcessor(rpcClient, transactor, ensService)
+	router.AddPathProcessor(ensRelease)
+
+	ensPublicKey := pathprocessor.NewENSPublicKeyProcessor(rpcClient, transactor, ensService)
+	router.AddPathProcessor(ensPublicKey)
+
+	buyStickers := pathprocessor.NewStickersBuyProcessor(rpcClient, transactor, stickersService)
+	router.AddPathProcessor(buyStickers)
+
 	return &API{s, s.reader, router}
 }
 
@@ -53,6 +96,7 @@ func (api *API) StartWallet(ctx context.Context) error {
 }
 
 func (api *API) StopWallet(ctx context.Context) error {
+	api.router.Stop()
 	return api.s.Stop()
 }
 
@@ -64,8 +108,25 @@ func (api *API) SetPairingsJSONFileContent(content []byte) error {
 	return api.s.keycardPairings.SetPairingsJSONFileContent(content)
 }
 
-func (api *API) GetWalletToken(ctx context.Context, addresses []common.Address) (map[common.Address][]Token, error) {
-	return api.reader.GetWalletToken(ctx, addresses)
+// Used by mobile
+func (api *API) GetWalletToken(ctx context.Context, addresses []common.Address) (map[common.Address][]token.StorageToken, error) {
+	currency, err := api.s.accountsDB.GetCurrency()
+	if err != nil {
+		return nil, err
+	}
+
+	activeNetworks, err := api.s.rpcClient.NetworkManager.GetActiveNetworks()
+	if err != nil {
+		return nil, err
+	}
+
+	chainIDs := wcommon.NetworksToChainIDs(activeNetworks)
+	clients, err := api.s.rpcClient.EthClients(chainIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	return api.reader.GetWalletToken(ctx, clients, addresses, currency)
 }
 
 // GetBalancesByChain return a map with key as chain id and value as map of account address and map of token address and balance
@@ -79,16 +140,19 @@ func (api *API) GetBalancesByChain(ctx context.Context, chainIDs []uint64, addre
 	return api.s.tokenManager.GetBalancesByChain(ctx, clients, addresses, tokens)
 }
 
-func (api *API) GetWalletTokenBalances(ctx context.Context, addresses []common.Address) (map[common.Address][]Token, error) {
-	return api.reader.GetWalletTokenBalances(ctx, addresses)
-}
+func (api *API) FetchOrGetCachedWalletBalances(ctx context.Context, addresses []common.Address) (map[common.Address][]token.StorageToken, error) {
+	activeNetworks, err := api.s.rpcClient.NetworkManager.GetActiveNetworks()
+	if err != nil {
+		return nil, err
+	}
 
-func (api *API) FetchOrGetCachedWalletBalances(ctx context.Context, addresses []common.Address) (map[common.Address][]Token, error) {
-	return api.reader.FetchOrGetCachedWalletBalances(ctx, addresses)
-}
+	chainIDs := wcommon.NetworksToChainIDs(activeNetworks)
+	clients, err := api.s.rpcClient.EthClients(chainIDs)
+	if err != nil {
+		return nil, err
+	}
 
-func (api *API) GetCachedWalletTokensWithoutMarketData(ctx context.Context) (map[common.Address][]Token, error) {
-	return api.reader.GetCachedWalletTokensWithoutMarketData()
+	return api.reader.FetchOrGetCachedWalletBalances(ctx, clients, addresses)
 }
 
 type DerivedAddress struct {
@@ -271,47 +335,32 @@ func (api *API) GetPendingTransactionsForIdentities(ctx context.Context, identit
 // TODO - #11861: Remove this and replace with EventPendingTransactionStatusChanged event and Delete to confirm the transaction where it is needed
 func (api *API) WatchTransactionByChainID(ctx context.Context, chainID uint64, transactionHash common.Hash) (err error) {
 	log.Debug("wallet.api.WatchTransactionByChainID", "chainID", chainID, "transactionHash", transactionHash)
-	var status *transactions.TxStatus
 	defer func() {
 		log.Debug("wallet.api.WatchTransactionByChainID return", "err", err, "chainID", chainID, "transactionHash", transactionHash)
 	}()
 
-	// Workaround to keep the blocking call until the clients use the PendingTxTracker APIs
-	eventChan := make(chan walletevent.Event, 2)
-	sub := api.s.feed.Subscribe(eventChan)
-	defer sub.Unsubscribe()
-
-	status, err = api.s.pendingTxManager.Watch(ctx, wcommon.ChainID(chainID), transactionHash)
-	if err == nil && *status != transactions.Pending {
-		return nil
-	}
-
-	for {
-		select {
-		case we := <-eventChan:
-			if transactions.EventPendingTransactionStatusChanged == we.Type {
-				var p transactions.StatusChangedPayload
-				err = json.Unmarshal([]byte(we.Message), &p)
-				if err != nil {
-					return err
-				}
-				if p.ChainID == wcommon.ChainID(chainID) && p.Hash == transactionHash {
-					return nil
-				}
-			}
-		case <-time.After(10 * time.Minute):
-			return errors.New("timeout watching for pending transaction")
-		}
-	}
+	return api.s.transactionManager.WatchTransaction(ctx, chainID, transactionHash)
 }
 
-func (api *API) GetCryptoOnRamps(ctx context.Context) ([]CryptoOnRamp, error) {
-	return api.s.cryptoOnRampManager.Get()
+func (api *API) GetCryptoOnRamps(ctx context.Context) ([]onramp.CryptoOnRamp, error) {
+	log.Debug("call to GetCryptoOnRamps")
+	return api.s.cryptoOnRampManager.GetProviders(ctx)
+}
+
+func (api *API) GetCryptoOnRampURL(ctx context.Context, providerID string, parameters onramp.Parameters) (string, error) {
+	log.Debug("call to GetCryptoOnRampURL")
+	return api.s.cryptoOnRampManager.GetURL(ctx, providerID, parameters)
 }
 
 /*
    Collectibles API Start
 */
+
+func (api *API) FetchCachedBalancesByOwnerAndContractAddress(ctx context.Context, chainID wcommon.ChainID, ownerAddress common.Address, contractAddresses []common.Address) (thirdparty.TokenBalancesPerContractAddress, error) {
+	log.Debug("call to FetchCachedBalancesByOwnerAndContractAddress")
+
+	return api.s.collectiblesManager.FetchCachedBalancesByOwnerAndContractAddress(ctx, chainID, ownerAddress, contractAddresses)
+}
 
 func (api *API) FetchBalancesByOwnerAndContractAddress(ctx context.Context, chainID wcommon.ChainID, ownerAddress common.Address, contractAddresses []common.Address) (thirdparty.TokenBalancesPerContractAddress, error) {
 	log.Debug("call to FetchBalancesByOwnerAndContractAddress")
@@ -352,6 +401,11 @@ func (api *API) FetchCollectionSocialsAsync(contractID thirdparty.ContractID) er
 
 func (api *API) GetCollectibleOwnersByContractAddress(ctx context.Context, chainID wcommon.ChainID, contractAddress common.Address) (*thirdparty.CollectibleContractOwnership, error) {
 	log.Debug("call to GetCollectibleOwnersByContractAddress")
+	return api.s.collectiblesManager.FetchCollectibleOwnersByContractAddress(ctx, chainID, contractAddress)
+}
+
+func (api *API) FetchCollectibleOwnersByContractAddress(ctx context.Context, chainID wcommon.ChainID, contractAddress common.Address) (*thirdparty.CollectibleContractOwnership, error) {
+	log.Debug("call to FetchCollectibleOwnersByContractAddress")
 	return api.s.collectiblesManager.FetchCollectibleOwnersByContractAddress(ctx, chainID, contractAddress)
 }
 
@@ -412,9 +466,9 @@ func (api *API) FetchTokenDetails(ctx context.Context, symbols []string) (map[st
 	return api.s.marketManager.FetchTokenDetails(symbols)
 }
 
-func (api *API) GetSuggestedFees(ctx context.Context, chainID uint64) (*router.SuggestedFees, error) {
+func (api *API) GetSuggestedFees(ctx context.Context, chainID uint64) (*router.SuggestedFeesGwei, error) {
 	log.Debug("call to GetSuggestedFees")
-	return api.router.GetFeesManager().SuggestedFees(ctx, chainID)
+	return api.router.GetFeesManager().SuggestedFeesGwei(ctx, chainID)
 }
 
 func (api *API) GetEstimatedLatestBlockNumber(ctx context.Context, chainID uint64) (uint64, error) {
@@ -422,10 +476,14 @@ func (api *API) GetEstimatedLatestBlockNumber(ctx context.Context, chainID uint6
 	return api.s.blockChainState.GetEstimatedLatestBlockNumber(ctx, chainID)
 }
 
-// @deprecated
 func (api *API) GetTransactionEstimatedTime(ctx context.Context, chainID uint64, maxFeePerGas *big.Float) (router.TransactionEstimation, error) {
 	log.Debug("call to getTransactionEstimatedTime")
-	return api.router.GetFeesManager().TransactionEstimatedTime(ctx, chainID, maxFeePerGas), nil
+	return api.router.GetFeesManager().TransactionEstimatedTime(ctx, chainID, gweiToWei(maxFeePerGas)), nil
+}
+
+func gweiToWei(val *big.Float) *big.Int {
+	res, _ := new(big.Float).Mul(val, big.NewFloat(1000000000)).Int(nil)
+	return res
 }
 
 func (api *API) GetSuggestedRoutes(
@@ -437,32 +495,38 @@ func (api *API) GetSuggestedRoutes(
 	tokenID string,
 	toTokenID string,
 	disabledFromChainIDs,
-	disabledToChaindIDs,
+	disabledToChainIDs,
 	preferedChainIDs []uint64,
 	gasFeeMode router.GasFeeMode,
 	fromLockedAmount map[uint64]*hexutil.Big,
 ) (*router.SuggestedRoutes, error) {
 	log.Debug("call to GetSuggestedRoutes")
 
-	testnetMode, err := api.s.accountsDB.GetTestNetworksEnabled()
+	testnetMode, err := api.s.rpcClient.NetworkManager.GetTestNetworksEnabled()
 	if err != nil {
 		return nil, err
 	}
 
 	return api.router.SuggestedRoutes(ctx, sendType, addrFrom, addrTo, amountIn.ToInt(), tokenID, toTokenID, disabledFromChainIDs,
-		disabledToChaindIDs, preferedChainIDs, gasFeeMode, fromLockedAmount, testnetMode)
+		disabledToChainIDs, preferedChainIDs, gasFeeMode, fromLockedAmount, testnetMode)
 }
 
 func (api *API) GetSuggestedRoutesV2(ctx context.Context, input *router.RouteInputParams) (*router.SuggestedRoutesV2, error) {
 	log.Debug("call to GetSuggestedRoutesV2")
-	testnetMode, err := api.s.accountsDB.GetTestNetworksEnabled()
-	if err != nil {
-		return nil, err
-	}
-
-	input.TestnetMode = testnetMode
 
 	return api.router.SuggestedRoutesV2(ctx, input)
+}
+
+func (api *API) GetSuggestedRoutesV2Async(ctx context.Context, input *router.RouteInputParams) {
+	log.Debug("call to GetSuggestedRoutesV2Async")
+
+	api.router.SuggestedRoutesV2Async(input)
+}
+
+func (api *API) StopSuggestedRoutesV2AsyncCalcualtion(ctx context.Context) {
+	log.Debug("call to StopSuggestedRoutesV2AsyncCalcualtion")
+
+	api.router.StopSuggestedRoutesV2AsyncCalcualtion()
 }
 
 // Generates addresses for the provided paths, response doesn't include `HasActivity` value (if you need it check `GetAddressDetails` function)
@@ -602,13 +666,13 @@ func (api *API) SendTransactionWithSignature(ctx context.Context, chainID uint64
 	if err != nil {
 		return hash, err
 	}
-	return api.s.transactionManager.SendTransactionWithSignature(chainID, txType, params, sig)
+	return api.s.transactionManager.SendTransactionWithSignature(chainID, params, sig)
 }
 
-func (api *API) CreateMultiTransaction(ctx context.Context, multiTransactionCommand *transfer.MultiTransactionCommand, data []*bridge.TransactionBridge, password string) (*transfer.MultiTransactionCommandResult, error) {
+func (api *API) CreateMultiTransaction(ctx context.Context, multiTransactionCommand *transfer.MultiTransactionCommand, data []*pathprocessor.MultipathProcessorTxArgs, password string) (*transfer.MultiTransactionCommandResult, error) {
 	log.Debug("[WalletAPI:: CreateMultiTransaction] create multi transaction")
 
-	cmd, err := api.s.transactionManager.CreateMultiTransactionFromCommand(ctx, multiTransactionCommand, data)
+	cmd, err := api.s.transactionManager.CreateMultiTransactionFromCommand(multiTransactionCommand, data)
 	if err != nil {
 		return nil, err
 	}
@@ -619,20 +683,20 @@ func (api *API) CreateMultiTransaction(ctx context.Context, multiTransactionComm
 			return nil, err
 		}
 
-		cmdRes, err := api.s.transactionManager.SendTransactions(ctx, cmd, data, api.router.GetBridges(), selectedAccount)
+		cmdRes, err := api.s.transactionManager.SendTransactions(ctx, cmd, data, api.router.GetPathProcessors(), selectedAccount)
 		if err != nil {
 			return nil, err
 		}
 
 		_, err = api.s.transactionManager.InsertMultiTransaction(cmd)
 		if err != nil {
-			return nil, err
+			log.Error("Failed to save multi transaction", "error", err) // not critical
 		}
 
 		return cmdRes, nil
 	}
 
-	return nil, api.s.transactionManager.SendTransactionForSigningToKeycard(ctx, cmd, data, api.router.GetBridges())
+	return nil, api.s.transactionManager.SendTransactionForSigningToKeycard(ctx, cmd, data, api.router.GetPathProcessors())
 }
 
 func (api *API) ProceedWithTransactionsSignatures(ctx context.Context, signatures map[string]transfer.SignatureDetails) (*transfer.MultiTransactionCommandResult, error) {
@@ -746,59 +810,6 @@ func (api *API) FetchChainIDForURL(ctx context.Context, rpcURL string) (*big.Int
 	return client.ChainID(ctx)
 }
 
-// WCPairSessionProposal responds to "session_proposal" event
-func (api *API) WCPairSessionProposal(ctx context.Context, sessionProposalJSON string) (*wc.PairSessionResponse, error) {
-	log.Debug("wallet.api.wc.PairSessionProposal", "proposal.len", len(sessionProposalJSON))
-
-	var data wc.SessionProposal
-	err := json.Unmarshal([]byte(sessionProposalJSON), &data)
-	if err != nil {
-		return nil, err
-	}
-
-	return api.s.walletConnect.PairSessionProposal(data)
-}
-
-// WCSaveOrUpdateSession records a session established between Status app and dapp
-func (api *API) WCSaveOrUpdateSession(ctx context.Context, sessionProposalJSON string) error {
-	log.Debug("wallet.api.wc.WCSaveOrUpdateSession", "proposal.len", len(sessionProposalJSON))
-
-	var data wc.Session
-	err := json.Unmarshal([]byte(sessionProposalJSON), &data)
-	if err != nil {
-		return err
-	}
-
-	return api.s.walletConnect.SaveOrUpdateSession(data)
-}
-
-// WCChangeSessionState changes the active state of a session
-func (api *API) WCChangeSessionState(ctx context.Context, topic walletconnect.Topic, active bool) error {
-	log.Debug("wallet.api.wc.WCChangeSessionState", "topic", topic, "active", active)
-
-	return api.s.walletConnect.ChangeSessionState(topic, active)
-}
-
-// WCSessionRequest responds to "session_request" event
-func (api *API) WCSessionRequest(ctx context.Context, sessionRequestJSON string) (*transfer.TxResponse, error) {
-	log.Debug("wallet.api.wc.SessionRequest", "request.len", len(sessionRequestJSON))
-
-	var request wc.SessionRequest
-	err := json.Unmarshal([]byte(sessionRequestJSON), &request)
-	if err != nil {
-		return nil, err
-	}
-
-	return api.s.walletConnect.SessionRequest(request)
-}
-
-// WCAuthRequest responds to "auth_request" event
-func (api *API) WCAuthRequest(ctx context.Context, address common.Address, authMessage string) (*transfer.TxResponse, error) {
-	log.Debug("wallet.api.wc.AuthRequest", "address", address, "authMessage", authMessage)
-
-	return api.s.walletConnect.AuthRequest(address, authMessage)
-}
-
 func (api *API) getVerifiedWalletAccount(address, password string) (*account.SelectedExtKey, error) {
 	exists, err := api.s.accountsDB.AddressExists(types.HexToAddress(address))
 	if err != nil {
@@ -822,4 +833,87 @@ func (api *API) getVerifiedWalletAccount(address, password string) (*account.Sel
 		Address:    key.Address,
 		AccountKey: key,
 	}, nil
+}
+
+// AddWalletConnectSession adds or updates a session wallet connect session
+func (api *API) AddWalletConnectSession(ctx context.Context, session_json string) error {
+	log.Debug("wallet.api.AddWalletConnectSession", "rpcURL", len(session_json))
+	return walletconnect.AddSession(api.s.db, api.s.config.Networks, session_json)
+}
+
+// DisconnectWalletConnectSession removes a wallet connect session
+func (api *API) DisconnectWalletConnectSession(ctx context.Context, topic walletconnect.Topic) error {
+	log.Debug("wallet.api.DisconnectWalletConnectSession", "topic", topic)
+	return walletconnect.DisconnectSession(api.s.db, topic)
+}
+
+// GetWalletConnectActiveSessions returns all active wallet connect sessions
+func (api *API) GetWalletConnectActiveSessions(ctx context.Context, validAtTimestamp int64) ([]walletconnect.DBSession, error) {
+	log.Debug("wallet.api.GetWalletConnectActiveSessions")
+	return walletconnect.GetActiveSessions(api.s.db, validAtTimestamp)
+}
+
+// GetWalletConnectDapps returns all active wallet connect dapps
+// Active dApp are those having active sessions (not expired and not disconnected)
+func (api *API) GetWalletConnectDapps(ctx context.Context, validAtTimestamp int64, testChains bool) ([]walletconnect.DBDApp, error) {
+	log.Debug("wallet.api.GetWalletConnectDapps", "validAtTimestamp", validAtTimestamp, "testChains", testChains)
+	return walletconnect.GetActiveDapps(api.s.db, validAtTimestamp, testChains)
+}
+
+// HashMessageEIP191 is used for hashing dApps requests for "personal_sign" and "eth_sign"
+// in a safe manner following the EIP-191 version 0x45 for signing on the client side.
+func (api *API) HashMessageEIP191(ctx context.Context, message types.HexBytes) types.Hash {
+	log.Debug("wallet.api.HashMessageEIP191", "len(data)", len(message))
+	safeMsg := fmt.Sprintf("\x19Ethereum Signed Message:\n%d%s", len(message), string(message))
+	return crypto.Keccak256Hash([]byte(safeMsg))
+}
+
+// SignTypedDataV4 dApps use it to execute "eth_signTypedData_v4" requests
+// the formatted typed data will be prefixed with \x19\x01 based on the EIP-712
+// @deprecated
+func (api *API) SignTypedDataV4(typedJson string, address string, password string) (types.HexBytes, error) {
+	log.Debug("wallet.api.SignTypedDataV4", "len(typedJson)", len(typedJson), "address", address, "len(password)", len(password))
+
+	account, err := api.getVerifiedWalletAccount(address, password)
+	if err != nil {
+		return types.HexBytes{}, err
+	}
+	var typed signercore.TypedData
+	err = json.Unmarshal([]byte(typedJson), &typed)
+	if err != nil {
+		return types.HexBytes{}, err
+	}
+
+	// This is not used down the line but required by the typeddata.SignTypedDataV4 function call
+	chain := new(big.Int).SetUint64(api.s.config.NetworkID)
+	sig, err := typeddata.SignTypedDataV4(typed, account.AccountKey.PrivateKey, chain)
+	if err != nil {
+		return types.HexBytes{}, err
+	}
+	return types.HexBytes(sig), err
+}
+
+// SafeSignTypedDataForDApps is used to execute requests for "eth_signTypedData"
+// if legacy is true else "eth_signTypedData_v4"
+// the formatted typed data won't be prefixed in case of legacy calls, as the
+// old dApps implementation expects
+// the chain is validate for both cases
+func (api *API) SafeSignTypedDataForDApps(typedJson string, address string, password string, chainID uint64, legacy bool) (types.HexBytes, error) {
+	log.Debug("wallet.api.SafeSignTypedDataForDApps", "len(typedJson)", len(typedJson), "address", address, "len(password)", len(password), "chainID", chainID, "legacy", legacy)
+
+	account, err := api.getVerifiedWalletAccount(address, password)
+	if err != nil {
+		return types.HexBytes{}, err
+	}
+
+	return walletconnect.SafeSignTypedDataForDApps(typedJson, account.AccountKey.PrivateKey, chainID, legacy)
+}
+
+func (api *API) RestartWalletReloadTimer(ctx context.Context) error {
+	return api.s.reader.Restart()
+}
+
+func (api *API) IsChecksumValidForAddress(address string) (bool, error) {
+	log.Debug("wallet.api.isChecksumValidForAddress", "address", address)
+	return abi_spec.CheckAddressChecksum(address)
 }

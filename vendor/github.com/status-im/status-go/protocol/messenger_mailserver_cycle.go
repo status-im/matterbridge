@@ -18,6 +18,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/enode"
+
 	"github.com/status-im/status-go/params"
 	"github.com/status-im/status-go/protocol/storenodes"
 	"github.com/status-im/status-go/services/mailservers"
@@ -26,6 +27,7 @@ import (
 
 const defaultBackoff = 10 * time.Second
 const graylistBackoff = 3 * time.Minute
+const backoffByUserAction = 0
 const isAndroidEmulator = runtime.GOOS == "android" && runtime.GOARCH == "amd64"
 const findNearestMailServer = !isAndroidEmulator
 const overrideDNS = runtime.GOOS == "android" || runtime.GOOS == "ios"
@@ -98,10 +100,10 @@ func (m *Messenger) StartMailserverCycle(mailservers []mailservers.Mailserver) e
 func (m *Messenger) DisconnectActiveMailserver() {
 	m.mailserverCycle.Lock()
 	defer m.mailserverCycle.Unlock()
-	m.disconnectActiveMailserver()
+	m.disconnectActiveMailserver(graylistBackoff)
 }
 
-func (m *Messenger) disconnectMailserver() error {
+func (m *Messenger) disconnectMailserver(backoffDuration time.Duration) error {
 	if m.mailserverCycle.activeMailserver == nil {
 		m.logger.Info("no active mailserver")
 		return nil
@@ -111,13 +113,14 @@ func (m *Messenger) disconnectMailserver() error {
 	pInfo, ok := m.mailserverCycle.peers[m.mailserverCycle.activeMailserver.ID]
 	if ok {
 		pInfo.status = disconnected
-		pInfo.canConnectAfter = time.Now().Add(graylistBackoff)
+
+		pInfo.canConnectAfter = time.Now().Add(backoffDuration)
 		m.mailserverCycle.peers[m.mailserverCycle.activeMailserver.ID] = pInfo
 	} else {
 		m.mailserverCycle.peers[m.mailserverCycle.activeMailserver.ID] = peerStatus{
 			status:          disconnected,
 			mailserver:      *m.mailserverCycle.activeMailserver,
-			canConnectAfter: time.Now().Add(graylistBackoff),
+			canConnectAfter: time.Now().Add(backoffDuration),
 		}
 	}
 	m.mailPeersMutex.Unlock()
@@ -136,8 +139,8 @@ func (m *Messenger) disconnectMailserver() error {
 	return nil
 }
 
-func (m *Messenger) disconnectActiveMailserver() {
-	err := m.disconnectMailserver()
+func (m *Messenger) disconnectActiveMailserver(backoffDuration time.Duration) {
+	err := m.disconnectMailserver(backoffDuration)
 	if err != nil {
 		m.logger.Error("failed to disconnect mailserver", zap.Error(err))
 	}
@@ -148,10 +151,21 @@ func (m *Messenger) cycleMailservers() {
 	m.logger.Info("Automatically switching mailserver")
 
 	if m.mailserverCycle.activeMailserver != nil {
-		m.disconnectActiveMailserver()
+		m.disconnectActiveMailserver(graylistBackoff)
 	}
 
-	err := m.findNewMailserver()
+	useMailserver, err := m.settings.CanUseMailservers()
+	if err != nil {
+		m.logger.Error("failed to get use mailservers", zap.Error(err))
+		return
+	}
+
+	if !useMailserver {
+		m.logger.Info("Skipping mailserver search due to useMailserver being false")
+		return
+	}
+
+	err = m.findNewMailserver()
 	if err != nil {
 		m.logger.Error("Error getting new mailserver", zap.Error(err))
 	}
@@ -426,18 +440,14 @@ func (m *Messenger) connectToMailserver(ms mailservers.Mailserver) error {
 			m.logger.Info("mailserver available", zap.String("address", m.mailserverCycle.activeMailserver.UniqueID()))
 			m.EmitMailserverAvailable()
 			signal.SendMailserverAvailable(m.mailserverCycle.activeMailserver.Address, m.mailserverCycle.activeMailserver.ID)
+			peerID, err := m.mailserverCycle.activeMailserver.PeerID()
+			if err != nil {
+				m.logger.Error("could not decode the peer id of mailserver", zap.Error(err))
+			}
+			m.transport.SetStorePeerID(peerID)
 
 			// Query mailserver
-			if m.config.codeControlFlags.AutoRequestHistoricMessages {
-				go func() {
-					_, err := m.performMailserverRequest(&ms, func(_ mailservers.Mailserver) (*MessengerResponse, error) {
-						return m.RequestAllHistoricMessages(false, false)
-					})
-					if err != nil {
-						m.logger.Error("could not perform mailserver request", zap.Error(err))
-					}
-				}()
-			}
+			m.asyncRequestAllHistoricMessages()
 		}
 	}
 	return nil
@@ -582,12 +592,7 @@ func (m *Messenger) handleMailserverCycleEvent(connectedPeers []ConnectedPeer) e
 				}
 				// Query mailserver
 				if m.config.codeControlFlags.AutoRequestHistoricMessages {
-					go func() {
-						_, err := m.RequestAllHistoricMessages(false, true)
-						if err != nil {
-							m.logger.Error("failed to request historic messages", zap.Error(err))
-						}
-					}()
+					m.asyncRequestAllHistoricMessages()
 				}
 			} else {
 				m.mailPeersMutex.Unlock()
@@ -616,7 +621,7 @@ func (m *Messenger) handleMailserverCycleEvent(connectedPeers []ConnectedPeer) e
 
 				signal.SendMailserverNotWorking()
 				m.penalizeMailserver(m.mailserverCycle.activeMailserver.ID)
-				m.disconnectActiveMailserver()
+				m.disconnectActiveMailserver(graylistBackoff)
 			}
 		}
 
@@ -630,7 +635,12 @@ func (m *Messenger) handleMailserverCycleEvent(connectedPeers []ConnectedPeer) e
 }
 
 func (m *Messenger) asyncRequestAllHistoricMessages() {
+	if !m.config.codeControlFlags.AutoRequestHistoricMessages {
+		return
+	}
+
 	m.logger.Debug("asyncRequestAllHistoricMessages")
+
 	go func() {
 		_, err := m.RequestAllHistoricMessages(false, true)
 		if err != nil {

@@ -193,9 +193,6 @@ func (m *Messenger) dispatchToHandler(messageState *ReceivedMessageState, protoB
            case protobuf.ApplicationMetadataMessage_SYNC_KEYPAIR:
 		return m.handleSyncKeypairProtobuf(messageState, protoBytes, msg, filter)
         
-           case protobuf.ApplicationMetadataMessage_SYNC_SOCIAL_LINKS:
-		return m.handleSyncSocialLinksProtobuf(messageState, protoBytes, msg, filter)
-        
            case protobuf.ApplicationMetadataMessage_SYNC_ENS_USERNAME_DETAIL:
 		return m.handleSyncEnsUsernameDetailProtobuf(messageState, protoBytes, msg, filter)
         
@@ -258,6 +255,15 @@ func (m *Messenger) dispatchToHandler(messageState *ReceivedMessageState, protoB
         
            case protobuf.ApplicationMetadataMessage_COMMUNITY_ENCRYPTION_KEYS_REQUEST:
 		return m.handleCommunityEncryptionKeysRequestProtobuf(messageState, protoBytes, msg, filter)
+        
+           case protobuf.ApplicationMetadataMessage_COMMUNITY_TOKEN_ACTION:
+		return m.handleCommunityTokenActionProtobuf(messageState, protoBytes, msg, filter)
+        
+           case protobuf.ApplicationMetadataMessage_COMMUNITY_SHARED_ADDRESSES_REQUEST:
+		return m.handleCommunitySharedAddressesRequestProtobuf(messageState, protoBytes, msg, filter)
+        
+           case protobuf.ApplicationMetadataMessage_COMMUNITY_SHARED_ADDRESSES_RESPONSE:
+		return m.handleCommunitySharedAddressesResponseProtobuf(messageState, protoBytes, msg, filter)
         
 	default:
 		m.logger.Info("protobuf type not found", zap.String("type", string(msg.ApplicationLayer.Type)))
@@ -1408,29 +1414,6 @@ func (m *Messenger) handleSyncKeypairProtobuf(messageState *ReceivedMessageState
 }
 
 
-func (m *Messenger) handleSyncSocialLinksProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
-	m.logger.Info("handling SyncSocialLinks")
-	
-	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
-		m.logger.Warn("not coming from us, ignoring")
-		return nil
-	}
-	
-
-	
-	p := &protobuf.SyncSocialLinks{}
-	err := proto.Unmarshal(protoBytes, p)
-	if err != nil {
-		return err
-	}
-
-	m.outputToCSV(msg.TransportLayer.Message.Timestamp, msg.ApplicationLayer.ID, messageState.CurrentMessageState.Contact.ID, filter.ContentTopic, filter.ChatID, msg.ApplicationLayer.Type, p)
-
-	return m.HandleSyncSocialLinks(messageState, p, msg)
-	
-}
-
-
 func (m *Messenger) handleSyncEnsUsernameDetailProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
 	m.logger.Info("handling SyncEnsUsernameDetail")
 	
@@ -1855,6 +1838,60 @@ func (m *Messenger) handleCommunityEncryptionKeysRequestProtobuf(messageState *R
 	m.outputToCSV(msg.TransportLayer.Message.Timestamp, msg.ApplicationLayer.ID, messageState.CurrentMessageState.Contact.ID, filter.ContentTopic, filter.ChatID, msg.ApplicationLayer.Type, p)
 
 	return m.HandleCommunityEncryptionKeysRequest(messageState, p, msg)
+	
+}
+
+
+func (m *Messenger) handleCommunityTokenActionProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+	m.logger.Info("handling CommunityTokenAction")
+	
+
+	
+	p := &protobuf.CommunityTokenAction{}
+	err := proto.Unmarshal(protoBytes, p)
+	if err != nil {
+		return err
+	}
+
+	m.outputToCSV(msg.TransportLayer.Message.Timestamp, msg.ApplicationLayer.ID, messageState.CurrentMessageState.Contact.ID, filter.ContentTopic, filter.ChatID, msg.ApplicationLayer.Type, p)
+
+	return m.HandleCommunityTokenAction(messageState, p, msg)
+	
+}
+
+
+func (m *Messenger) handleCommunitySharedAddressesRequestProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+	m.logger.Info("handling CommunitySharedAddressesRequest")
+	
+
+	
+	p := &protobuf.CommunitySharedAddressesRequest{}
+	err := proto.Unmarshal(protoBytes, p)
+	if err != nil {
+		return err
+	}
+
+	m.outputToCSV(msg.TransportLayer.Message.Timestamp, msg.ApplicationLayer.ID, messageState.CurrentMessageState.Contact.ID, filter.ContentTopic, filter.ChatID, msg.ApplicationLayer.Type, p)
+
+	return m.HandleCommunitySharedAddressesRequest(messageState, p, msg)
+	
+}
+
+
+func (m *Messenger) handleCommunitySharedAddressesResponseProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+	m.logger.Info("handling CommunitySharedAddressesResponse")
+	
+
+	
+	p := &protobuf.CommunitySharedAddressesResponse{}
+	err := proto.Unmarshal(protoBytes, p)
+	if err != nil {
+		return err
+	}
+
+	m.outputToCSV(msg.TransportLayer.Message.Timestamp, msg.ApplicationLayer.ID, messageState.CurrentMessageState.Contact.ID, filter.ContentTopic, filter.ChatID, msg.ApplicationLayer.Type, p)
+
+	return m.HandleCommunitySharedAddressesResponse(messageState, p, msg)
 	
 }
 

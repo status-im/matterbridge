@@ -7,10 +7,6 @@ import (
 	"github.com/status-im/status-go/contracts/balancechecker"
 	"github.com/status-im/status-go/contracts/directory"
 	"github.com/status-im/status-go/contracts/ethscan"
-	"github.com/status-im/status-go/contracts/hop"
-	hopBridge "github.com/status-im/status-go/contracts/hop/bridge"
-	hopSwap "github.com/status-im/status-go/contracts/hop/swap"
-	hopWrapper "github.com/status-im/status-go/contracts/hop/wrapper"
 	"github.com/status-im/status-go/contracts/ierc20"
 	"github.com/status-im/status-go/contracts/registrar"
 	"github.com/status-im/status-go/contracts/resolver"
@@ -19,11 +15,18 @@ import (
 	"github.com/status-im/status-go/rpc"
 )
 
-type ContractMaker struct {
-	RPCClient *rpc.Client
+type ContractMakerIface interface {
+	NewEthScan(chainID uint64) (ethscan.BalanceScannerIface, uint, error)
+	NewERC20(chainID uint64, contractAddr common.Address) (ierc20.IERC20Iface, error)
+	NewERC20Caller(chainID uint64, contractAddr common.Address) (ierc20.IERC20CallerIface, error)
+	// TODO extend with other contracts
 }
 
-func NewContractMaker(client *rpc.Client) (*ContractMaker, error) {
+type ContractMaker struct {
+	RPCClient rpc.ClientInterface
+}
+
+func NewContractMaker(client rpc.ClientInterface) (*ContractMaker, error) {
 	if client == nil {
 		return nil, errors.New("could not initialize ContractMaker with an rpc client")
 	}
@@ -71,7 +74,7 @@ func (c *ContractMaker) NewUsernameRegistrar(chainID uint64, contractAddr common
 	)
 }
 
-func (c *ContractMaker) NewERC20(chainID uint64, contractAddr common.Address) (*ierc20.IERC20, error) {
+func (c *ContractMaker) NewERC20(chainID uint64, contractAddr common.Address) (ierc20.IERC20Iface, error) {
 	backend, err := c.RPCClient.EthClient(chainID)
 	if err != nil {
 		return nil, err
@@ -81,6 +84,14 @@ func (c *ContractMaker) NewERC20(chainID uint64, contractAddr common.Address) (*
 		contractAddr,
 		backend,
 	)
+}
+func (c *ContractMaker) NewERC20Caller(chainID uint64, contractAddr common.Address) (ierc20.IERC20CallerIface, error) {
+	backend, err := c.RPCClient.EthClient(chainID)
+	if err != nil {
+		return nil, err
+	}
+
+	return ierc20.NewIERC20Caller(contractAddr, backend)
 }
 
 func (c *ContractMaker) NewSNT(chainID uint64) (*snt.SNT, error) {
@@ -165,7 +176,7 @@ func (c *ContractMaker) NewDirectory(chainID uint64) (*directory.Directory, erro
 	)
 }
 
-func (c *ContractMaker) NewEthScan(chainID uint64) (*ethscan.BalanceScanner, uint, error) {
+func (c *ContractMaker) NewEthScan(chainID uint64) (ethscan.BalanceScannerIface, uint, error) {
 	contractAddr, err := ethscan.ContractAddress(chainID)
 	if err != nil {
 		return nil, 0, err
@@ -200,54 +211,6 @@ func (c *ContractMaker) NewBalanceChecker(chainID uint64) (*balancechecker.Balan
 		return nil, err
 	}
 	return balancechecker.NewBalanceChecker(
-		contractAddr,
-		backend,
-	)
-}
-
-func (c *ContractMaker) NewHopL2SaddlSwap(chainID uint64, symbol string) (*hopSwap.HopSwap, error) {
-	contractAddr, err := hop.L2SaddleSwapContractAddress(chainID, symbol)
-	if err != nil {
-		return nil, err
-	}
-
-	backend, err := c.RPCClient.EthClient(chainID)
-	if err != nil {
-		return nil, err
-	}
-	return hopSwap.NewHopSwap(
-		contractAddr,
-		backend,
-	)
-}
-
-func (c *ContractMaker) NewHopL1Bridge(chainID uint64, symbol string) (*hopBridge.HopBridge, error) {
-	contractAddr, err := hop.L1BridgeContractAddress(chainID, symbol)
-	if err != nil {
-		return nil, err
-	}
-
-	backend, err := c.RPCClient.EthClient(chainID)
-	if err != nil {
-		return nil, err
-	}
-	return hopBridge.NewHopBridge(
-		contractAddr,
-		backend,
-	)
-}
-
-func (c *ContractMaker) NewHopL2AmmWrapper(chainID uint64, symbol string) (*hopWrapper.HopWrapper, error) {
-	contractAddr, err := hop.L2AmmWrapperContractAddress(chainID, symbol)
-	if err != nil {
-		return nil, err
-	}
-
-	backend, err := c.RPCClient.EthClient(chainID)
-	if err != nil {
-		return nil, err
-	}
-	return hopWrapper.NewHopWrapper(
 		contractAddr,
 		backend,
 	)

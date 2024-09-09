@@ -3,6 +3,8 @@ package common
 import (
 	"strconv"
 	"time"
+
+	ethCommon "github.com/ethereum/go-ethereum/common"
 )
 
 type MultiTransactionIDType int64
@@ -28,6 +30,10 @@ const (
 	BinanceTestChainID uint64 = 97 // obsolete?
 )
 
+var (
+	ZeroAddress = ethCommon.HexToAddress("0x0000000000000000000000000000000000000000")
+)
+
 type ContractType byte
 
 const (
@@ -38,7 +44,11 @@ const (
 )
 
 func (c ChainID) String() string {
-	return strconv.Itoa(int(c))
+	return strconv.FormatUint(uint64(c), 10)
+}
+
+func (c ChainID) ToUint() uint64 {
+	return uint64(c)
 }
 
 func (c ChainID) IsMainnet() bool {

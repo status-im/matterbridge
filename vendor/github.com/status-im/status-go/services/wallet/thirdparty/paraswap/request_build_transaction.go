@@ -8,6 +8,8 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
+
+	walletCommon "github.com/status-im/status-go/services/wallet/common"
 )
 
 const transactionsURL = "https://apiv5.paraswap.io/transactions/%d"
@@ -24,23 +26,37 @@ type Transaction struct {
 }
 
 func (c *ClientV5) BuildTransaction(ctx context.Context, srcTokenAddress common.Address, srcTokenDecimals uint, srcAmountWei *big.Int,
-	destTokenAddress common.Address, destTokenDecimals uint, destAmountWei *big.Int,
-	addressFrom common.Address, addressTo common.Address, priceRoute json.RawMessage) (Transaction, error) {
+	destTokenAddress common.Address, destTokenDecimals uint, destAmountWei *big.Int, slippageBasisPoints uint,
+	addressFrom common.Address, addressTo common.Address, priceRoute json.RawMessage, side SwapSide) (Transaction, error) {
 
 	params := map[string]interface{}{}
 	params["srcToken"] = srcTokenAddress.Hex()
 	params["srcDecimals"] = srcTokenDecimals
-	params["srcAmount"] = srcAmountWei.String()
 	params["destToken"] = destTokenAddress.Hex()
 	params["destDecimals"] = destTokenDecimals
-	// params["destAmount"] = destAmountWei.String()
 	params["userAddress"] = addressFrom.Hex()
 	// params["receiver"] = addressTo.Hex() // at this point paraswap doesn't allow swap and transfer transaction
-	params["slippage"] = "500"
 	params["priceRoute"] = priceRoute
 
+	if slippageBasisPoints > 0 {
+		params["slippage"] = slippageBasisPoints
+		if side == SellSide {
+			params["srcAmount"] = srcAmountWei.String()
+		} else {
+			params["destAmount"] = destAmountWei.String()
+		}
+	} else {
+		params["srcAmount"] = srcAmountWei.String()
+		params["destAmount"] = destAmountWei.String()
+	}
+	params["partner"] = c.partnerID
+	if c.partnerAddress != walletCommon.ZeroAddress && c.partnerFeePcnt > 0 {
+		params["partnerAddress"] = c.partnerAddress.Hex()
+		params["partnerFeeBps"] = uint(c.partnerFeePcnt * 100)
+	}
+
 	url := fmt.Sprintf(transactionsURL, c.chainID)
-	response, err := c.httpClient.DoPostRequest(ctx, url, params)
+	response, err := c.httpClient.DoPostRequest(ctx, url, params, nil)
 	if err != nil {
 		return Transaction{}, err
 	}

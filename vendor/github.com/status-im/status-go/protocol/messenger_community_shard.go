@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 
+	"github.com/ethereum/go-ethereum/common/hexutil"
+
 	"github.com/golang/protobuf/proto"
 	"go.uber.org/zap"
 
@@ -56,10 +58,17 @@ func (m *Messenger) sendPublicCommunityShardInfo(community *communities.Communit
 		SkipEncryptionLayer: true,
 		MessageType:         protobuf.ApplicationMetadataMessage_COMMUNITY_PUBLIC_SHARD_INFO,
 		PubsubTopic:         shard.DefaultNonProtectedPubsubTopic(), // it must be sent always to default shard pubsub topic
+		Priority:            &common.HighPriority,
 	}
 
 	chatName := transport.CommunityShardInfoTopic(community.IDString())
-	_, err = m.sender.SendPublic(context.Background(), chatName, rawMessage)
+	messageID, err := m.sender.SendPublic(context.Background(), chatName, rawMessage)
+	if err == nil {
+		m.logger.Debug("published public community shard info",
+			zap.String("communityID", community.IDString()),
+			zap.String("messageID", hexutil.Encode(messageID)),
+		)
+	}
 	return err
 }
 

@@ -28,7 +28,6 @@ import (
 	"github.com/status-im/status-go/protocol/common"
 	"github.com/status-im/status-go/protocol/communities"
 	"github.com/status-im/status-go/protocol/encryption/multidevice"
-	"github.com/status-im/status-go/protocol/identity"
 	"github.com/status-im/status-go/protocol/peersyncing"
 	"github.com/status-im/status-go/protocol/protobuf"
 	"github.com/status-im/status-go/protocol/requests"
@@ -56,6 +55,7 @@ var (
 	ErrInvalidCommunityID                     = errors.New("invalid community id")
 	ErrTryingToApplyOldTokenPreferences       = errors.New("trying to apply old token preferences")
 	ErrTryingToApplyOldCollectiblePreferences = errors.New("trying to apply old collectible preferences")
+	ErrOutdatedCommunityRequestToJoin         = errors.New("outdated community request to join response")
 )
 
 // HandleMembershipUpdate updates a Chat instance according to the membership updates.
@@ -1342,7 +1342,7 @@ func (m *Messenger) HandleHistoryArchiveMagnetlinkMessage(state *ReceivedMessage
 		return nil
 	}
 
-	if m.torrentClientReady() && settings.HistoryArchiveSupportEnabled {
+	if m.archiveManager.IsReady() && settings.HistoryArchiveSupportEnabled {
 		lastClock, err := m.communitiesManager.GetMagnetlinkMessageClock(id)
 		if err != nil {
 			return err
@@ -1356,12 +1356,12 @@ func (m *Messenger) HandleHistoryArchiveMagnetlinkMessage(state *ReceivedMessage
 		// part of and doesn't own the private key at the same time
 		if !community.IsControlNode() && community.Joined() && clock >= lastClock {
 			if lastSeenMagnetlink == magnetlink {
-				m.communitiesManager.LogStdout("already processed this magnetlink")
+				m.logger.Debug("already processed this magnetlink")
 				return nil
 			}
 
-			m.communitiesManager.UnseedHistoryArchiveTorrent(id)
-			currentTask := m.communitiesManager.GetHistoryArchiveDownloadTask(id.String())
+			m.archiveManager.UnseedHistoryArchiveTorrent(id)
+			currentTask := m.archiveManager.GetHistoryArchiveDownloadTask(id.String())
 
 			go func(currentTask *communities.HistoryArchiveDownloadTask, communityID types.HexBytes) {
 
@@ -1378,7 +1378,7 @@ func (m *Messenger) HandleHistoryArchiveMagnetlinkMessage(state *ReceivedMessage
 					Cancelled:  false,
 				}
 
-				m.communitiesManager.AddHistoryArchiveDownloadTask(communityID.String(), task)
+				m.archiveManager.AddHistoryArchiveDownloadTask(communityID.String(), task)
 
 				// this wait groups tracks the ongoing task for a particular community
 				task.Waiter.Add(1)
@@ -1397,32 +1397,32 @@ func (m *Messenger) HandleHistoryArchiveMagnetlinkMessage(state *ReceivedMessage
 }
 
 func (m *Messenger) downloadAndImportHistoryArchives(id types.HexBytes, magnetlink string, cancel chan struct{}) {
-	downloadTaskInfo, err := m.communitiesManager.DownloadHistoryArchivesByMagnetlink(id, magnetlink, cancel)
+	downloadTaskInfo, err := m.archiveManager.DownloadHistoryArchivesByMagnetlink(id, magnetlink, cancel)
 	if err != nil {
 		logMsg := "failed to download history archive data"
 		if err == communities.ErrTorrentTimedout {
-			m.communitiesManager.LogStdout("torrent has timed out, trying once more...")
-			downloadTaskInfo, err = m.communitiesManager.DownloadHistoryArchivesByMagnetlink(id, magnetlink, cancel)
+			m.logger.Debug("torrent has timed out, trying once more...")
+			downloadTaskInfo, err = m.archiveManager.DownloadHistoryArchivesByMagnetlink(id, magnetlink, cancel)
 			if err != nil {
-				m.communitiesManager.LogStdout(logMsg, zap.Error(err))
+				m.logger.Error(logMsg, zap.Error(err))
 				return
 			}
 		} else {
-			m.communitiesManager.LogStdout(logMsg, zap.Error(err))
+			m.logger.Debug(logMsg, zap.Error(err))
 			return
 		}
 	}
 
 	if downloadTaskInfo.Cancelled {
 		if downloadTaskInfo.TotalDownloadedArchivesCount > 0 {
-			m.communitiesManager.LogStdout(fmt.Sprintf("downloaded %d of %d archives so far", downloadTaskInfo.TotalDownloadedArchivesCount, downloadTaskInfo.TotalArchivesCount))
+			m.logger.Debug(fmt.Sprintf("downloaded %d of %d archives so far", downloadTaskInfo.TotalDownloadedArchivesCount, downloadTaskInfo.TotalArchivesCount))
 		}
 		return
 	}
 
 	err = m.communitiesManager.UpdateLastSeenMagnetlink(id, magnetlink)
 	if err != nil {
-		m.communitiesManager.LogStdout("couldn't update last seen magnetlink", zap.Error(err))
+		m.logger.Error("couldn't update last seen magnetlink", zap.Error(err))
 	}
 
 	err = m.checkIfIMemberOfCommunity(id)
@@ -1432,7 +1432,7 @@ func (m *Messenger) downloadAndImportHistoryArchives(id types.HexBytes, magnetli
 
 	err = m.importHistoryArchives(id, cancel)
 	if err != nil {
-		m.communitiesManager.LogStdout("failed to import history archives", zap.Error(err))
+		m.logger.Error("failed to import history archives", zap.Error(err))
 		m.config.messengerSignalsHandler.DownloadingHistoryArchivesFinished(types.EncodeHex(id))
 		return
 	}
@@ -1475,13 +1475,13 @@ func (m *Messenger) handleArchiveMessages(archiveMessages []*protobuf.WakuMessag
 
 	err := m.handleImportedMessages(importedMessages)
 	if err != nil {
-		m.communitiesManager.LogStdout("failed to handle imported messages", zap.Error(err))
+		m.logger.Error("failed to handle imported messages", zap.Error(err))
 		return nil, err
 	}
 
 	response, err := m.handleRetrievedMessages(otherMessages, false, true)
 	if err != nil {
-		m.communitiesManager.LogStdout("failed to write history archive messages to database", zap.Error(err))
+		m.logger.Error("failed to write history archive messages to database", zap.Error(err))
 		return nil, err
 	}
 
@@ -1644,14 +1644,37 @@ func (m *Messenger) HandleCommunityRequestToJoinResponse(state *ReceivedMessageS
 		return ErrInvalidCommunityID
 	}
 
-	myCancelledRequestToJoin, err := m.MyCanceledRequestToJoinForCommunityID(requestToJoinResponseProto.CommunityId)
+	myRequestToJoinId := communities.CalculateRequestID(m.IdentityPublicKeyString(), requestToJoinResponseProto.CommunityId)
 
+	requestToJoin, err := m.communitiesManager.GetRequestToJoin(myRequestToJoinId)
 	if err != nil {
 		return err
 	}
 
-	if myCancelledRequestToJoin != nil {
+	if requestToJoin.State == communities.RequestToJoinStateCanceled {
 		return nil
+	}
+
+	community, err := m.communitiesManager.GetByID(requestToJoinResponseProto.CommunityId)
+	if err != nil {
+		return err
+	}
+
+	// check if it is outdated approved request to join
+	clockSeconds := requestToJoinResponseProto.Clock / 1000
+	isClockOutdated := clockSeconds < requestToJoin.Clock
+	isDuplicateAfterMemberLeaves := clockSeconds == requestToJoin.Clock &&
+		requestToJoin.State == communities.RequestToJoinStateAccepted && !community.Joined()
+
+	if requestToJoin.State != communities.RequestToJoinStatePending &&
+		(isClockOutdated || isDuplicateAfterMemberLeaves) {
+		m.logger.Error(ErrOutdatedCommunityRequestToJoin.Error(),
+			zap.String("communityId", community.IDString()),
+			zap.Bool("joined", community.Joined()),
+			zap.Uint64("requestToJoinResponseProto.Clock", requestToJoinResponseProto.Clock),
+			zap.Uint64("requestToJoin.Clock", requestToJoin.Clock),
+			zap.Uint8("state", uint8(requestToJoin.State)))
+		return ErrOutdatedCommunityRequestToJoin
 	}
 
 	updatedRequest, err := m.communitiesManager.HandleCommunityRequestToJoinResponse(signer, requestToJoinResponseProto)
@@ -1663,7 +1686,7 @@ func (m *Messenger) HandleCommunityRequestToJoinResponse(state *ReceivedMessageS
 		state.Response.AddRequestToJoinCommunity(updatedRequest)
 	}
 
-	community, err := m.communitiesManager.GetByID(requestToJoinResponseProto.CommunityId)
+	community, err = m.communitiesManager.GetByID(requestToJoinResponseProto.CommunityId)
 	if err != nil {
 		return err
 	}
@@ -1682,75 +1705,65 @@ func (m *Messenger) HandleCommunityRequestToJoinResponse(state *ReceivedMessageS
 			return err
 		}
 
+		// Note: we can't guarantee that REQUEST_TO_JOIN_RESPONSE msg will be delivered before
+		// COMMUNITY_DESCRIPTION msg, so this msg can return an ErrOrgAlreadyJoined if we
+		// have been joined during COMMUNITY_DESCRIPTION
 		response, err := m.JoinCommunity(context.Background(), requestToJoinResponseProto.CommunityId, false)
-		if err != nil {
+		if err != nil && err != communities.ErrOrgAlreadyJoined {
 			return err
 		}
 
-		// we merge to include chats in response signal to joining a community
-		err = state.Response.Merge(response)
-		if err != nil {
-			return err
-		}
+		var communitySettings *communities.CommunitySettings
+		if response != nil {
+			// we merge to include chats in response signal to joining a community
+			err = state.Response.Merge(response)
+			if err != nil {
+				return err
+			}
 
-		if len(response.Communities()) > 0 {
-			communitySettings := response.CommunitiesSettings()[0]
-			community := response.Communities()[0]
-
-			magnetlink := requestToJoinResponseProto.MagnetUri
-			if m.torrentClientReady() && communitySettings != nil && communitySettings.HistoryArchiveSupportEnabled && magnetlink != "" {
-
-				currentTask := m.communitiesManager.GetHistoryArchiveDownloadTask(community.IDString())
-				go func(currentTask *communities.HistoryArchiveDownloadTask) {
-
-					// Cancel ongoing download/import task
-					if currentTask != nil && !currentTask.IsCancelled() {
-						currentTask.Cancel()
-						currentTask.Waiter.Wait()
-					}
-
-					task := &communities.HistoryArchiveDownloadTask{
-						CancelChan: make(chan struct{}),
-						Waiter:     *new(sync.WaitGroup),
-						Cancelled:  false,
-					}
-					m.communitiesManager.AddHistoryArchiveDownloadTask(community.IDString(), task)
-
-					task.Waiter.Add(1)
-					defer task.Waiter.Done()
-
-					m.shutdownWaitGroup.Add(1)
-					defer m.shutdownWaitGroup.Done()
-
-					m.downloadAndImportHistoryArchives(community.ID(), magnetlink, task.CancelChan)
-				}(currentTask)
-
-				clock := requestToJoinResponseProto.Community.ArchiveMagnetlinkClock
-				return m.communitiesManager.UpdateMagnetlinkMessageClock(community.ID(), clock)
+			if len(response.Communities()) > 0 {
+				communitySettings = response.CommunitiesSettings()[0]
+				community = response.Communities()[0]
 			}
 		}
-	}
 
-	// Activity Center notification
-	requestID := communities.CalculateRequestID(common.PubkeyToHex(&m.identity.PublicKey), requestToJoinResponseProto.CommunityId)
-	notification, err := m.persistence.GetActivityCenterNotificationByID(requestID)
-	if err != nil {
-		return err
-	}
-
-	if notification != nil {
-		if requestToJoinResponseProto.Accepted {
-			notification.MembershipStatus = ActivityCenterMembershipStatusAccepted
-			notification.Read = false
-			notification.Deleted = false
-		} else {
-			notification.MembershipStatus = ActivityCenterMembershipStatusDeclined
+		if communitySettings == nil {
+			communitySettings, err = m.communitiesManager.GetCommunitySettingsByID(requestToJoinResponseProto.CommunityId)
+			if err != nil {
+				return nil
+			}
 		}
-		notification.UpdatedAt = m.GetCurrentTimeInMillis()
-		err = m.addActivityCenterNotification(state.Response, notification, nil)
-		if err != nil {
-			m.logger.Error("failed to update notification", zap.Error(err))
-			return err
+
+		magnetlink := requestToJoinResponseProto.MagnetUri
+		if m.archiveManager.IsReady() && communitySettings != nil && communitySettings.HistoryArchiveSupportEnabled && magnetlink != "" {
+
+			currentTask := m.archiveManager.GetHistoryArchiveDownloadTask(community.IDString())
+			go func(currentTask *communities.HistoryArchiveDownloadTask) {
+
+				// Cancel ongoing download/import task
+				if currentTask != nil && !currentTask.IsCancelled() {
+					currentTask.Cancel()
+					currentTask.Waiter.Wait()
+				}
+
+				task := &communities.HistoryArchiveDownloadTask{
+					CancelChan: make(chan struct{}),
+					Waiter:     *new(sync.WaitGroup),
+					Cancelled:  false,
+				}
+				m.archiveManager.AddHistoryArchiveDownloadTask(community.IDString(), task)
+
+				task.Waiter.Add(1)
+				defer task.Waiter.Done()
+
+				m.shutdownWaitGroup.Add(1)
+				defer m.shutdownWaitGroup.Done()
+
+				m.downloadAndImportHistoryArchives(community.ID(), magnetlink, task.CancelChan)
+			}(currentTask)
+
+			clock := requestToJoinResponseProto.Community.ArchiveMagnetlinkClock
+			return m.communitiesManager.UpdateMagnetlinkMessageClock(community.ID(), clock)
 		}
 	}
 
@@ -2270,84 +2283,6 @@ func (m *Messenger) handleChatMessage(state *ReceivedMessageState, forceSeen boo
 
 	contact := state.CurrentMessageState.Contact
 
-	// If we receive some propagated state from someone who's not
-	// our paired device, we handle it
-	if receivedMessage.ContactRequestPropagatedState != nil && !isSyncMessage {
-		result := contact.ContactRequestPropagatedStateReceived(receivedMessage.ContactRequestPropagatedState)
-		if result.sendBackState {
-			_, err = m.sendContactUpdate(context.Background(), contact.ID, "", "", "", "", m.dispatchMessage)
-			if err != nil {
-				return err
-			}
-		}
-		if result.newContactRequestReceived {
-
-			if contact.hasAddedUs() && !contact.mutual() {
-				receivedMessage.ContactRequestState = common.ContactRequestStatePending
-			}
-
-			// Add mutual state update message for outgoing contact request
-			clock := receivedMessage.Clock - 1
-			updateMessage, err := m.prepareMutualStateUpdateMessage(contact.ID, MutualStateUpdateTypeSent, clock, receivedMessage.Timestamp, false)
-			if err != nil {
-				return err
-			}
-
-			err = m.prepareMessage(updateMessage, m.httpServer)
-			if err != nil {
-				return err
-			}
-			err = m.persistence.SaveMessages([]*common.Message{updateMessage})
-			if err != nil {
-				return err
-			}
-			state.Response.AddMessage(updateMessage)
-
-			err = m.createIncomingContactRequestNotification(contact, state, receivedMessage, true)
-			if err != nil {
-				return err
-			}
-		}
-		state.ModifiedContacts.Store(contact.ID, true)
-		state.AllContacts.Store(contact.ID, contact)
-	}
-
-	if receivedMessage.ContentType == protobuf.ChatMessage_CONTACT_REQUEST && chat.OneToOne() {
-		chatContact := contact
-		if isSyncMessage {
-			chatContact, err = m.BuildContact(&requests.BuildContact{PublicKey: chat.ID})
-			if err != nil {
-				return err
-			}
-		}
-
-		if receivedMessage.CustomizationColor != 0 {
-			chatContact.CustomizationColor = multiaccountscommon.IDToColorFallbackToBlue(receivedMessage.CustomizationColor)
-		}
-
-		if chatContact.mutual() || chatContact.dismissed() {
-			m.logger.Info("ignoring contact request message for a mutual or dismissed contact")
-			return nil
-		}
-
-		sendNotification, err := handleContactRequestChatMessage(receivedMessage, chatContact, isSyncMessage, m.logger)
-		if err != nil {
-			m.logger.Error("failed to handle contact request message", zap.Error(err))
-			return err
-		}
-		state.ModifiedContacts.Store(chatContact.ID, true)
-		state.AllContacts.Store(chatContact.ID, chatContact)
-
-		if sendNotification {
-			err = m.createIncomingContactRequestNotification(chatContact, state, receivedMessage, true)
-			if err != nil {
-				return err
-			}
-		}
-	} else if receivedMessage.ContentType == protobuf.ChatMessage_COMMUNITY {
-		chat.Highlight = true
-	}
-
 	if receivedMessage.ContentType == protobuf.ChatMessage_DISCORD_MESSAGE {
 		discordMessage := receivedMessage.GetDiscordMessage()
 		discordMessageAuthor := discordMessage.GetAuthor()
@@ -2434,6 +2369,84 @@ func (m *Messenger) handleChatMessage(state *ReceivedMessageState, forceSeen boo
 	err = m.addPeersyncingMessage(chat, state.CurrentMessageState.StatusMessage)
 	if err != nil {
 		m.logger.Warn("failed to add peersyncing message", zap.Error(err))
+	}
+
+	// If we receive some propagated state from someone who's not
+	// our paired device, we handle it
+	if receivedMessage.ContactRequestPropagatedState != nil && !isSyncMessage {
+		result := contact.ContactRequestPropagatedStateReceived(receivedMessage.ContactRequestPropagatedState)
+		if result.sendBackState {
+			_, err = m.sendContactUpdate(context.Background(), contact.ID, "", "", "", "", m.dispatchMessage)
+			if err != nil {
+				return err
+			}
+		}
+		if result.newContactRequestReceived {
+
+			if contact.hasAddedUs() && !contact.mutual() {
+				receivedMessage.ContactRequestState = common.ContactRequestStatePending
+			}
+
+			// Add mutual state update message for outgoing contact request
+			clock := receivedMessage.Clock - 1
+			updateMessage, err := m.prepareMutualStateUpdateMessage(contact.ID, MutualStateUpdateTypeSent, clock, receivedMessage.Timestamp, false)
+			if err != nil {
+				return err
+			}
+
+			err = m.prepareMessage(updateMessage, m.httpServer)
+			if err != nil {
+				return err
+			}
+			err = m.persistence.SaveMessages([]*common.Message{updateMessage})
+			if err != nil {
+				return err
+			}
+			state.Response.AddMessage(updateMessage)
+
+			err = m.createIncomingContactRequestNotification(contact, state, receivedMessage, true)
+			if err != nil {
+				return err
+			}
+		}
+		state.ModifiedContacts.Store(contact.ID, true)
+		state.AllContacts.Store(contact.ID, contact)
+	}
+
+	if receivedMessage.ContentType == protobuf.ChatMessage_CONTACT_REQUEST && chat.OneToOne() {
+		chatContact := contact
+		if isSyncMessage {
+			chatContact, err = m.BuildContact(&requests.BuildContact{PublicKey: chat.ID})
+			if err != nil {
+				return err
+			}
+		}
+
+		if receivedMessage.CustomizationColor != 0 {
+			chatContact.CustomizationColor = multiaccountscommon.IDToColorFallbackToBlue(receivedMessage.CustomizationColor)
+		}
+
+		if chatContact.mutual() || chatContact.dismissed() {
+			m.logger.Info("ignoring contact request message for a mutual or dismissed contact")
+			return nil
+		}
+
+		sendNotification, err := handleContactRequestChatMessage(receivedMessage, chatContact, isSyncMessage, m.logger)
+		if err != nil {
+			m.logger.Error("failed to handle contact request message", zap.Error(err))
+			return err
+		}
+		state.ModifiedContacts.Store(chatContact.ID, true)
+		state.AllContacts.Store(chatContact.ID, chatContact)
+
+		if sendNotification {
+			err = m.createIncomingContactRequestNotification(chatContact, state, receivedMessage, true)
+			if err != nil {
+				return err
+			}
+		}
+	} else if receivedMessage.ContentType == protobuf.ChatMessage_COMMUNITY {
+		chat.Highlight = true
 	}
 
 	receivedMessage.New = true
@@ -3059,16 +3072,6 @@ func (m *Messenger) HandleChatIdentity(state *ReceivedMessageState, ci *protobuf
 
 		if contact.Bio != ci.Description {
 			contact.Bio = ci.Description
-			contactModified = true
-		}
-
-		socialLinks := identity.NewSocialLinks(ci.SocialLinks)
-		if err = ValidateSocialLinks(socialLinks); err != nil {
-			return err
-		}
-
-		if !contact.SocialLinks.Equal(socialLinks) {
-			contact.SocialLinks = socialLinks
 			contactModified = true
 		}
 
@@ -3850,7 +3853,7 @@ func (m *Messenger) HandlePushNotificationRequest(state *ReceivedMessageState, m
 }
 
 func (m *Messenger) HandleCommunityDescription(state *ReceivedMessageState, message *protobuf.CommunityDescription, statusMessage *v1protocol.StatusMessage) error {
-	// TODO: handle shard
+	// shard passed as nil since it is handled within by using default shard
 	err := m.handleCommunityDescription(state, state.CurrentMessageState.PublicKey, message, statusMessage.EncryptionLayer.Payload, nil, nil)
 	if err != nil {
 		m.logger.Warn("failed to handle CommunityDescription", zap.Error(err))

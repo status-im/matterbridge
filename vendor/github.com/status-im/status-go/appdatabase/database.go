@@ -1,12 +1,17 @@
 package appdatabase
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"math/big"
 
+	d_common "github.com/status-im/status-go/common"
+
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 
 	"github.com/status-im/status-go/appdatabase/migrations"
@@ -15,6 +20,8 @@ import (
 	"github.com/status-im/status-go/services/wallet/bigint"
 	w_common "github.com/status-im/status-go/services/wallet/common"
 	"github.com/status-im/status-go/sqlite"
+
+	e_types "github.com/status-im/status-go/eth-node/types"
 )
 
 const nodeCfgMigrationDate = 1640111208
@@ -24,6 +31,8 @@ var customSteps = []*sqlite.PostStep{
 	{Version: 1686048341, CustomMigration: migrateWalletJSONBlobs, RollBackVersion: 1686041510},
 	{Version: 1687193315, CustomMigration: migrateWalletTransferFromToAddresses, RollBackVersion: 1686825075},
 }
+
+var CurrentAppDBKeyUID string
 
 type DbInitializer struct {
 }
@@ -52,8 +61,13 @@ func doMigration(db *sql.DB) error {
 		}
 	}
 
+	postSteps := []*sqlite.PostStep{
+		{Version: 1662365868, CustomMigration: FixMissingKeyUIDForAccounts},
+		{Version: 1720606449, CustomMigration: OptimizeMobileWakuV2SettingsForMobileV1},
+	}
+	postSteps = append(postSteps, customSteps...)
 	// Run all the new migrations
-	err = migrations.Migrate(db, customSteps)
+	err = migrations.Migrate(db, postSteps)
 	if err != nil {
 		return err
 	}
@@ -74,6 +88,72 @@ func InitializeDB(path, password string, kdfIterationsNumber int) (*sql.DB, erro
 	}
 
 	return db, nil
+}
+
+func OptimizeMobileWakuV2SettingsForMobileV1(sqlTx *sql.Tx) error {
+	if d_common.IsMobilePlatform() {
+		_, err := sqlTx.Exec(`UPDATE wakuv2_config SET light_client = ?, enable_store_confirmation_for_messages_sent = ?`, true, false)
+		if err != nil {
+			log.Error("failed to enable light client and disable store confirmation for mobile v1", "err", err.Error())
+			return err
+		}
+	}
+	return nil
+}
+
+func FixMissingKeyUIDForAccounts(sqlTx *sql.Tx) error {
+	rows, err := sqlTx.Query(`SELECT address,pubkey FROM accounts WHERE pubkey IS NOT NULL AND type != '' AND type != 'generated'`)
+	if err != nil {
+		log.Error("Migrating accounts: failed to query accounts", "err", err.Error())
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var address e_types.Address
+		var pubkey e_types.HexBytes
+		err = rows.Scan(&address, &pubkey)
+		if err != nil {
+			log.Error("Migrating accounts: failed to scan records", "err", err.Error())
+			return err
+		}
+		pk, err := crypto.UnmarshalPubkey(pubkey)
+		if err != nil {
+			log.Error("Migrating accounts: failed to unmarshal pubkey", "err", err.Error(), "pubkey", string(pubkey))
+			return err
+		}
+		pkBytes := sha256.Sum256(crypto.FromECDSAPub(pk))
+		keyUIDHex := hexutil.Encode(pkBytes[:])
+		_, err = sqlTx.Exec(`UPDATE accounts SET key_uid = ? WHERE address = ?`, keyUIDHex, address)
+		if err != nil {
+			log.Error("Migrating accounts: failed to update key_uid for imported accounts", "err", err.Error())
+			return err
+		}
+	}
+
+	var walletRootAddress e_types.Address
+	err = sqlTx.QueryRow(`SELECT wallet_root_address FROM settings WHERE synthetic_id='id'`).Scan(&walletRootAddress)
+	if err == sql.ErrNoRows {
+		// we shouldn't reach here, but if we do, it probably happened from the test
+		log.Warn("Migrating accounts: no wallet_root_address found in settings")
+		return nil
+	}
+	if err != nil {
+		log.Error("Migrating accounts: failed to get wallet_root_address", "err", err.Error())
+		return err
+	}
+	_, err = sqlTx.Exec(`UPDATE accounts SET key_uid = ?, derived_from = ? WHERE type = '' OR type = 'generated'`, CurrentAppDBKeyUID, walletRootAddress.Hex())
+	if err != nil {
+		log.Error("Migrating accounts: failed to update key_uid/derived_from", "err", err.Error())
+		return err
+	}
+	// fix the default wallet account color issue https://github.com/status-im/status-mobile/issues/20476
+	// we don't care the other type of account's color
+	_, err = sqlTx.Exec(`UPDATE accounts SET color = 'blue',emoji='🐳' WHERE wallet = 1`)
+	if err != nil {
+		log.Error("Migrating accounts: failed to update default wallet account's color to blue", "err", err.Error())
+		return err
+	}
+	return nil
 }
 
 func migrateEnsUsernames(sqlTx *sql.Tx) error {

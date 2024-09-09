@@ -37,6 +37,7 @@ import (
 	"github.com/status-im/status-go/services/browsers"
 	"github.com/status-im/status-go/services/chat"
 	"github.com/status-im/status-go/services/communitytokens"
+	"github.com/status-im/status-go/services/connector"
 	"github.com/status-im/status-go/services/ens"
 	"github.com/status-im/status-go/services/gif"
 	localnotifications "github.com/status-im/status-go/services/local-notifications"
@@ -129,6 +130,7 @@ type StatusNode struct {
 	chatSrvc               *chat.Service
 	updatesSrvc            *updates.Service
 	pendingTracker         *transactions.PendingTxTracker
+	connectorSrvc          *connector.Service
 
 	walletFeed event.Feed
 }
@@ -312,7 +314,20 @@ func (n *StatusNode) setupRPCClient() (err error) {
 	if err != nil {
 		return
 	}
-	n.rpcClient, err = rpc.NewClient(gethNodeClient, n.config.NetworkID, n.config.UpstreamConfig, n.config.Networks, n.appDB)
+
+	// ProviderConfigs should be passed not in wallet secrets config on login
+	// but some other way, as it's not wallet specific and should not be passed with login request
+	// but currently there is no other way to pass it
+	providerConfigs := []params.ProviderConfig{
+		{
+			Enabled:  n.config.WalletConfig.StatusProxyEnabled,
+			Name:     rpc.ProviderStatusProxy,
+			User:     n.config.WalletConfig.StatusProxyBlockchainUser,
+			Password: n.config.WalletConfig.StatusProxyBlockchainPassword,
+		},
+	}
+
+	n.rpcClient, err = rpc.NewClient(gethNodeClient, n.config.NetworkID, n.config.UpstreamConfig, n.config.Networks, n.appDB, providerConfigs)
 	if err != nil {
 		return
 	}
@@ -505,6 +520,7 @@ func (n *StatusNode) stop() error {
 	n.ensSrvc = nil
 	n.communityTokensSrvc = nil
 	n.stickersSrvc = nil
+	n.connectorSrvc = nil
 	n.publicMethods = make(map[string]bool)
 	n.pendingTracker = nil
 	n.log.Debug("status node stopped")

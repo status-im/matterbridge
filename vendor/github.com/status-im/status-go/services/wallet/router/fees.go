@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus/misc"
-	ethTypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/params"
 	gaspriceoracle "github.com/status-im/status-go/contracts/gas-price-oracle"
 	"github.com/status-im/status-go/rpc"
@@ -25,10 +25,25 @@ const (
 	GasFeeHigh
 )
 
-// //////////////////////////////////////////////////////////////////////////////
-// TODO: remove `SuggestedFees` struct once new router is in place
-// //////////////////////////////////////////////////////////////////////////////
+type MaxFeesLevels struct {
+	Low    *hexutil.Big `json:"low"`
+	Medium *hexutil.Big `json:"medium"`
+	High   *hexutil.Big `json:"high"`
+}
+
 type SuggestedFees struct {
+	GasPrice             *big.Int       `json:"gasPrice"`
+	BaseFee              *big.Int       `json:"baseFee"`
+	MaxFeesLevels        *MaxFeesLevels `json:"maxFeesLevels"`
+	MaxPriorityFeePerGas *big.Int       `json:"maxPriorityFeePerGas"`
+	L1GasFee             *big.Float     `json:"l1GasFee,omitempty"`
+	EIP1559Enabled       bool           `json:"eip1559Enabled"`
+}
+
+// //////////////////////////////////////////////////////////////////////////////
+// TODO: remove `SuggestedFeesGwei` struct once new router is in place
+// //////////////////////////////////////////////////////////////////////////////
+type SuggestedFeesGwei struct {
 	GasPrice             *big.Float `json:"gasPrice"`
 	BaseFee              *big.Float `json:"baseFee"`
 	MaxPriorityFeePerGas *big.Float `json:"maxPriorityFeePerGas"`
@@ -39,17 +54,23 @@ type SuggestedFees struct {
 	EIP1559Enabled       bool       `json:"eip1559Enabled"`
 }
 
-type PriorityFees struct {
-	Low    *big.Int `json:"low"`
-	Medium *big.Int `json:"medium"`
-	High   *big.Int `json:"high"`
-}
-
-func (s *SuggestedFees) feeFor(mode GasFeeMode) *big.Float {
-	if !s.EIP1559Enabled {
-		return s.GasPrice
+func (m *MaxFeesLevels) feeFor(mode GasFeeMode) *big.Int {
+	if mode == GasFeeLow {
+		return m.Low.ToInt()
 	}
 
+	if mode == GasFeeHigh {
+		return m.High.ToInt()
+	}
+
+	return m.Medium.ToInt()
+}
+
+func (s *SuggestedFees) feeFor(mode GasFeeMode) *big.Int {
+	return s.MaxFeesLevels.feeFor(mode)
+}
+
+func (s *SuggestedFeesGwei) feeFor(mode GasFeeMode) *big.Float {
 	if mode == GasFeeLow {
 		return s.MaxFeePerGasLow
 	}
@@ -100,12 +121,6 @@ func gweiToWei(val *big.Float) *big.Int {
 	return res
 }
 
-// //////////////////////////////////////////////////////////////////////////////
-// TODO: remove `suggestedFees` function once new router is in place
-//
-// But we should check the client since this function is exposed to API as `GetSuggestedFees` call.
-// Maybe we should keep it and remove it later when the client is ready for that change.
-// //////////////////////////////////////////////////////////////////////////////
 func (f *FeeManager) SuggestedFees(ctx context.Context, chainID uint64) (*SuggestedFees, error) {
 	backend, err := f.RPCClient.EthClient(chainID)
 	if err != nil {
@@ -118,62 +133,48 @@ func (f *FeeManager) SuggestedFees(ctx context.Context, chainID uint64) (*Sugges
 	maxPriorityFeePerGas, err := backend.SuggestGasTipCap(ctx)
 	if err != nil {
 		return &SuggestedFees{
-			GasPrice:             weiToGwei(gasPrice),
-			BaseFee:              big.NewFloat(0),
-			MaxPriorityFeePerGas: big.NewFloat(0),
-			MaxFeePerGasLow:      big.NewFloat(0),
-			MaxFeePerGasMedium:   big.NewFloat(0),
-			MaxFeePerGasHigh:     big.NewFloat(0),
-			EIP1559Enabled:       false,
+			GasPrice:             gasPrice,
+			BaseFee:              big.NewInt(0),
+			MaxPriorityFeePerGas: big.NewInt(0),
+			MaxFeesLevels: &MaxFeesLevels{
+				Low:    (*hexutil.Big)(gasPrice),
+				Medium: (*hexutil.Big)(gasPrice),
+				High:   (*hexutil.Big)(gasPrice),
+			},
+			EIP1559Enabled: false,
 		}, nil
 	}
-
 	baseFee, err := f.getBaseFee(ctx, backend)
 	if err != nil {
 		return nil, err
 	}
 
-	fees, err := f.getFeeHistorySorted(chainID)
-	if err != nil {
-		return &SuggestedFees{
-			GasPrice:             weiToGwei(gasPrice),
-			BaseFee:              weiToGwei(baseFee),
-			MaxPriorityFeePerGas: weiToGwei(maxPriorityFeePerGas),
-			MaxFeePerGasLow:      weiToGwei(maxPriorityFeePerGas),
-			MaxFeePerGasMedium:   weiToGwei(maxPriorityFeePerGas),
-			MaxFeePerGasHigh:     weiToGwei(maxPriorityFeePerGas),
-			EIP1559Enabled:       false,
-		}, nil
-	}
-
-	perc10 := fees[int64(0.1*float64(len(fees)))-1]
-	perc20 := fees[int64(0.2*float64(len(fees)))-1]
-
-	var maxFeePerGasMedium *big.Int
-	if baseFee.Cmp(perc20) >= 0 {
-		maxFeePerGasMedium = baseFee
-	} else {
-		maxFeePerGasMedium = perc20
-	}
-
-	if maxPriorityFeePerGas.Cmp(maxFeePerGasMedium) > 0 {
-		maxFeePerGasMedium = maxPriorityFeePerGas
-	}
-
-	maxFeePerGasHigh := new(big.Int).Mul(maxPriorityFeePerGas, big.NewInt(2))
-	twoTimesBaseFee := new(big.Int).Mul(baseFee, big.NewInt(2))
-	if twoTimesBaseFee.Cmp(maxFeePerGasHigh) > 0 {
-		maxFeePerGasHigh = twoTimesBaseFee
-	}
-
 	return &SuggestedFees{
-		GasPrice:             weiToGwei(gasPrice),
-		BaseFee:              weiToGwei(baseFee),
-		MaxPriorityFeePerGas: weiToGwei(maxPriorityFeePerGas),
-		MaxFeePerGasLow:      weiToGwei(perc10),
-		MaxFeePerGasMedium:   weiToGwei(maxFeePerGasMedium),
-		MaxFeePerGasHigh:     weiToGwei(maxFeePerGasHigh),
-		EIP1559Enabled:       true,
+		GasPrice:             gasPrice,
+		BaseFee:              baseFee,
+		MaxPriorityFeePerGas: maxPriorityFeePerGas,
+		MaxFeesLevels: &MaxFeesLevels{
+			Low:    (*hexutil.Big)(new(big.Int).Add(baseFee, maxPriorityFeePerGas)),
+			Medium: (*hexutil.Big)(new(big.Int).Add(new(big.Int).Mul(baseFee, big.NewInt(2)), maxPriorityFeePerGas)),
+			High:   (*hexutil.Big)(new(big.Int).Add(new(big.Int).Mul(baseFee, big.NewInt(3)), maxPriorityFeePerGas)),
+		},
+		EIP1559Enabled: true,
+	}, nil
+}
+
+func (f *FeeManager) SuggestedFeesGwei(ctx context.Context, chainID uint64) (*SuggestedFeesGwei, error) {
+	fees, err := f.SuggestedFees(ctx, chainID)
+	if err != nil {
+		return nil, err
+	}
+	return &SuggestedFeesGwei{
+		GasPrice:             weiToGwei(fees.GasPrice),
+		BaseFee:              weiToGwei(fees.BaseFee),
+		MaxPriorityFeePerGas: weiToGwei(fees.MaxPriorityFeePerGas),
+		MaxFeePerGasLow:      weiToGwei(fees.MaxFeesLevels.Low.ToInt()),
+		MaxFeePerGasMedium:   weiToGwei(fees.MaxFeesLevels.Medium.ToInt()),
+		MaxFeePerGasHigh:     weiToGwei(fees.MaxFeesLevels.High.ToInt()),
+		EIP1559Enabled:       fees.EIP1559Enabled,
 	}, nil
 }
 
@@ -184,71 +185,32 @@ func (f *FeeManager) getBaseFee(ctx context.Context, client chain.ClientInterfac
 	}
 
 	chainID := client.NetworkID()
-
 	config := params.MainnetChainConfig
 	switch chainID {
-	case common.EthereumSepolia:
-	case common.OptimismSepolia:
-	case common.ArbitrumSepolia:
+	case common.EthereumSepolia,
+		common.OptimismSepolia,
+		common.ArbitrumSepolia:
 		config = params.SepoliaChainConfig
-	case common.EthereumGoerli:
-	case common.OptimismGoerli:
-	case common.ArbitrumGoerli:
+	case common.EthereumGoerli,
+		common.OptimismGoerli,
+		common.ArbitrumGoerli:
 		config = params.GoerliChainConfig
 	}
-
 	baseFee := misc.CalcBaseFee(config, header)
 	return baseFee, nil
 }
 
-func (f *FeeManager) getPriorityFees(ctx context.Context, client chain.ClientInterface, baseFee *big.Int) (PriorityFees, error) {
-	var priorityFee PriorityFees
-	fees, err := f.getFeeHistorySorted(client.NetworkID())
-	if err != nil {
-		return priorityFee, err
-	}
-
-	suggestedPriorityFee, err := client.SuggestGasTipCap(ctx)
-	if err != nil {
-		return priorityFee, err
-	}
-
-	// Calculate Low priority fee
-	priorityFee.Low = fees[int64(0.1*float64(len(fees)))-1]
-
-	// Calculate Medium priority fee
-	priorityFee.Medium = fees[int64(0.2*float64(len(fees)))-1]
-
-	if baseFee.Cmp(priorityFee.Medium) > 0 {
-		priorityFee.Medium = baseFee
-	}
-
-	if suggestedPriorityFee.Cmp(priorityFee.Medium) > 0 {
-		priorityFee.Medium = suggestedPriorityFee
-	}
-
-	// Calculate High priority fee
-	priorityFee.High = new(big.Int).Mul(suggestedPriorityFee, big.NewInt(2))
-	twoTimesBaseFee := new(big.Int).Mul(baseFee, big.NewInt(2))
-	if twoTimesBaseFee.Cmp(priorityFee.High) > 0 {
-		priorityFee.High = twoTimesBaseFee
-	}
-
-	return priorityFee, nil
-}
-
-func (f *FeeManager) TransactionEstimatedTime(ctx context.Context, chainID uint64, maxFeePerGas *big.Float) TransactionEstimation {
+func (f *FeeManager) TransactionEstimatedTime(ctx context.Context, chainID uint64, maxFeePerGas *big.Int) TransactionEstimation {
 	fees, err := f.getFeeHistorySorted(chainID)
 	if err != nil {
 		return Unknown
 	}
 
-	maxFeePerGasWei := gweiToWei(maxFeePerGas)
 	// pEvent represents the probability of the transaction being included in a block,
 	// we assume this one is static over time, in reality it is not.
 	pEvent := 0.0
 	for idx, fee := range fees {
-		if fee.Cmp(maxFeePerGasWei) == 1 || idx == len(fees)-1 {
+		if fee.Cmp(maxFeePerGas) == 1 || idx == len(fees)-1 {
 			pEvent = float64(idx) / float64(len(fees))
 			break
 		}
@@ -330,7 +292,12 @@ func (f *FeeManager) getFeeHistorySorted(chainID uint64) ([]*big.Int, error) {
 	return fees, nil
 }
 
-func (f *FeeManager) GetL1Fee(ctx context.Context, chainID uint64, tx *ethTypes.Transaction) (uint64, error) {
+// Returns L1 fee for placing a transaction to L1 chain, appicable only for txs made from L2.
+func (f *FeeManager) GetL1Fee(ctx context.Context, chainID uint64, input []byte) (uint64, error) {
+	if chainID == common.EthereumMainnet || chainID == common.EthereumSepolia && chainID != common.EthereumGoerli {
+		return 0, nil
+	}
+
 	ethClient, err := f.RPCClient.EthClient(chainID)
 	if err != nil {
 		return 0, err
@@ -348,12 +315,7 @@ func (f *FeeManager) GetL1Fee(ctx context.Context, chainID uint64, tx *ethTypes.
 
 	callOpt := &bind.CallOpts{}
 
-	data, err := tx.MarshalBinary()
-	if err != nil {
-		return 0, err
-	}
-
-	result, err := contract.GetL1Fee(callOpt, data)
+	result, err := contract.GetL1Fee(callOpt, input)
 	if err != nil {
 		return 0, err
 	}

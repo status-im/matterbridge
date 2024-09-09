@@ -48,6 +48,11 @@ type CommunityChanges struct {
 
 	// MemberKicked indicates whether the user has been kicked out
 	MemberKicked bool `json:"memberRemoved"`
+
+	// MemberSoftKicked indicates whether the user has been kicked out due to lack of specific data
+	// No kick AC notification will be generated and member will join automatically
+	// as soon as he provides missing data
+	MemberSoftKicked bool `json:"memberSoftRemoved"`
 }
 
 func EmptyCommunityChanges() *CommunityChanges {
@@ -71,6 +76,54 @@ func EmptyCommunityChanges() *CommunityChanges {
 
 		MemberWalletsRemoved: []string{},
 		MemberWalletsAdded:   make(map[string][]*protobuf.RevealedAccount),
+	}
+}
+
+func (c *CommunityChanges) Merge(other *CommunityChanges) {
+	for memberID, member := range other.MembersAdded {
+		c.MembersAdded[memberID] = member
+	}
+	for memberID := range other.MembersRemoved {
+		c.MembersRemoved[memberID] = other.MembersRemoved[memberID]
+	}
+	for memberID, banned := range other.MembersBanned {
+		c.MembersBanned[memberID] = banned
+	}
+	for memberID, unbanned := range other.MembersUnbanned {
+		c.MembersUnbanned[memberID] = unbanned
+	}
+	for permissionID, permission := range other.TokenPermissionsAdded {
+		c.TokenPermissionsAdded[permissionID] = permission
+	}
+	for permissionID, permission := range other.TokenPermissionsModified {
+		c.TokenPermissionsModified[permissionID] = permission
+	}
+	for permissionID, permission := range other.TokenPermissionsRemoved {
+		c.TokenPermissionsRemoved[permissionID] = permission
+	}
+	for chatID, chat := range other.ChatsRemoved {
+		c.ChatsRemoved[chatID] = chat
+	}
+	for chatID, chat := range other.ChatsAdded {
+		c.ChatsAdded[chatID] = chat
+	}
+	for chatID, changes := range other.ChatsModified {
+		c.ChatsModified[chatID] = changes
+	}
+
+	c.CategoriesRemoved = append(c.CategoriesRemoved, other.CategoriesRemoved...)
+
+	for categoryID, category := range other.CategoriesAdded {
+		c.CategoriesAdded[categoryID] = category
+	}
+	for categoryID, category := range other.CategoriesModified {
+		c.CategoriesModified[categoryID] = category
+	}
+
+	c.MemberWalletsRemoved = append(c.MemberWalletsRemoved, other.MemberWalletsRemoved...)
+
+	for walletID, wallets := range other.MemberWalletsAdded {
+		c.MemberWalletsAdded[walletID] = wallets
 	}
 }
 

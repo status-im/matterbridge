@@ -15,6 +15,7 @@ import (
 	"github.com/status-im/status-go/account"
 	"github.com/status-im/status-go/multiaccounts/accounts"
 	"github.com/status-im/status-go/params"
+	protocolCommon "github.com/status-im/status-go/protocol/common"
 	"github.com/status-im/status-go/rpc"
 	"github.com/status-im/status-go/server"
 	"github.com/status-im/status-go/services/ens"
@@ -27,6 +28,7 @@ import (
 	"github.com/status-im/status-go/services/wallet/currency"
 	"github.com/status-im/status-go/services/wallet/history"
 	"github.com/status-im/status-go/services/wallet/market"
+	"github.com/status-im/status-go/services/wallet/onramp"
 	"github.com/status-im/status-go/services/wallet/thirdparty"
 	"github.com/status-im/status-go/services/wallet/thirdparty/alchemy"
 	"github.com/status-im/status-go/services/wallet/thirdparty/coingecko"
@@ -35,7 +37,6 @@ import (
 	"github.com/status-im/status-go/services/wallet/thirdparty/rarible"
 	"github.com/status-im/status-go/services/wallet/token"
 	"github.com/status-im/status-go/services/wallet/transfer"
-	"github.com/status-im/status-go/services/wallet/walletconnect"
 	"github.com/status-im/status-go/services/wallet/walletevent"
 	"github.com/status-im/status-go/transactions"
 )
@@ -61,10 +62,6 @@ func NewService(
 	feed *event.Feed,
 	mediaServer *server.MediaServer,
 ) *Service {
-	cryptoOnRampManager := NewCryptoOnRampManager(&CryptoOnRampOptions{
-		dataSourceType: DataSourceStatic,
-	})
-
 	signals := &walletevent.SignalsTransmitter{
 		Publisher: feed,
 	}
@@ -102,18 +99,31 @@ func NewService(
 
 	communityManager := community.NewManager(db, mediaServer, feed)
 	balanceCacher := balance.NewCacherWithTTL(5 * time.Minute)
-	tokenManager := token.NewTokenManager(db, rpcClient, communityManager, rpcClient.NetworkManager, appDB, mediaServer, feed, accountFeed, accountsDB)
+	tokenManager := token.NewTokenManager(db, rpcClient, communityManager, rpcClient.NetworkManager, appDB, mediaServer, feed, accountFeed, accountsDB, token.NewPersistence(db))
 	tokenManager.Start()
+
+	cryptoOnRampProviders := []onramp.Provider{
+		onramp.NewMercuryoProvider(tokenManager),
+		onramp.NewRampProvider(),
+		onramp.NewMoonPayProvider(),
+	}
+	cryptoOnRampManager := onramp.NewManager(cryptoOnRampProviders)
+
 	savedAddressesManager := &SavedAddressesManager{db: db}
-	transactionManager := transfer.NewTransactionManager(db, gethManager, transactor, config, accountsDB, pendingTxManager, feed)
+	transactionManager := transfer.NewTransactionManager(transfer.NewMultiTransactionDB(db), gethManager, transactor, config, accountsDB, pendingTxManager, feed)
 	blockChainState := blockchainstate.NewBlockChainState()
 	transferController := transfer.NewTransferController(db, accountsDB, rpcClient, accountFeed, feed, transactionManager, pendingTxManager,
 		tokenManager, balanceCacher, blockChainState)
 	transferController.Start()
 	cryptoCompare := cryptocompare.NewClient()
 	coingecko := coingecko.NewClient()
-	marketManager := market.NewManager(cryptoCompare, coingecko, feed)
-	reader := NewReader(rpcClient, tokenManager, marketManager, communityManager, accountsDB, NewPersistence(db), feed)
+	cryptoCompareProxy := cryptocompare.NewClientWithParams(cryptocompare.Params{
+		URL:      cryptocompare.CryptoCompareStatusProxyURL,
+		User:     config.WalletConfig.StatusProxyMarketUser,
+		Password: config.WalletConfig.StatusProxyMarketPassword,
+	})
+	marketManager := market.NewManager([]thirdparty.MarketDataProvider{cryptoCompare, coingecko, cryptoCompareProxy}, feed)
+	reader := NewReader(tokenManager, marketManager, token.NewPersistence(db), feed)
 	history := history.NewService(db, accountsDB, accountFeed, feed, rpcClient, tokenManager, marketManager, balanceCacher.Cache())
 	currency := currency.NewService(db, feed, tokenManager, marketManager)
 
@@ -170,7 +180,10 @@ func NewService(
 
 	activity := activity.NewService(db, accountsDB, tokenManager, collectiblesManager, feed, pendingTxManager)
 
-	walletconnect := walletconnect.NewService(db, rpcClient.NetworkManager, accountsDB, transactionManager, gethManager, feed, config)
+	featureFlags := &protocolCommon.FeatureFlags{}
+	if config.WalletConfig.EnableCelerBridge {
+		featureFlags.EnableCelerBridge = true
+	}
 
 	return &Service{
 		db:                    db,
@@ -199,8 +212,8 @@ func NewService(
 		decoder:               NewDecoder(),
 		blockChainState:       blockChainState,
 		keycardPairings:       NewKeycardPairings(),
-		walletConnect:         walletconnect,
 		config:                config,
+		featureFlags:          featureFlags,
 	}
 }
 
@@ -214,7 +227,7 @@ type Service struct {
 	communityManager      *community.Manager
 	transactionManager    *transfer.TransactionManager
 	pendingTxManager      *transactions.PendingTxTracker
-	cryptoOnRampManager   *CryptoOnRampManager
+	cryptoOnRampManager   *onramp.Manager
 	transferController    *transfer.Controller
 	marketManager         *market.Manager
 	started               bool
@@ -233,8 +246,8 @@ type Service struct {
 	decoder               *Decoder
 	blockChainState       *blockchainstate.BlockChainState
 	keycardPairings       *KeycardPairings
-	walletConnect         *walletconnect.Service
 	config                *params.NodeConfig
+	featureFlags          *protocolCommon.FeatureFlags
 }
 
 // Start signals transmitter.
@@ -296,6 +309,10 @@ func (s *Service) KeycardPairings() *KeycardPairings {
 
 func (s *Service) Config() *params.NodeConfig {
 	return s.config
+}
+
+func (s *Service) FeatureFlags() *protocolCommon.FeatureFlags {
+	return s.featureFlags
 }
 
 func (s *Service) GetRPCClient() *rpc.Client {

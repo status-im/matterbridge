@@ -2,8 +2,6 @@ package common
 
 import (
 	"crypto/ecdsa"
-	"errors"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,11 +15,13 @@ import (
 )
 
 // MessageType represents where this message comes from
-type MessageType int
+type MessageType = string
 
 const (
-	RelayedMessageType MessageType = iota
-	StoreMessageType
+	RelayedMessageType MessageType = "relay"
+	StoreMessageType   MessageType = "store"
+	SendMessageType    MessageType = "send"
+	MissingMessageType MessageType = "missing"
 )
 
 // MessageParams specifies the exact way a message should be wrapped
@@ -46,7 +46,7 @@ type ReceivedMessage struct {
 	Padding   []byte
 	Signature []byte
 
-	Sent uint32           // Time when the message was posted into the network
+	Sent uint32           // Time when the message was posted into the network in seconds
 	Src  *ecdsa.PublicKey // Message recipient (identity used to decode the message)
 	Dst  *ecdsa.PublicKey // Message recipient (identity used to decode the message)
 
@@ -60,65 +60,11 @@ type ReceivedMessage struct {
 	Processed atomic.Bool
 }
 
-// MessagesRequest contains details of a request for historic messages.
-type MessagesRequest struct {
-	// ID of the request. The current implementation requires ID to be 32-byte array,
-	// however, it's not enforced for future implementation.
-	ID []byte `json:"id"`
-
-	// From is a lower bound of time range.
-	From uint32 `json:"from"`
-
-	// To is a upper bound of time range.
-	To uint32 `json:"to"`
-
-	// Limit determines the number of messages sent by the mail server
-	// for the current paginated request.
-	Limit uint32 `json:"limit"`
-
-	// Cursor is used as starting point for paginated requests.
-	Cursor []byte `json:"cursor"`
-
-	// Topics is a list of topics. A returned message should
-	// belong to one of the topics from the list.
-	Topics [][]byte `json:"topics"`
-}
-
-func (r MessagesRequest) Validate() error {
-	if len(r.ID) != common.HashLength {
-		return errors.New("invalid 'ID', expected a 32-byte slice")
-	}
-
-	if r.From > r.To {
-		return errors.New("invalid 'From' value which is greater than To")
-	}
-
-	if r.Limit > MaxLimitInMessagesRequest {
-		return fmt.Errorf("invalid 'Limit' value, expected value lower than %d", MaxLimitInMessagesRequest)
-	}
-
-	return nil
-}
-
 // EnvelopeError code and optional description of the error.
 type EnvelopeError struct {
 	Hash        common.Hash
 	Code        uint
 	Description string
-}
-
-// ErrorToEnvelopeError converts common golang error into EnvelopeError with a code.
-func ErrorToEnvelopeError(hash common.Hash, err error) EnvelopeError {
-	code := EnvelopeOtherError
-	switch err.(type) {
-	case TimeSyncError:
-		code = EnvelopeTimeNotSynced
-	}
-	return EnvelopeError{
-		Hash:        hash,
-		Code:        code,
-		Description: err.Error(),
-	}
 }
 
 // MessagesResponse sent as a response after processing batch of envelopes.

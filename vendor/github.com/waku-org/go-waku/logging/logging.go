@@ -8,6 +8,7 @@ package logging
 
 import (
 	"encoding/hex"
+	"fmt"
 	"net"
 	"time"
 
@@ -71,6 +72,10 @@ func Time(key string, time int64) zapcore.Field {
 
 func (t timestamp) String() string {
 	return time.Unix(0, int64(t)).Format(time.RFC3339)
+}
+
+func Epoch(key string, time time.Time) zap.Field {
+	return zap.String(key, fmt.Sprintf("%d", time.UnixNano()))
 }
 
 // History Query Filters
@@ -146,4 +151,9 @@ func TCPAddr(key string, ip net.IP, port int) zap.Field {
 // UDPAddr creates a field for UDP v4/v6 address and port
 func UDPAddr(key string, ip net.IP, port int) zap.Field {
 	return zap.Stringer(key, &net.UDPAddr{IP: ip, Port: port})
+}
+
+func Uint64(key string, value uint64) zap.Field {
+	valueStr := fmt.Sprintf("%v", value)
+	return zap.String(key, valueStr)
 }

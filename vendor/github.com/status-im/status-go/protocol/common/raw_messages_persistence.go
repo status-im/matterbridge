@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"database/sql"
 	"encoding/gob"
+	"errors"
 	"strings"
 	"time"
 
@@ -356,6 +357,18 @@ func (db RawMessagesPersistence) GetHashRatchetMessages(keyID []byte) ([]*types.
 	return messages, nil
 }
 
+func (db RawMessagesPersistence) GetHashRatchetMessagesCountForGroup(groupID []byte) (int, error) {
+	var count int
+	err := db.db.QueryRow(`SELECT count(*) FROM hash_ratchet_encrypted_messages WHERE group_id = ?`, groupID).Scan(&count)
+	if err == nil {
+		return count, nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return 0, err
+}
+
 func (db RawMessagesPersistence) DeleteHashRatchetMessages(ids [][]byte) error {
 	if len(ids) == 0 {
 		return nil
@@ -475,7 +488,12 @@ func (db *RawMessagesPersistence) RemoveMessageSegmentsCompletedOlderThan(timest
 	return err
 }
 
-func (db RawMessagesPersistence) UpdateRawMessageSent(id string, sent bool, lastSent uint64) error {
-	_, err := db.db.Exec("UPDATE raw_messages SET sent = ?, last_sent = ? WHERE id = ?", sent, lastSent, id)
+func (db RawMessagesPersistence) UpdateRawMessageSent(id string, sent bool) error {
+	_, err := db.db.Exec("UPDATE raw_messages SET sent = ? WHERE id = ?", sent, id)
+	return err
+}
+
+func (db RawMessagesPersistence) UpdateRawMessageLastSent(id string, lastSent uint64) error {
+	_, err := db.db.Exec("UPDATE raw_messages SET last_sent = ? WHERE id = ?", lastSent, id)
 	return err
 }

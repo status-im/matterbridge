@@ -4,7 +4,6 @@ import (
 	"crypto/ecdsa"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/url"
@@ -162,9 +161,6 @@ type WakuV2Config struct {
 	// Port number in which to start libp2p protocol (0 for random)
 	Port int
 
-	// Interval of time in seconds to send a ping to peers to keep the connection to them alive
-	KeepAliveInterval int
-
 	// LightClient should be true if the node will not relay messages and only rely on lightpush/filter nodes
 	LightClient bool
 
@@ -214,8 +210,13 @@ type WakuV2Config struct {
 	// StoreSeconds indicates the maximum number of seconds before a message is removed from the store
 	StoreSeconds int
 
-	// UseShardAsDefaultTopic indicates whether the default shard should be used instead of the default relay topic
-	UseShardAsDefaultTopic bool
+	TelemetryServerURL string
+
+	// EnableMissingMessageVerification indicates whether the storenodes must be queried periodically to retrieve any missing message
+	EnableMissingMessageVerification bool
+
+	// EnableMissingMessageVerification indicates whether storenodes must be queried periodically to confirm if messages sent are actually propagated in the network
+	EnableStoreConfirmationForMessagesSent bool
 }
 
 // ----------
@@ -254,6 +255,7 @@ type ClusterConfig struct {
 	StaticNodes []string
 
 	// BootNodes is a list of bootnodes.
+	// Deprecated: won't be used at all in wakuv2
 	BootNodes []string
 
 	// TrustedMailServers is a list of verified and trusted Mail Server nodes.
@@ -308,6 +310,21 @@ type UpstreamRPCConfig struct {
 	URL string
 }
 
+type ProviderConfig struct {
+	// Enabled flag specifies whether feature is enabled
+	Enabled bool `validate:"required"`
+
+	// To identify provider
+	Name string `validate:"required"`
+
+	// URL sets the rpc upstream host address for communication with
+	// a non-local infura endpoint.
+	User         string `json:",omitempty"`
+	Password     string `json:",omitempty"`
+	APIKey       string `json:"APIKey,omitempty"`
+	APIKeySecret string `json:"APIKeySecret,omitempty"`
+}
+
 // ----------
 // NodeConfig
 // ----------
@@ -326,6 +343,9 @@ type NodeConfig struct {
 	KeyStoreDir string `validate:"required"`
 
 	// KeycardPairingDataFile is the file where we keep keycard pairings data.
+	// It's specified by clients (and not in status-go) when creating a new account,
+	// because this file is initialized by status-keycard-go and we need to use it before initializing the node.
+	// I guess proper way would be to ask status-go for the file path, or just duplicate the file path in both backend and client.
 	// note: this field won't be saved into db, it's local to the device.
 	KeycardPairingDataFile string
 
@@ -334,9 +354,11 @@ type NodeConfig struct {
 	NodeKey string
 
 	// NoDiscovery set to true will disable discovery protocol.
+	// Deprecated: won't be used at all in wakuv2
 	NoDiscovery bool
 
 	// Rendezvous enables discovery protocol.
+	// Deprecated: won't be used at all in wakuv2
 	Rendezvous bool
 
 	// ListenAddr is an IP address and port of this node (e.g. 127.0.0.1:30303).
@@ -367,6 +389,15 @@ type NodeConfig struct {
 
 	// HTTPPort is the TCP port number on which to start the Geth's HTTP RPC server.
 	HTTPPort int
+
+	// WSEnabled specifies whether the Websocket RPC server is to be enabled by default.
+	WSEnabled bool
+
+	// WSHost is the host interface on which to start Geth's Websocket RPC server.
+	WSHost string
+
+	// WSPort is the TCP port number on which to start the Geth's Websocket RPC server.
+	WSPort int
 
 	// HTTPVirtualHosts is the list of virtual hostnames which are allowed on incoming requests.
 	// This is by default {'localhost'}. Using this prevents attacks like
@@ -479,6 +510,9 @@ type NodeConfig struct {
 	// (desktop provider API)
 	Web3ProviderConfig Web3ProviderConfig
 
+	// ConnectorConfig extra configuration for connector.Service
+	ConnectorConfig ConnectorConfig
+
 	// SwarmConfig extra configuration for Swarm and ENS
 	SwarmConfig SwarmConfig `json:"SwarmConfig," validate:"structonly"`
 
@@ -512,6 +546,8 @@ type TokenOverride struct {
 type Network struct {
 	ChainID                uint64          `json:"chainId"`
 	ChainName              string          `json:"chainName"`
+	DefaultRPCURL          string          `json:"defaultRpcUrl"`      // proxy rpc url
+	DefaultFallbackURL     string          `json:"defaultFallbackURL"` // proxy fallback url
 	RPCURL                 string          `json:"rpcUrl"`
 	OriginalRPCURL         string          `json:"originalRpcUrl"`
 	FallbackURL            string          `json:"fallbackURL"`
@@ -532,13 +568,33 @@ type Network struct {
 
 // WalletConfig extra configuration for wallet.Service.
 type WalletConfig struct {
-	Enabled              bool
-	OpenseaAPIKey        string            `json:"OpenseaAPIKey"`
-	RaribleMainnetAPIKey string            `json:"RaribleMainnetAPIKey"`
-	RaribleTestnetAPIKey string            `json:"RaribleTestnetAPIKey"`
-	AlchemyAPIKeys       map[uint64]string `json:"AlchemyAPIKeys"`
-	InfuraAPIKey         string            `json:"InfuraAPIKey"`
-	InfuraAPIKeySecret   string            `json:"InfuraAPIKeySecret"`
+	Enabled                       bool
+	OpenseaAPIKey                 string            `json:"OpenseaAPIKey"`
+	RaribleMainnetAPIKey          string            `json:"RaribleMainnetAPIKey"`
+	RaribleTestnetAPIKey          string            `json:"RaribleTestnetAPIKey"`
+	AlchemyAPIKeys                map[uint64]string `json:"AlchemyAPIKeys"`
+	InfuraAPIKey                  string            `json:"InfuraAPIKey"`
+	InfuraAPIKeySecret            string            `json:"InfuraAPIKeySecret"`
+	StatusProxyMarketUser         string            `json:"StatusProxyMarketUser"`
+	StatusProxyMarketPassword     string            `json:"StatusProxyMarketPassword"`
+	StatusProxyBlockchainUser     string            `json:"StatusProxyBlockchainUser"`
+	StatusProxyBlockchainPassword string            `json:"StatusProxyBlockchainPassword"`
+	StatusProxyEnabled            bool              `json:"StatusProxyEnabled"`
+	EnableCelerBridge             bool              `json:"EnableCelerBridge"`
+}
+
+// MarshalJSON custom marshalling to avoid exposing sensitive data in log,
+// there's a function called `startNode` will log NodeConfig which include WalletConfig
+func (wc WalletConfig) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Enabled            bool `json:"Enabled"`
+		StatusProxyEnabled bool `json:"StatusProxyEnabled"`
+		EnableCelerBridge  bool `json:"EnableCelerBridge"`
+	}{
+		Enabled:            wc.Enabled,
+		StatusProxyEnabled: wc.StatusProxyEnabled,
+		EnableCelerBridge:  wc.EnableCelerBridge,
+	})
 }
 
 // LocalNotificationsConfig extra configuration for localnotifications.Service.
@@ -563,6 +619,11 @@ type MailserversConfig struct {
 
 // ProviderConfig extra configuration for provider.Service
 type Web3ProviderConfig struct {
+	Enabled bool
+}
+
+// ConnectorConfig extra configuration for provider.Service
+type ConnectorConfig struct {
 	Enabled bool
 }
 
@@ -603,8 +664,6 @@ type PushNotificationServerConfig struct {
 // ShhextConfig defines options used by shhext service.
 type ShhextConfig struct {
 	PFSEnabled bool
-	// BackupDisabledDataDir is the file system folder the node should use for any data storage needs that it doesn't want backed up.
-	BackupDisabledDataDir string
 	// InstallationId id of the current installation
 	InstallationID string
 	// MailServerConfirmations should be true if client wants to receive confirmatons only from a selected mail servers.
@@ -682,9 +741,6 @@ type TorrentConfig struct {
 func (c *ShhextConfig) Validate(validate *validator.Validate) error {
 	if err := validate.Struct(c); err != nil {
 		return err
-	}
-	if c.PFSEnabled && len(c.BackupDisabledDataDir) == 0 {
-		return errors.New("field BackupDisabledDataDir is required if PFSEnabled is true")
 	}
 	return nil
 }
@@ -820,6 +876,16 @@ func (c *NodeConfig) UpdateWithDefaults() error {
 		c.WakuConfig.MinimumPoW = WakuMinimumPoW
 	}
 
+	// Ensure TorrentConfig is valid
+	if c.TorrentConfig.Enabled {
+		if c.TorrentConfig.DataDir == "" {
+			c.TorrentConfig.DataDir = filepath.Join(c.RootDataDir, ArchivesRelativePath)
+		}
+		if c.TorrentConfig.TorrentDir == "" {
+			c.TorrentConfig.TorrentDir = filepath.Join(c.RootDataDir, TorrentTorrentsRelativePath)
+		}
+	}
+
 	return c.setDefaultPushNotificationsServers()
 }
 
@@ -873,6 +939,7 @@ func NewNodeConfig(dataDir string, networkID uint64) (*NodeConfig, error) {
 
 	config := &NodeConfig{
 		NetworkID:              networkID,
+		RootDataDir:            dataDir,
 		DataDir:                dataDir,
 		KeyStoreDir:            keyStoreDir,
 		KeycardPairingDataFile: keycardPairingDataFile,
@@ -907,10 +974,8 @@ func NewNodeConfig(dataDir string, networkID uint64) (*NodeConfig, error) {
 			DataDir:        wakuV2Dir,
 			MaxMessageSize: wakuv2common.DefaultMaxMessageSize,
 		},
-		ShhextConfig: ShhextConfig{
-			BackupDisabledDataDir: dataDir,
-		},
-		SwarmConfig: SwarmConfig{},
+		ShhextConfig: ShhextConfig{},
+		SwarmConfig:  SwarmConfig{},
 		TorrentConfig: TorrentConfig{
 			Enabled:    false,
 			Port:       9025,
@@ -1126,7 +1191,7 @@ func (c *TorrentConfig) Validate(validate *validator.Validate) error {
 		return err
 	}
 
-	if c.Enabled && c.DataDir == "" || c.TorrentDir == "" {
+	if c.Enabled && (c.DataDir == "" || c.TorrentDir == "") {
 		return fmt.Errorf("TorrentConfig.DataDir and TorrentConfig.TorrentDir cannot be \"\"")
 	}
 	return nil

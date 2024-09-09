@@ -138,7 +138,11 @@
 // 1713169458_update_raw_messages_with_resend_features.up.sql (608B)
 // 1715163152_remove_status_community.up.sql (354B)
 // 1715163262_rename_peersyncing_group_id_field.up.sql (212B)
+// 1716413241_remove_social_links.up.sql (38B)
 // 1716891408_add_community_token_transaction_hash.up.sql (65B)
+// 1719906191_add_community_token_version.up.sql (65B)
+// 1720636181_add_community_encryption_keys_requests.up.sql (236B)
+// 1721222369_add_shared_addresses.up.sql (98B)
 // README.md (554B)
 // doc.go (870B)
 
@@ -2968,6 +2972,26 @@ func _1715163262_rename_peersyncing_group_id_fieldUpSql() (*asset, error) {
 	return a, nil
 }
 
+var __1716413241_remove_social_linksUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x72\x09\xf2\x0f\x50\x08\x71\x74\xf2\x71\x55\x48\xce\x48\x2c\x89\xcf\x4c\x49\xcd\x2b\xc9\x2c\xa9\x8c\x2f\xce\x4f\xce\x4c\xcc\x89\xcf\xc9\xcc\xcb\x2e\xb6\x06\x04\x00\x00\xff\xff\xe8\x99\x75\xf0\x26\x00\x00\x00")
+
+func _1716413241_remove_social_linksUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1716413241_remove_social_linksUpSql,
+		"1716413241_remove_social_links.up.sql",
+	)
+}
+
+func _1716413241_remove_social_linksUpSql() (*asset, error) {
+	bytes, err := _1716413241_remove_social_linksUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1716413241_remove_social_links.up.sql", size: 38, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x50, 0x9c, 0xd6, 0x47, 0xe6, 0xc8, 0xe7, 0x9b, 0xae, 0xaf, 0x43, 0xb0, 0xc5, 0x51, 0x74, 0x1c, 0x3e, 0xa3, 0x2c, 0x28, 0xaf, 0x9, 0x1d, 0x33, 0x8e, 0x82, 0xc0, 0x48, 0x6a, 0x74, 0x5a, 0xd3}}
+	return a, nil
+}
+
 var __1716891408_add_community_token_transaction_hashUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x72\xf4\x09\x71\x0d\x52\x08\x71\x74\xf2\x71\x55\x48\xce\xcf\xcd\x2d\xcd\xcb\x2c\xa9\x8c\x2f\xc9\xcf\x4e\xcd\x2b\x56\x70\x74\x71\x51\x70\xf6\xf7\x09\xf5\xf5\x53\x28\xa9\x88\xcf\x48\x2c\xce\x50\x08\x71\x8d\x08\x51\x70\x71\x75\x73\x0c\xf5\x09\x51\x50\x52\xb2\xe6\x02\x04\x00\x00\xff\xff\xb6\x77\x1a\x00\x41\x00\x00\x00")
 
 func _1716891408_add_community_token_transaction_hashUpSqlBytes() ([]byte, error) {
@@ -2985,6 +3009,66 @@ func _1716891408_add_community_token_transaction_hashUpSql() (*asset, error) {
 
 	info := bindataFileInfo{name: "1716891408_add_community_token_transaction_hash.up.sql", size: 65, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
 	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x7b, 0x3, 0x3d, 0x99, 0x3b, 0x47, 0xae, 0xa4, 0x94, 0x48, 0x3f, 0x40, 0xfb, 0x75, 0x8f, 0x1e, 0x38, 0x1c, 0x66, 0x13, 0x32, 0x2c, 0xb4, 0xbe, 0xce, 0x91, 0x55, 0xd5, 0x34, 0xe4, 0xb3, 0xda}}
+	return a, nil
+}
+
+var __1719906191_add_community_token_versionUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x72\xf4\x09\x71\x0d\x52\x08\x71\x74\xf2\x71\x55\x48\xce\xcf\xcd\x2d\xcd\xcb\x2c\xa9\x8c\x2f\xc9\xcf\x4e\xcd\x2b\x56\x70\x74\x71\x51\x70\xf6\xf7\x09\xf5\xf5\x53\x28\x4b\x2d\x2a\xce\xcc\xcf\x53\x08\x71\x8d\x08\x51\x70\x71\x75\x73\x0c\xf5\x09\x51\x50\x52\xb2\xe6\x02\x04\x00\x00\xff\xff\x43\xb8\x58\xee\x41\x00\x00\x00")
+
+func _1719906191_add_community_token_versionUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1719906191_add_community_token_versionUpSql,
+		"1719906191_add_community_token_version.up.sql",
+	)
+}
+
+func _1719906191_add_community_token_versionUpSql() (*asset, error) {
+	bytes, err := _1719906191_add_community_token_versionUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1719906191_add_community_token_version.up.sql", size: 65, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0xcf, 0x62, 0x0, 0xaa, 0x8e, 0xc5, 0xaa, 0x7f, 0xb8, 0xf4, 0x23, 0x93, 0xc1, 0x93, 0xf, 0x49, 0x7f, 0xa2, 0xda, 0xa0, 0x40, 0xed, 0x8b, 0x4d, 0x6e, 0x81, 0x2, 0x63, 0x18, 0xd9, 0x9c, 0x72}}
+	return a, nil
+}
+
+var __1720636181_add_community_encryption_keys_requestsUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x74\x8e\xc1\x0a\x82\x40\x10\x86\xef\x3e\xc5\x7f\x54\xf0\x0d\x3a\x69\x4c\xb1\xb4\x69\xac\x13\xe8\x69\x11\x5d\x48\xca\xb5\x74\x3d\xf8\xf6\x51\x06\x2d\x41\xd7\xf9\xbe\xf9\x66\xb6\x8a\x12\x26\x70\x92\x4a\x82\xd8\x21\xcb\x19\x54\x8a\x82\x0b\x34\x43\xdf\xcf\xb6\x73\x8b\x36\xb6\x19\x97\xbb\xeb\x06\xab\xaf\x66\x99\xf4\x68\x1e\xb3\x99\xdc\x84\x30\x00\xe0\x89\x5d\x8b\x54\xe6\xe9\xbb\x92\x9d\xa5\x8c\x57\x7e\xa9\xad\x35\xb7\x17\x65\x2a\x79\x1d\x7e\x1a\xa6\xd5\xb5\x83\xc8\x98\xf6\xa4\x7e\xf6\xbe\x4a\x33\xcc\xf6\x9f\x75\x52\xe2\x98\xa8\x0a\x07\xaa\x10\xfa\xaf\xc4\xde\xe1\x28\x88\x36\xc1\x33\x00\x00\xff\xff\xbd\x64\xf2\x7d\xec\x00\x00\x00")
+
+func _1720636181_add_community_encryption_keys_requestsUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1720636181_add_community_encryption_keys_requestsUpSql,
+		"1720636181_add_community_encryption_keys_requests.up.sql",
+	)
+}
+
+func _1720636181_add_community_encryption_keys_requestsUpSql() (*asset, error) {
+	bytes, err := _1720636181_add_community_encryption_keys_requestsUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1720636181_add_community_encryption_keys_requests.up.sql", size: 236, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0xd3, 0x9c, 0x7c, 0xb6, 0x53, 0x6f, 0xe, 0xc3, 0xff, 0xd5, 0x82, 0xc9, 0x21, 0xd6, 0x51, 0x20, 0xeb, 0x29, 0x75, 0xb5, 0x90, 0x35, 0x6d, 0x28, 0xd6, 0xe9, 0x1d, 0x9c, 0x8b, 0x86, 0xdc, 0x68}}
+	return a, nil
+}
+
+var __1721222369_add_shared_addressesUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x04\xc0\x31\x0e\xc2\x30\x0c\x05\xd0\x9d\x53\xfc\x7b\x30\xb9\xc4\x9d\x4c\x23\x41\x3a\x5b\x15\x35\x22\x48\x6d\x44\x1c\xdf\x9f\x47\x52\xf8\x81\x42\x93\x30\x5e\xed\x38\xe2\xac\xa3\x9a\x6b\xb7\x5f\x98\x0f\xd7\xd1\xf4\xdb\xea\x09\x4a\x09\xb7\x2c\xeb\x7d\x81\x7f\xb6\x6e\xfa\x8e\x11\xdd\x74\xdb\xf7\x6e\xee\xe6\x98\x72\x16\xa6\x05\x89\x67\x5a\xa5\x60\x26\x79\xf2\xf5\xf2\x0f\x00\x00\xff\xff\x9e\xa2\x57\x79\x62\x00\x00\x00")
+
+func _1721222369_add_shared_addressesUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1721222369_add_shared_addressesUpSql,
+		"1721222369_add_shared_addresses.up.sql",
+	)
+}
+
+func _1721222369_add_shared_addressesUpSql() (*asset, error) {
+	bytes, err := _1721222369_add_shared_addressesUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1721222369_add_shared_addresses.up.sql", size: 98, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x6a, 0x12, 0x2, 0xed, 0xf4, 0xc7, 0xe3, 0xc8, 0x65, 0x43, 0x81, 0x34, 0x86, 0x1b, 0xc8, 0xfb, 0x22, 0x12, 0xd6, 0x1d, 0xe2, 0xa4, 0xec, 0xf4, 0x93, 0x5f, 0x92, 0x1, 0x53, 0x10, 0xb2, 0x70}}
 	return a, nil
 }
 
@@ -3257,9 +3341,13 @@ var _bindata = map[string]func() (*asset, error){
 	"1713169458_update_raw_messages_with_resend_features.up.sql":                  _1713169458_update_raw_messages_with_resend_featuresUpSql,
 	"1715163152_remove_status_community.up.sql":                                   _1715163152_remove_status_communityUpSql,
 	"1715163262_rename_peersyncing_group_id_field.up.sql":                         _1715163262_rename_peersyncing_group_id_fieldUpSql,
+	"1716413241_remove_social_links.up.sql":                                       _1716413241_remove_social_linksUpSql,
 	"1716891408_add_community_token_transaction_hash.up.sql":                      _1716891408_add_community_token_transaction_hashUpSql,
-	"README.md": readmeMd,
-	"doc.go":    docGo,
+	"1719906191_add_community_token_version.up.sql":                               _1719906191_add_community_token_versionUpSql,
+	"1720636181_add_community_encryption_keys_requests.up.sql":                    _1720636181_add_community_encryption_keys_requestsUpSql,
+	"1721222369_add_shared_addresses.up.sql":                                      _1721222369_add_shared_addressesUpSql,
+	"README.md":                                                                   readmeMd,
+	"doc.go":                                                                      docGo,
 }
 
 // AssetDebug is true if the assets were built with the debug flag enabled.
@@ -3446,9 +3534,13 @@ var _bintree = &bintree{nil, map[string]*bintree{
 	"1713169458_update_raw_messages_with_resend_features.up.sql":                  {_1713169458_update_raw_messages_with_resend_featuresUpSql, map[string]*bintree{}},
 	"1715163152_remove_status_community.up.sql":                                   {_1715163152_remove_status_communityUpSql, map[string]*bintree{}},
 	"1715163262_rename_peersyncing_group_id_field.up.sql":                         {_1715163262_rename_peersyncing_group_id_fieldUpSql, map[string]*bintree{}},
+	"1716413241_remove_social_links.up.sql":                                       {_1716413241_remove_social_linksUpSql, map[string]*bintree{}},
 	"1716891408_add_community_token_transaction_hash.up.sql":                      {_1716891408_add_community_token_transaction_hashUpSql, map[string]*bintree{}},
-	"README.md": {readmeMd, map[string]*bintree{}},
-	"doc.go":    {docGo, map[string]*bintree{}},
+	"1719906191_add_community_token_version.up.sql":                               {_1719906191_add_community_token_versionUpSql, map[string]*bintree{}},
+	"1720636181_add_community_encryption_keys_requests.up.sql":                    {_1720636181_add_community_encryption_keys_requestsUpSql, map[string]*bintree{}},
+	"1721222369_add_shared_addresses.up.sql":                                      {_1721222369_add_shared_addressesUpSql, map[string]*bintree{}},
+	"README.md":                                                                   {readmeMd, map[string]*bintree{}},
+	"doc.go":                                                                      {docGo, map[string]*bintree{}},
 }}
 
 // RestoreAsset restores an asset under the given directory.

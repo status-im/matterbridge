@@ -22,7 +22,7 @@ import (
 
 const (
 	initialStoreNodeRequestPageSize = 4
-	defaultStoreNodeRequestPageSize = 20
+	defaultStoreNodeRequestPageSize = 50
 
 	// tolerance is how many seconds of potentially out-of-order messages we want to fetch
 	tolerance uint32 = 60
@@ -98,7 +98,7 @@ func (m *Messenger) connectToNewMailserverAndWait() error {
 	}
 	// If pinned mailserver is not nil, no need to disconnect and wait for it to be available
 	if pinnedMailserver == nil {
-		m.disconnectActiveMailserver()
+		m.disconnectActiveMailserver(graylistBackoff)
 	}
 
 	return m.findNewMailserver()
@@ -261,12 +261,19 @@ func (m *Messenger) syncBackup() error {
 	if filter == nil {
 		return errors.New("personal topic filter not loaded")
 	}
+	canSync, err := m.canSyncWithStoreNodes()
+	if err != nil {
+		return err
+	}
+	if !canSync {
+		return nil
+	}
 
 	from, to := m.calculateMailserverTimeBounds(oneMonthDuration)
 
 	batch := MailserverBatch{From: from, To: to, Topics: []types.TopicType{filter.ContentTopic}}
 	ms := m.getActiveMailserver(filter.ChatID)
-	err := m.processMailserverBatch(*ms, batch)
+	err = m.processMailserverBatch(*ms, batch)
 	if err != nil {
 		return err
 	}
@@ -365,18 +372,55 @@ func (m *Messenger) RequestAllHistoricMessages(forceFetchingBackup, withRetries 
 			if err != nil {
 				return nil, err
 			}
-			allResponses.AddChats(response.Chats())
-			allResponses.AddMessages(response.Messages())
+			if response != nil {
+				allResponses.AddChats(response.Chats())
+				allResponses.AddMessages(response.Messages())
+			}
 			continue
 		}
 		response, err := m.syncFilters(*ms, filtersForMs)
 		if err != nil {
 			return nil, err
 		}
-		allResponses.AddChats(response.Chats())
-		allResponses.AddMessages(response.Messages())
+		if response != nil {
+			allResponses.AddChats(response.Chats())
+			allResponses.AddMessages(response.Messages())
+		}
 	}
 	return allResponses, nil
+}
+
+const missingMessageCheckPeriod = 30 * time.Second
+
+func (m *Messenger) checkForMissingMessagesLoop() {
+	t := time.NewTicker(missingMessageCheckPeriod)
+	defer t.Stop()
+
+	for {
+		select {
+		case <-m.quit:
+			return
+
+		case <-t.C:
+
+		}
+
+		filters := m.transport.Filters()
+		filtersByMs := m.SplitFiltersByStoreNode(filters)
+		for communityID, filtersForMs := range filtersByMs {
+			ms := m.getActiveMailserver(communityID)
+			if ms == nil {
+				continue
+			}
+
+			peerID, err := ms.PeerID()
+			if err != nil {
+				m.logger.Error("could not obtain the peerID")
+				return
+			}
+			m.transport.SetCriteriaForMissingMessageVerification(peerID, filtersForMs)
+		}
+	}
 }
 
 func getPrioritizedBatches() []int {
@@ -384,6 +428,14 @@ func getPrioritizedBatches() []int {
 }
 
 func (m *Messenger) syncFiltersFrom(ms mailservers.Mailserver, filters []*transport.Filter, lastRequest uint32) (*MessengerResponse, error) {
+	canSync, err := m.canSyncWithStoreNodes()
+	if err != nil {
+		return nil, err
+	}
+	if !canSync {
+		return nil, nil
+	}
+
 	response := &MessengerResponse{}
 	topicInfo, err := m.mailserversDatabase.Topics()
 	if err != nil {
@@ -657,7 +709,7 @@ type work struct {
 	pubsubTopic   string
 	contentTopics []types.TopicType
 	cursor        []byte
-	storeCursor   *types.StoreRequestCursor
+	storeCursor   types.StoreRequestCursor
 	limit         uint32
 }
 
@@ -667,13 +719,13 @@ type messageRequester interface {
 		peerID []byte,
 		from, to uint32,
 		previousCursor []byte,
-		previousStoreCursor *types.StoreRequestCursor,
+		previousStoreCursor types.StoreRequestCursor,
 		pubsubTopic string,
 		contentTopics []types.TopicType,
 		limit uint32,
 		waitForResponse bool,
 		processEnvelopes bool,
-	) (cursor []byte, storeCursor *types.StoreRequestCursor, envelopesCount int, err error)
+	) (cursor []byte, storeCursor types.StoreRequestCursor, envelopesCount int, err error)
 }
 
 func processMailserverBatch(
@@ -835,8 +887,27 @@ loop:
 	return result
 }
 
-func (m *Messenger) processMailserverBatch(ms mailservers.Mailserver, batch MailserverBatch) error {
+func (m *Messenger) canSyncWithStoreNodes() (bool, error) {
 	if m.featureFlags.StoreNodesDisabled {
+		return false, nil
+	}
+	if m.connectionState.IsExpensive() {
+		return m.settings.CanSyncOnMobileNetwork()
+	}
+
+	return true, nil
+}
+
+func (m *Messenger) DisableStoreNodes() {
+	m.featureFlags.StoreNodesDisabled = true
+}
+
+func (m *Messenger) processMailserverBatch(ms mailservers.Mailserver, batch MailserverBatch) error {
+	canSync, err := m.canSyncWithStoreNodes()
+	if err != nil {
+		return err
+	}
+	if !canSync {
 		return nil
 	}
 
@@ -849,7 +920,11 @@ func (m *Messenger) processMailserverBatch(ms mailservers.Mailserver, batch Mail
 }
 
 func (m *Messenger) processMailserverBatchWithOptions(ms mailservers.Mailserver, batch MailserverBatch, pageLimit uint32, shouldProcessNextPage func(int) (bool, uint32), processEnvelopes bool) error {
-	if m.featureFlags.StoreNodesDisabled {
+	canSync, err := m.canSyncWithStoreNodes()
+	if err != nil {
+		return err
+	}
+	if !canSync {
 		return nil
 	}
 
@@ -879,6 +954,14 @@ func (m *Messenger) SyncChatFromSyncedFrom(chatID string) (uint32, error) {
 	ms := m.getActiveMailserver(chat.CommunityID)
 	var from uint32
 	_, err := m.performMailserverRequest(ms, func(ms mailservers.Mailserver) (*MessengerResponse, error) {
+		canSync, err := m.canSyncWithStoreNodes()
+		if err != nil {
+			return nil, err
+		}
+		if !canSync {
+			return nil, nil
+		}
+
 		pubsubTopic, topics, err := m.topicsForChat(chatID)
 		if err != nil {
 			return nil, nil
@@ -1010,12 +1093,11 @@ func (m *Messenger) ToggleUseMailservers(value bool) error {
 		return err
 	}
 
+	m.disconnectActiveMailserver(backoffByUserAction)
 	if value {
 		m.cycleMailservers()
 		return nil
 	}
-
-	m.disconnectActiveMailserver()
 	return nil
 }
 
@@ -1025,6 +1107,7 @@ func (m *Messenger) SetPinnedMailservers(mailservers map[string]string) error {
 		return err
 	}
 
+	m.disconnectActiveMailserver(backoffByUserAction)
 	m.cycleMailservers()
 	return nil
 }
@@ -1040,7 +1123,7 @@ func (m *Messenger) ConnectionChanged(state connection.State) {
 	}
 
 	if m.connectionState.Offline && !state.Offline {
-		err := m.sender.StartDatasync(m.sendDataSync)
+		err := m.sender.StartDatasync(m.mvdsStatusChangeEvent, m.sendDataSync)
 		if err != nil {
 			m.logger.Error("failed to start datasync", zap.Error(err))
 		}
@@ -1059,6 +1142,14 @@ func (m *Messenger) fetchMessages(chatID string, duration time.Duration) (uint32
 
 	ms := m.getActiveMailserver(chat.CommunityID)
 	_, err := m.performMailserverRequest(ms, func(ms mailservers.Mailserver) (*MessengerResponse, error) {
+		canSync, err := m.canSyncWithStoreNodes()
+		if err != nil {
+			return nil, err
+		}
+		if !canSync {
+			return nil, nil
+		}
+
 		m.logger.Debug("fetching messages", zap.String("chatID", chatID), zap.String("mailserver", ms.Name))
 		pubsubTopic, topics, err := m.topicsForChat(chatID)
 		if err != nil {
