@@ -12,7 +12,7 @@ jobs:
         uses: golangci/golangci-lint-action@v3
         with:
           version: latest
-          args: "-v --new-from-rev HEAD~5"
+          args: "-v --new-from-rev HEAD~5 --timeout=15m"
   test-build-upload:
     strategy:
       matrix:
@@ -30,7 +30,7 @@ jobs:
       with:
           fetch-depth: 0
     - name: Test
-      run: go test ./... -mod=vendor
+      run: go test $(go list ./...) -mod=vendor
     - name: Build
       run: |
         mkdir -p output/{win,lin,arm,mac}
