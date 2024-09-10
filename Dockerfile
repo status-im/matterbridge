@@ -1,4 +1,4 @@
-FROM golang:1.20-bullseye AS builder
+FROM golang:1.21-bullseye AS builder
 
 RUN apt update
 RUN apt install -y gcc g++ libc6-dev
