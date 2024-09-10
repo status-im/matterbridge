@@ -2435,8 +2435,8 @@ github.com/splitio/go-toolkit/v4 v4.2.0/go.mod h1:EdIHN0yzB1GTXDYQc0KdKvnjkO/jfU
 github.com/ssor/bom v0.0.0-20170718123548-6386211fdfcf/go.mod h1:RJID2RhlZKId02nZ62WenDCkgHFerpIOmW0iT7GKmXM=
 github.com/status-im/doubleratchet v3.0.0+incompatible h1:aJ1ejcSERpSzmWZBgtfYtiU2nF0Q8ZkGyuEPYETXkCY=
 github.com/status-im/doubleratchet v3.0.0+incompatible/go.mod h1:1sqR0+yhiM/bd+wrdX79AOt2csZuJOni0nUDzKNuqOU=
-github.com/status-im/go-ethereum v1.10.25-status.13 h1:BIQB1MEY5m/D0pd4zXF1psKgyHMmnC+HZ+liJfB4tmY=
-github.com/status-im/go-ethereum v1.10.25-status.13/go.mod h1:Dt4K5JYMhJRdtXJwBEyGZLZn9iz/chSOZyjVmt5ZhwQ=
+github.com/status-im/go-ethereum v1.10.25-status.15 h1:il5fD124sV2i6+2hf6iK4MRSRQIeZAl51kc/svZTsdo=
+github.com/status-im/go-ethereum v1.10.25-status.15/go.mod h1:Dt4K5JYMhJRdtXJwBEyGZLZn9iz/chSOZyjVmt5ZhwQ=
 github.com/status-im/go-multiaddr-ethv4 v1.2.5 h1:pN+ey6wYKbvNNu5/xq9+VL0N8Yq0pZUTbZp0URg+Yn4=
 github.com/status-im/go-multiaddr-ethv4 v1.2.5/go.mod h1:Fhe/18yWU5QwlAYiOO3Bb1BLe0bn5YobcNBHsjRr4kk=
 github.com/status-im/go-sqlcipher/v4 v4.5.4-status.2 h1:Oi9JTAI2DZEe5UKlpUcvKBCCSn3ULsLIrix7jPnEoPE=
