@@ -1273,9 +1273,10 @@ func (o *Community) ValidateRequestToJoin(signer *ecdsa.PublicKey, request *prot
 	defer o.mutex.Unlock()
 
 	if o.IsControlNode() {
-		if len(request.RevealedAccounts) == 0 {
-			return errors.New("no addresses revealed")
-		}
+		// TODO: Enable this once mobile supports revealed addresses.
+		// if len(request.RevealedAccounts) == 0 {
+		// 	return errors.New("no addresses revealed")
+		// }
 	} else if o.HasPermissionToSendCommunityEvents() {
 		if o.AutoAccept() {
 			return errors.New("auto-accept community requests can only be processed by the control node")

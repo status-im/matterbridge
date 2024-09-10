@@ -15,8 +15,9 @@ import (
 )
 
 type ConnStatus struct {
-	IsOnline bool                  `json:"isOnline"`
-	Peers    map[string]WakuV2Peer `json:"peers"`
+	IsOnline   bool                  `json:"isOnline"`
+	HasHistory bool                  `json:"hasHistory"`
+	Peers      map[string]WakuV2Peer `json:"peers"`
 }
 
 type WakuV2Peer struct {
@@ -175,7 +176,7 @@ type Waku interface {
 	SendMessagesRequest(peerID []byte, request MessagesRequest) error
 
 	// RequestStoreMessages uses the WAKU2-STORE protocol to request historic messages
-	RequestStoreMessages(ctx context.Context, peerID []byte, request MessagesRequest, processEnvelopes bool) (StoreRequestCursor, int, error)
+	RequestStoreMessages(ctx context.Context, peerID []byte, request MessagesRequest, processEnvelopes bool) (*StoreRequestCursor, int, error)
 
 	// ProcessingP2PMessages indicates whether there are in-flight p2p messages
 	ProcessingP2PMessages() bool
@@ -194,7 +195,4 @@ type Waku interface {
 
 	// SetStorePeerID updates the peer id of store node
 	SetStorePeerID(peerID peer.ID)
-
-	// PeerID returns node's PeerID
-	PeerID() peer.ID
 }

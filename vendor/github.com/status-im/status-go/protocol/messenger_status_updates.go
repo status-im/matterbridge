@@ -74,7 +74,6 @@ func (m *Messenger) sendUserStatus(ctx context.Context, status UserStatus) error
 		MessageType: protobuf.ApplicationMetadataMessage_STATUS_UPDATE,
 		ResendType:  common.ResendTypeNone, // does this need to be resent?
 		Ephemeral:   statusUpdate.StatusType == protobuf.StatusUpdate_AUTOMATIC,
-		Priority:    &common.LowPriority,
 	}
 
 	_, err = m.sender.SendPublic(ctx, contactCodeTopic, rawMessage)
@@ -178,7 +177,6 @@ func (m *Messenger) sendCurrentUserStatusToCommunity(ctx context.Context, commun
 		ResendType:  common.ResendTypeNone, // does this need to be resent?
 		Ephemeral:   statusUpdate.StatusType == protobuf.StatusUpdate_AUTOMATIC,
 		PubsubTopic: community.PubsubTopic(),
-		Priority:    &common.LowPriority,
 	}
 
 	_, err = m.sender.SendPublic(ctx, rawMessage.LocalChatID, rawMessage)

@@ -1661,18 +1661,11 @@ func (m *Messenger) HandleCommunityRequestToJoinResponse(state *ReceivedMessageS
 	}
 
 	// check if it is outdated approved request to join
-	clockSeconds := requestToJoinResponseProto.Clock / 1000
-	isClockOutdated := clockSeconds < requestToJoin.Clock
-	isDuplicateAfterMemberLeaves := clockSeconds == requestToJoin.Clock &&
-		requestToJoin.State == communities.RequestToJoinStateAccepted && !community.Joined()
-
-	if requestToJoin.State != communities.RequestToJoinStatePending &&
-		(isClockOutdated || isDuplicateAfterMemberLeaves) {
+	if requestToJoin.State != communities.RequestToJoinStatePending && requestToJoinResponseProto.Clock <= community.Clock() {
 		m.logger.Error(ErrOutdatedCommunityRequestToJoin.Error(),
 			zap.String("communityId", community.IDString()),
-			zap.Bool("joined", community.Joined()),
-			zap.Uint64("requestToJoinResponseProto.Clock", requestToJoinResponseProto.Clock),
-			zap.Uint64("requestToJoin.Clock", requestToJoin.Clock),
+			zap.Uint64("communityClock", community.Clock()),
+			zap.Uint64("requestToJoinClock", requestToJoinResponseProto.Clock),
 			zap.Uint8("state", uint8(requestToJoin.State)))
 		return ErrOutdatedCommunityRequestToJoin
 	}

@@ -99,7 +99,6 @@ func (w *gethPublicWakuV2APIWrapper) Post(ctx context.Context, req types.NewMess
 		Padding:      req.Padding,
 		TargetPeer:   req.TargetPeer,
 		Ephemeral:    req.Ephemeral,
-		Priority:     req.Priority,
 	}
 	return w.api.Post(ctx, msg)
 }

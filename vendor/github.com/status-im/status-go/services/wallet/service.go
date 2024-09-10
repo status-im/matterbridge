@@ -3,6 +3,7 @@ package wallet
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 
@@ -61,6 +62,7 @@ func NewService(
 	pendingTxManager *transactions.PendingTxTracker,
 	feed *event.Feed,
 	mediaServer *server.MediaServer,
+	statusProxyStageName string,
 ) *Service {
 	signals := &walletevent.SignalsTransmitter{
 		Publisher: feed,
@@ -118,7 +120,8 @@ func NewService(
 	cryptoCompare := cryptocompare.NewClient()
 	coingecko := coingecko.NewClient()
 	cryptoCompareProxy := cryptocompare.NewClientWithParams(cryptocompare.Params{
-		URL:      cryptocompare.CryptoCompareStatusProxyURL,
+		ID:       fmt.Sprintf("%s-proxy", cryptoCompare.ID()),
+		URL:      fmt.Sprintf("https://%s.api.status.im/cryptocompare/", statusProxyStageName),
 		User:     config.WalletConfig.StatusProxyMarketUser,
 		Password: config.WalletConfig.StatusProxyMarketPassword,
 	})

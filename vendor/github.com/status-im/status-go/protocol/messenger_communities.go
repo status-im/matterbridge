@@ -142,7 +142,6 @@ func (m *Messenger) publishOrg(org *communities.Community, shouldRekey bool) err
 		CommunityID:         org.ID(),
 		MessageType:         protobuf.ApplicationMetadataMessage_COMMUNITY_DESCRIPTION,
 		PubsubTopic:         org.PubsubTopic(), // TODO: confirm if it should be sent in community pubsub topic
-		Priority:            &common.HighPriority,
 	}
 	if org.Encrypted() {
 		members := org.GetMemberPubkeys()
@@ -181,7 +180,6 @@ func (m *Messenger) publishCommunityEvents(community *communities.Community, msg
 		SkipEncryptionLayer: true,
 		MessageType:         protobuf.ApplicationMetadataMessage_COMMUNITY_EVENTS_MESSAGE,
 		PubsubTopic:         community.PubsubTopic(), // TODO: confirm if it should be sent in community pubsub topic
-		Priority:            &common.LowPriority,
 	}
 
 	// TODO: resend in case of failure?
@@ -301,26 +299,12 @@ func (m *Messenger) handleCommunitiesSubscription(c chan *communities.Subscripti
 	// We check every 5 minutes if we need to publish
 	ticker := time.NewTicker(5 * time.Minute)
 
-	recentlyPublishedOrgs := func() map[string]*communities.Community {
-		result := make(map[string]*communities.Community)
-
-		controlledCommunities, err := m.communitiesManager.Controlled()
-		if err != nil {
-			m.logger.Warn("failed to retrieve orgs", zap.Error(err))
-			return result
-		}
-
-		for _, org := range controlledCommunities {
-			result[org.IDString()] = org
-		}
-
-		return result
-	}()
+	recentlyPublishedOrgs := make(map[string]*communities.Community, 0)
 
 	publishOrgAndDistributeEncryptionKeys := func(community *communities.Community) {
 		recentlyPublishedOrg := recentlyPublishedOrgs[community.IDString()]
 
-		if recentlyPublishedOrg != nil && community.Clock() <= recentlyPublishedOrg.Clock() {
+		if recentlyPublishedOrg != nil && community.Clock() < recentlyPublishedOrg.Clock() {
 			return
 		}
 
@@ -777,7 +761,6 @@ func (m *Messenger) publishGroupGrantMessage(community *communities.Community, t
 		SkipEncryptionLayer: true,
 		MessageType:         protobuf.ApplicationMetadataMessage_COMMUNITY_UPDATE_GRANT,
 		PubsubTopic:         community.PubsubTopic(),
-		Priority:            &common.LowPriority,
 	}
 
 	_, err = m.sender.SendPublic(context.Background(), community.IDString(), rawMessage)
@@ -856,8 +839,14 @@ func (m *Messenger) CheckCommunitiesToUnmute() (*MessengerResponse, error) {
 		return nil, fmt.Errorf("couldn't get all communities: %v", err)
 	}
 	for _, community := range communities {
-		communityMuteTill := community.MuteTill().Truncate(time.Second)
-		currTime := time.Now().Truncate(time.Second)
+		communityMuteTill, err := time.Parse(time.RFC3339, community.MuteTill().Format(time.RFC3339))
+		if err != nil {
+			return nil, err
+		}
+		currTime, err := time.Parse(time.RFC3339, time.Now().Format(time.RFC3339))
+		if err != nil {
+			return nil, err
+		}
 
 		if currTime.After(communityMuteTill) && !communityMuteTill.Equal(time.Time{}) && community.Muted() {
 			err := m.communitiesManager.SetMuted(community.ID(), false)
@@ -1429,7 +1418,7 @@ func (m *Messenger) RequestToJoinCommunity(request *requests.RequestToJoinCommun
 	logger := m.logger.Named("RequestToJoinCommunity")
 	logger.Debug("Addresses to reveal", zap.Any("Addresses:", request.AddressesToReveal))
 
-	if err := request.Validate(); err != nil {
+	if err := request.Validate(len(request.AddressesToReveal) > 0); err != nil {
 		logger.Debug("request failed to validate", zap.Error(err), zap.Any("request", request))
 		return nil, err
 	}
@@ -1504,7 +1493,6 @@ func (m *Messenger) RequestToJoinCommunity(request *requests.RequestToJoinCommun
 		SkipEncryptionLayer: true,
 		MessageType:         protobuf.ApplicationMetadataMessage_COMMUNITY_REQUEST_TO_JOIN,
 		PubsubTopic:         shard.DefaultNonProtectedPubsubTopic(),
-		Priority:            &common.HighPriority,
 	}
 
 	_, err = m.SendMessageToControlNode(community, rawMessage)
@@ -1882,7 +1870,6 @@ func (m *Messenger) CancelRequestToJoinCommunity(ctx context.Context, request *r
 		MessageType:         protobuf.ApplicationMetadataMessage_COMMUNITY_CANCEL_REQUEST_TO_JOIN,
 		PubsubTopic:         shard.DefaultNonProtectedPubsubTopic(),
 		ResendType:          common.ResendTypeRawMessage,
-		Priority:            &common.HighPriority,
 	}
 
 	_, err = m.SendMessageToControlNode(community, &rawMessage)
@@ -2030,7 +2017,6 @@ func (m *Messenger) acceptRequestToJoinCommunity(requestToJoin *communities.Requ
 			ResendType:          common.ResendTypeRawMessage,
 			ResendMethod:        common.ResendMethodSendPrivate,
 			Recipients:          []*ecdsa.PublicKey{pk},
-			Priority:            &common.HighPriority,
 		}
 
 		if community.Encrypted() {
@@ -2224,7 +2210,6 @@ func (m *Messenger) LeaveCommunity(communityID types.HexBytes) (*MessengerRespon
 			MessageType:         protobuf.ApplicationMetadataMessage_COMMUNITY_REQUEST_TO_LEAVE,
 			PubsubTopic:         community.PubsubTopic(), // TODO: confirm if it should be sent in the community pubsub topic
 			ResendType:          common.ResendTypeRawMessage,
-			Priority:            &common.HighPriority,
 		}
 
 		_, err = m.SendMessageToControlNode(community, &rawMessage)
@@ -4226,7 +4211,6 @@ func (m *Messenger) dispatchMagnetlinkMessage(communityID string) error {
 		MessageType:          protobuf.ApplicationMetadataMessage_COMMUNITY_MESSAGE_ARCHIVE_MAGNETLINK,
 		SkipGroupMessageWrap: true,
 		PubsubTopic:          community.PubsubTopic(),
-		Priority:             &common.LowPriority,
 	}
 
 	_, err = m.sender.SendPublic(context.Background(), chatID, rawMessage)

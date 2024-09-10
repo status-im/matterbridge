@@ -402,23 +402,21 @@ func (m *Messenger) checkForMissingMessagesLoop() {
 			return
 
 		case <-t.C:
+			filters := m.transport.Filters()
+			filtersByMs := m.SplitFiltersByStoreNode(filters)
+			for communityID, filtersForMs := range filtersByMs {
+				ms := m.getActiveMailserver(communityID)
+				if ms == nil {
+					continue
+				}
 
-		}
-
-		filters := m.transport.Filters()
-		filtersByMs := m.SplitFiltersByStoreNode(filters)
-		for communityID, filtersForMs := range filtersByMs {
-			ms := m.getActiveMailserver(communityID)
-			if ms == nil {
-				continue
+				peerID, err := ms.PeerID()
+				if err != nil {
+					m.logger.Error("could not obtain the peerID")
+					return
+				}
+				m.transport.SetCriteriaForMissingMessageVerification(peerID, filtersForMs)
 			}
-
-			peerID, err := ms.PeerID()
-			if err != nil {
-				m.logger.Error("could not obtain the peerID")
-				return
-			}
-			m.transport.SetCriteriaForMissingMessageVerification(peerID, filtersForMs)
 		}
 	}
 }
@@ -709,7 +707,7 @@ type work struct {
 	pubsubTopic   string
 	contentTopics []types.TopicType
 	cursor        []byte
-	storeCursor   types.StoreRequestCursor
+	storeCursor   *types.StoreRequestCursor
 	limit         uint32
 }
 
@@ -719,13 +717,13 @@ type messageRequester interface {
 		peerID []byte,
 		from, to uint32,
 		previousCursor []byte,
-		previousStoreCursor types.StoreRequestCursor,
+		previousStoreCursor *types.StoreRequestCursor,
 		pubsubTopic string,
 		contentTopics []types.TopicType,
 		limit uint32,
 		waitForResponse bool,
 		processEnvelopes bool,
-	) (cursor []byte, storeCursor types.StoreRequestCursor, envelopesCount int, err error)
+	) (cursor []byte, storeCursor *types.StoreRequestCursor, envelopesCount int, err error)
 }
 
 func processMailserverBatch(

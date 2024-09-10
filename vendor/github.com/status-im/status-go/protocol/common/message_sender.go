@@ -764,7 +764,6 @@ func (s *MessageSender) SendPublic(
 
 	newMessage.Ephemeral = rawMessage.Ephemeral
 	newMessage.PubsubTopic = rawMessage.PubsubTopic
-	newMessage.Priority = rawMessage.Priority
 
 	messageID := v1protocol.MessageID(&rawMessage.Sender.PublicKey, wrappedMessage)
 

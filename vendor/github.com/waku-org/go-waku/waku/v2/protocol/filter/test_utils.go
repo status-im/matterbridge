@@ -47,7 +47,7 @@ type FilterTestSuite struct {
 	ctx              context.Context
 	ctxCancel        context.CancelFunc
 	wg               *sync.WaitGroup
-	ContentFilter    protocol.ContentFilter
+	contentFilter    protocol.ContentFilter
 	subDetails       []*subscription.SubscriptionDetails
 
 	Log *zap.Logger
@@ -63,7 +63,7 @@ type WakuMsg struct {
 }
 
 func (s *FilterTestSuite) SetupTest() {
-	log := utils.Logger()
+	log := utils.Logger() //.Named("filterv2-test")
 	s.Log = log
 
 	s.Log.Info("SetupTest()")
@@ -192,7 +192,7 @@ func (s *FilterTestSuite) waitForMsgFromChan(msg *WakuMsg, ch chan *protocol.Env
 		defer s.wg.Done()
 		select {
 		case env := <-ch:
-			for _, topic := range s.ContentFilter.ContentTopicsList() {
+			for _, topic := range s.contentFilter.ContentTopicsList() {
 				if topic == env.Message().GetContentTopic() {
 					msgFound = true
 				}
@@ -308,8 +308,8 @@ func (s *FilterTestSuite) subscribe(pubsubTopic string, contentTopic string, pee
 	for _, sub := range s.subDetails {
 		if sub.ContentFilter.PubsubTopic == pubsubTopic {
 			sub.Add(contentTopic)
-			s.ContentFilter = sub.ContentFilter
-			subDetails, err := s.LightNode.Subscribe(s.ctx, s.ContentFilter, WithPeer(peer))
+			s.contentFilter = sub.ContentFilter
+			subDetails, err := s.LightNode.Subscribe(s.ctx, s.contentFilter, WithPeer(peer))
 			s.subDetails = subDetails
 			s.Require().NoError(err)
 			return
@@ -317,7 +317,7 @@ func (s *FilterTestSuite) subscribe(pubsubTopic string, contentTopic string, pee
 	}
 
 	s.subDetails = s.getSub(pubsubTopic, contentTopic, peer)
-	s.ContentFilter = s.subDetails[0].ContentFilter
+	s.contentFilter = s.subDetails[0].ContentFilter
 }
 
 func (s *FilterTestSuite) unsubscribe(pubsubTopic string, contentTopic string, peer peer.ID) []*subscription.SubscriptionDetails {
@@ -331,7 +331,7 @@ func (s *FilterTestSuite) unsubscribe(pubsubTopic string, contentTopic string, p
 			} else {
 				sub.Remove(contentTopic)
 			}
-			s.ContentFilter = sub.ContentFilter
+			s.contentFilter = sub.ContentFilter
 		}
 	}
 

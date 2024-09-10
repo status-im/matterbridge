@@ -22,8 +22,6 @@ import (
 	"errors"
 	"strings"
 
-	"golang.org/x/exp/maps"
-
 	"github.com/ethereum/go-ethereum/common/hexutil"
 )
 
@@ -103,12 +101,4 @@ func ExtractTopicFromContentTopic(s string) (TopicType, error) {
 
 	result := BytesToTopic(str)
 	return result, nil
-}
-
-func (t TopicSet) ContentTopics() []string {
-	contentTopics := make([]string, len(t))
-	for i, ct := range maps.Keys(t) {
-		contentTopics[i] = ct.ContentTopic()
-	}
-	return contentTopics
 }

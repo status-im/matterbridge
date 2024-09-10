@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -31,7 +30,6 @@ const (
 	ReceivedMessagesMetric     TelemetryType = "ReceivedMessages"
 	ErrorSendingEnvelopeMetric TelemetryType = "ErrorSendingEnvelope"
 	PeerCountMetric            TelemetryType = "PeerCount"
-	PeerConnFailuresMetric     TelemetryType = "PeerConnFailure"
 
 	MaxRetryCache = 5000
 )
@@ -42,39 +40,24 @@ type TelemetryRequest struct {
 	TelemetryData *json.RawMessage `json:"telemetry_data"`
 }
 
-func (c *Client) PushReceivedMessages(receivedMessages ReceivedMessages) {
-	c.processAndPushTelemetry(receivedMessages)
+func (c *Client) PushReceivedMessages(ctx context.Context, receivedMessages ReceivedMessages) {
+	c.processAndPushTelemetry(ctx, receivedMessages)
 }
 
-func (c *Client) PushSentEnvelope(sentEnvelope wakuv2.SentEnvelope) {
-	c.processAndPushTelemetry(sentEnvelope)
+func (c *Client) PushSentEnvelope(ctx context.Context, sentEnvelope wakuv2.SentEnvelope) {
+	c.processAndPushTelemetry(ctx, sentEnvelope)
 }
 
-func (c *Client) PushReceivedEnvelope(receivedEnvelope *v2protocol.Envelope) {
-	c.processAndPushTelemetry(receivedEnvelope)
+func (c *Client) PushReceivedEnvelope(ctx context.Context, receivedEnvelope *v2protocol.Envelope) {
+	c.processAndPushTelemetry(ctx, receivedEnvelope)
 }
 
-func (c *Client) PushErrorSendingEnvelope(errorSendingEnvelope wakuv2.ErrorSendingEnvelope) {
-	c.processAndPushTelemetry(errorSendingEnvelope)
+func (c *Client) PushErrorSendingEnvelope(ctx context.Context, errorSendingEnvelope wakuv2.ErrorSendingEnvelope) {
+	c.processAndPushTelemetry(ctx, errorSendingEnvelope)
 }
 
-func (c *Client) PushPeerCount(peerCount int) {
-	if peerCount != c.lastPeerCount {
-		c.lastPeerCount = peerCount
-		c.processAndPushTelemetry(PeerCount{PeerCount: peerCount})
-	}
-}
-
-func (c *Client) PushPeerConnFailures(peerConnFailures map[string]int) {
-	for peerID, failures := range peerConnFailures {
-		if lastFailures, exists := c.lastPeerConnFailures[peerID]; exists {
-			if failures == lastFailures {
-				continue
-			}
-		}
-		c.lastPeerConnFailures[peerID] = failures
-		c.processAndPushTelemetry(PeerConnFailure{FailedPeerId: peerID, FailureCount: failures})
-	}
+func (c *Client) PushPeerCount(ctx context.Context, peerCount int) {
+	c.processAndPushTelemetry(ctx, PeerCount{PeerCount: peerCount})
 }
 
 type ReceivedMessages struct {
@@ -87,28 +70,20 @@ type PeerCount struct {
 	PeerCount int
 }
 
-type PeerConnFailure struct {
-	FailedPeerId string
-	FailureCount int
-}
-
 type Client struct {
-	serverURL            string
-	httpClient           *http.Client
-	logger               *zap.Logger
-	keyUID               string
-	nodeName             string
-	peerId               string
-	version              string
-	telemetryCh          chan TelemetryRequest
-	telemetryCacheLock   sync.Mutex
-	telemetryCache       []TelemetryRequest
-	telemetryRetryCache  []TelemetryRequest
-	nextIdLock           sync.Mutex
-	nextId               int
-	sendPeriod           time.Duration
-	lastPeerCount        int
-	lastPeerConnFailures map[string]int
+	serverURL           string
+	httpClient          *http.Client
+	logger              *zap.Logger
+	keyUID              string
+	nodeName            string
+	version             string
+	telemetryCh         chan TelemetryRequest
+	telemetryCacheLock  sync.Mutex
+	telemetryCache      []TelemetryRequest
+	telemetryRetryCache []TelemetryRequest
+	nextIdLock          sync.Mutex
+	nextId              int
+	sendPeriod          time.Duration
 }
 
 type TelemetryClientOption func(*Client)
@@ -119,30 +94,21 @@ func WithSendPeriod(sendPeriod time.Duration) TelemetryClientOption {
 	}
 }
 
-func WithPeerID(peerId string) TelemetryClientOption {
-	return func(c *Client) {
-		c.peerId = peerId
-	}
-}
-
 func NewClient(logger *zap.Logger, serverURL string, keyUID string, nodeName string, version string, opts ...TelemetryClientOption) *Client {
-	serverURL = strings.TrimRight(serverURL, "/")
 	client := &Client{
-		serverURL:            serverURL,
-		httpClient:           &http.Client{Timeout: time.Minute},
-		logger:               logger,
-		keyUID:               keyUID,
-		nodeName:             nodeName,
-		version:              version,
-		telemetryCh:          make(chan TelemetryRequest),
-		telemetryCacheLock:   sync.Mutex{},
-		telemetryCache:       make([]TelemetryRequest, 0),
-		telemetryRetryCache:  make([]TelemetryRequest, 0),
-		nextId:               0,
-		nextIdLock:           sync.Mutex{},
-		sendPeriod:           10 * time.Second, // default value
-		lastPeerCount:        0,
-		lastPeerConnFailures: make(map[string]int),
+		serverURL:           serverURL,
+		httpClient:          &http.Client{Timeout: time.Minute},
+		logger:              logger,
+		keyUID:              keyUID,
+		nodeName:            nodeName,
+		version:             version,
+		telemetryCh:         make(chan TelemetryRequest),
+		telemetryCacheLock:  sync.Mutex{},
+		telemetryCache:      make([]TelemetryRequest, 0),
+		telemetryRetryCache: make([]TelemetryRequest, 0),
+		nextId:              0,
+		nextIdLock:          sync.Mutex{},
+		sendPeriod:          10 * time.Second, // default value
 	}
 
 	for _, opt := range opts {
@@ -154,7 +120,6 @@ func NewClient(logger *zap.Logger, serverURL string, keyUID string, nodeName str
 
 func (c *Client) Start(ctx context.Context) {
 	go func() {
-
 		for {
 			select {
 			case telemetryRequest := <-c.telemetryCh:
@@ -199,7 +164,7 @@ func (c *Client) Start(ctx context.Context) {
 	}()
 }
 
-func (c *Client) processAndPushTelemetry(data interface{}) {
+func (c *Client) processAndPushTelemetry(ctx context.Context, data interface{}) {
 	var telemetryRequest TelemetryRequest
 	switch v := data.(type) {
 	case ReceivedMessages:
@@ -232,18 +197,17 @@ func (c *Client) processAndPushTelemetry(data interface{}) {
 			TelemetryType: PeerCountMetric,
 			TelemetryData: c.ProcessPeerCount(v),
 		}
-	case PeerConnFailure:
-		telemetryRequest = TelemetryRequest{
-			Id:            c.nextId,
-			TelemetryType: PeerConnFailuresMetric,
-			TelemetryData: c.ProcessPeerConnFailure(v),
-		}
 	default:
 		c.logger.Error("Unknown telemetry data type")
 		return
 	}
 
-	c.telemetryCh <- telemetryRequest
+	select {
+	case <-ctx.Done():
+		return
+	case c.telemetryCh <- telemetryRequest:
+	}
+
 	c.nextIdLock.Lock()
 	c.nextId++
 	c.nextIdLock.Unlock()
@@ -295,7 +259,6 @@ func (c *Client) ProcessReceivedMessages(receivedMessages ReceivedMessages) *jso
 			"topic":          receivedMessages.Filter.ContentTopic.String(),
 			"messageType":    message.ApplicationLayer.Type.String(),
 			"receiverKeyUID": c.keyUID,
-			"peerId":         c.peerId,
 			"nodeName":       c.nodeName,
 			"messageSize":    len(receivedMessages.SSHMessage.Payload),
 			"statusVersion":  c.version,
@@ -313,7 +276,6 @@ func (c *Client) ProcessReceivedEnvelope(envelope *v2protocol.Envelope) *json.Ra
 		"pubsubTopic":    envelope.PubsubTopic(),
 		"topic":          envelope.Message().ContentTopic,
 		"receiverKeyUID": c.keyUID,
-		"peerId":         c.peerId,
 		"nodeName":       c.nodeName,
 		"statusVersion":  c.version,
 	}
@@ -329,7 +291,6 @@ func (c *Client) ProcessSentEnvelope(sentEnvelope wakuv2.SentEnvelope) *json.Raw
 		"pubsubTopic":   sentEnvelope.Envelope.PubsubTopic(),
 		"topic":         sentEnvelope.Envelope.Message().ContentTopic,
 		"senderKeyUID":  c.keyUID,
-		"peerId":        c.peerId,
 		"nodeName":      c.nodeName,
 		"publishMethod": sentEnvelope.PublishMethod.String(),
 		"statusVersion": c.version,
@@ -346,7 +307,6 @@ func (c *Client) ProcessErrorSendingEnvelope(errorSendingEnvelope wakuv2.ErrorSe
 		"pubsubTopic":   errorSendingEnvelope.SentEnvelope.Envelope.PubsubTopic(),
 		"topic":         errorSendingEnvelope.SentEnvelope.Envelope.Message().ContentTopic,
 		"senderKeyUID":  c.keyUID,
-		"peerId":        c.peerId,
 		"nodeName":      c.nodeName,
 		"publishMethod": errorSendingEnvelope.SentEnvelope.PublishMethod.String(),
 		"statusVersion": c.version,
@@ -362,22 +322,6 @@ func (c *Client) ProcessPeerCount(peerCount PeerCount) *json.RawMessage {
 		"peerCount":     peerCount.PeerCount,
 		"nodeName":      c.nodeName,
 		"nodeKeyUID":    c.keyUID,
-		"peerId":        c.peerId,
-		"statusVersion": c.version,
-		"timestamp":     time.Now().Unix(),
-	}
-	body, _ := json.Marshal(postBody)
-	jsonRawMessage := json.RawMessage(body)
-	return &jsonRawMessage
-}
-
-func (c *Client) ProcessPeerConnFailure(peerConnFailure PeerConnFailure) *json.RawMessage {
-	postBody := map[string]interface{}{
-		"failedPeerId":  peerConnFailure.FailedPeerId,
-		"failureCount":  peerConnFailure.FailureCount,
-		"nodeName":      c.nodeName,
-		"nodeKeyUID":    c.keyUID,
-		"peerId":        c.peerId,
 		"statusVersion": c.version,
 		"timestamp":     time.Now().Unix(),
 	}
@@ -399,7 +343,6 @@ func (c *Client) UpdateEnvelopeProcessingError(shhMessage *types.Message, proces
 		"pubsubTopic":     shhMessage.PubsubTopic,
 		"topic":           shhMessage.Topic,
 		"receiverKeyUID":  c.keyUID,
-		"peerId":          c.peerId,
 		"nodeName":        c.nodeName,
 		"processingError": errorString,
 	}

@@ -3,7 +3,6 @@ module github.com/42wim/matterbridge
 require (
 	github.com/Baozisoftware/qrcode-terminal-go v0.0.0-20170407111555-c0650d8dff0f
 	github.com/Benau/tgsconverter v0.0.0-20210809170556-99f4a4f6337f
-	github.com/Philipp15b/go-steam v1.0.1-0.20200727090957-6ae9b3c0a560
 	github.com/Rhymen/go-whatsapp v0.1.2-0.20211102134409-31a2e740845c
 	github.com/SevereCloud/vksdk/v2 v2.16.0
 	github.com/bwmarrin/discordgo v0.27.1
@@ -44,7 +43,7 @@ require (
 	github.com/sirupsen/logrus v1.9.3
 	github.com/slack-go/slack v0.12.2
 	github.com/spf13/viper v1.16.0
-	github.com/status-im/status-go v0.182.43
+	github.com/status-im/status-go v0.182.39-0.20240906155721-74ae4115480a
 	github.com/stretchr/testify v1.9.0
 	github.com/syndtr/goleveldb v1.0.1-0.20220614013038-64ee5596c38a
 	github.com/vincent-petithory/dataurl v1.0.0
@@ -311,7 +310,7 @@ require (
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/waku-org/go-discover v0.0.0-20240506173252-4912704efdc5 // indirect
 	github.com/waku-org/go-libp2p-rendezvous v0.0.0-20240110193335-a67d1cc760a0 // indirect
-	github.com/waku-org/go-waku v0.8.1-0.20240807022408-c2e6320953b1 // indirect
+	github.com/waku-org/go-waku v0.8.1-0.20240904134226-49eb64a27dc4 // indirect
 	github.com/waku-org/go-zerokit-rln v0.1.14-0.20240102145250-fa738c0bdf59 // indirect
 	github.com/waku-org/go-zerokit-rln-apple v0.0.0-20230916172309-ee0ee61dde2b // indirect
 	github.com/waku-org/go-zerokit-rln-arm v0.0.0-20230916171929-1dd9494ff065 // indirect

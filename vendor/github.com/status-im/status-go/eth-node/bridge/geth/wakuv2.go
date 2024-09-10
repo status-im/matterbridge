@@ -9,8 +9,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/waku-org/go-waku/waku/v2/protocol"
-	"github.com/waku-org/go-waku/waku/v2/protocol/store"
+	"github.com/waku-org/go-waku/waku/v2/protocol/legacy_store"
+	storepb "github.com/waku-org/go-waku/waku/v2/protocol/legacy_store/pb"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/status-im/status-go/connection"
@@ -132,7 +132,7 @@ func (w *gethWakuV2Wrapper) Subscribe(opts *types.SubscriptionOptions) (string, 
 		}
 	}
 
-	f, err := w.createFilterWrapper("", keyAsym, keySym, opts.PubsubTopic, opts.Topics)
+	f, err := w.createFilterWrapper("", keyAsym, keySym, opts.PoW, opts.PubsubTopic, opts.Topics)
 	if err != nil {
 		return "", err
 	}
@@ -162,7 +162,7 @@ func (w *gethWakuV2Wrapper) UnsubscribeMany(ids []string) error {
 	return w.waku.UnsubscribeMany(ids)
 }
 
-func (w *gethWakuV2Wrapper) createFilterWrapper(id string, keyAsym *ecdsa.PrivateKey, keySym []byte, pubsubTopic string, topics [][]byte) (types.Filter, error) {
+func (w *gethWakuV2Wrapper) createFilterWrapper(id string, keyAsym *ecdsa.PrivateKey, keySym []byte, pow float64, pubsubTopic string, topics [][]byte) (types.Filter, error) {
 	return NewWakuV2FilterWrapper(&wakucommon.Filter{
 		KeyAsym:       keyAsym,
 		KeySym:        keySym,
@@ -177,32 +177,35 @@ func (w *gethWakuV2Wrapper) SendMessagesRequest(peerID []byte, r types.MessagesR
 	return errors.New("DEPRECATED")
 }
 
-func (w *gethWakuV2Wrapper) RequestStoreMessages(ctx context.Context, peerID []byte, r types.MessagesRequest, processEnvelopes bool) (types.StoreRequestCursor, int, error) {
-	var options []store.RequestOption
+func (w *gethWakuV2Wrapper) RequestStoreMessages(ctx context.Context, peerID []byte, r types.MessagesRequest, processEnvelopes bool) (*types.StoreRequestCursor, int, error) {
+	var options []legacy_store.HistoryRequestOption
 
 	peer, err := peer.Decode(string(peerID))
 	if err != nil {
 		return nil, 0, err
 	}
 
-	options = []store.RequestOption{
-		store.WithPaging(false, uint64(r.Limit)),
+	options = []legacy_store.HistoryRequestOption{
+		legacy_store.WithPaging(false, uint64(r.Limit)),
 	}
 
-	var cursor []byte
+	var cursor *storepb.Index
 	if r.StoreCursor != nil {
-		cursor = r.StoreCursor
+		cursor = &storepb.Index{
+			Digest:       r.StoreCursor.Digest,
+			ReceiverTime: r.StoreCursor.ReceiverTime,
+			SenderTime:   r.StoreCursor.SenderTime,
+			PubsubTopic:  r.StoreCursor.PubsubTopic,
+		}
 	}
 
-	contentTopics := []string{}
+	query := legacy_store.Query{
+		StartTime:   proto.Int64(int64(r.From) * int64(time.Second)),
+		EndTime:     proto.Int64(int64(r.To) * int64(time.Second)),
+		PubsubTopic: w.waku.GetPubsubTopic(r.PubsubTopic),
+	}
 	for _, topic := range r.ContentTopics {
-		contentTopics = append(contentTopics, wakucommon.BytesToTopic(topic).ContentTopic())
-	}
-
-	query := store.FilterCriteria{
-		TimeStart:     proto.Int64(int64(r.From) * int64(time.Second)),
-		TimeEnd:       proto.Int64(int64(r.To) * int64(time.Second)),
-		ContentFilter: protocol.NewContentFilter(w.waku.GetPubsubTopic(r.PubsubTopic), contentTopics...),
+		query.ContentTopics = append(query.ContentTopics, wakucommon.BytesToTopic(topic).ContentTopic())
 	}
 
 	pbCursor, envelopesCount, err := w.waku.Query(ctx, peer, query, cursor, options, processEnvelopes)
@@ -211,7 +214,12 @@ func (w *gethWakuV2Wrapper) RequestStoreMessages(ctx context.Context, peerID []b
 	}
 
 	if pbCursor != nil {
-		return pbCursor, envelopesCount, nil
+		return &types.StoreRequestCursor{
+			Digest:       pbCursor.Digest,
+			ReceiverTime: pbCursor.ReceiverTime,
+			SenderTime:   pbCursor.SenderTime,
+			PubsubTopic:  pbCursor.PubsubTopic,
+		}, envelopesCount, nil
 	}
 
 	return nil, envelopesCount, nil
@@ -349,8 +357,4 @@ func (w *gethWakuV2Wrapper) ConfirmMessageDelivered(hashes []common.Hash) {
 
 func (w *gethWakuV2Wrapper) SetStorePeerID(peerID peer.ID) {
 	w.waku.SetStorePeerID(peerID)
-}
-
-func (w *gethWakuV2Wrapper) PeerID() peer.ID {
-	return w.waku.PeerID()
 }

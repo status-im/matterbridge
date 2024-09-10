@@ -15,6 +15,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/afex/hystrix-go/hystrix"
 	"github.com/pkg/errors"
 
 	"github.com/imdario/mergo"
@@ -237,6 +238,24 @@ func (b *GethStatusBackend) GetAccounts() ([]multiaccounts.Account, error) {
 		return nil, errors.New("accounts db wasn't initialized")
 	}
 	return b.multiaccountsDB.GetAccounts()
+}
+
+func (b *GethStatusBackend) AcceptTerms() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.multiaccountsDB == nil {
+		return errors.New("accounts db wasn't initialized")
+	}
+
+	accounts, err := b.multiaccountsDB.GetAccounts()
+	if err != nil {
+		return err
+	}
+	if len(accounts) == 0 {
+		return errors.New("accounts is empty")
+	}
+
+	return b.multiaccountsDB.UpdateHasAcceptedTerms(accounts[0].KeyUID, true)
 }
 
 func (b *GethStatusBackend) getAccountByKeyUID(keyUID string) (*multiaccounts.Account, error) {
@@ -547,7 +566,7 @@ func (b *GethStatusBackend) updateAccountColorHashAndColorID(keyUID string, acco
 }
 
 func (b *GethStatusBackend) overrideNetworks(conf *params.NodeConfig, request *requests.Login) {
-	conf.Networks = setRPCs(defaultNetworks, &request.WalletSecretsConfig)
+	conf.Networks = setRPCs(defaultNetworks(request.WalletSecretsConfig.StatusProxyStageName), &request.WalletSecretsConfig)
 }
 
 func (b *GethStatusBackend) LoginAccount(request *requests.Login) error {
@@ -1578,6 +1597,14 @@ func (b *GethStatusBackend) buildAccount(request *requests.CreateAccount, input 
 		acc.KDFIterations = dbsetup.ReducedKDFIterationsNumber
 	}
 
+	count, err := b.multiaccountsDB.GetAccountsCount()
+	if err != nil {
+		return nil, err
+	}
+	if count == 0 {
+		acc.HasAcceptedTerms = true
+	}
+
 	if request.ImagePath != "" {
 		imageCropRectangle := request.ImageCropRectangle
 		if imageCropRectangle == nil {
@@ -1643,18 +1670,13 @@ func (b *GethStatusBackend) prepareConfig(request *requests.CreateAccount, input
 }
 
 func (b *GethStatusBackend) prepareSubAccounts(request *requests.CreateAccount, input *prepareAccountInput) ([]*accounts.Account, error) {
-	emoji, err := randomWalletEmoji()
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to generate random emoji")
-	}
-
 	walletDerivedAccount := input.derivedAddresses[pathDefaultWallet]
 	walletAccount := &accounts.Account{
 		PublicKey:          types.Hex2Bytes(walletDerivedAccount.PublicKey),
 		KeyUID:             input.keyUID,
 		Address:            types.HexToAddress(walletDerivedAccount.Address),
 		ColorID:            multiacccommon.CustomizationColor(request.CustomizationColor),
-		Emoji:              emoji,
+		Emoji:              request.Emoji,
 		Wallet:             true,
 		Path:               pathDefaultWallet,
 		Name:               walletAccountDefaultName,
@@ -2436,6 +2458,12 @@ func (b *GethStatusBackend) ConnectionChange(typ string, expensive bool) {
 	}
 
 	b.log.Info("Network state change", "old", b.connectionState, "new", state)
+
+	if b.connectionState.Offline && !state.Offline {
+		//  flush hystrix if we are going again online, since it doesn't behave
+		// well when offline
+		hystrix.Flush()
+	}
 
 	b.connectionState = state
 	b.statusNode.ConnectionChanged(state)

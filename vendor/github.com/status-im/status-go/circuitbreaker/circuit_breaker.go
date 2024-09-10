@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	"github.com/afex/hystrix-go/hystrix"
+
+	"github.com/ethereum/go-ethereum/log"
 )
 
 type FallbackFunc func() ([]any, error)
@@ -78,6 +80,16 @@ func NewFunctor(exec FallbackFunc, circuitName string) *Functor {
 	}
 }
 
+func accumulateCommandError(result CommandResult, circuitName string, err error) CommandResult {
+	// Accumulate errors
+	if result.err != nil {
+		result.err = fmt.Errorf("%w, %s.error: %w", result.err, circuitName, err)
+	} else {
+		result.err = fmt.Errorf("%s.error: %w", circuitName, err)
+	}
+	return result
+}
+
 // Executes the command in its circuit if set.
 // If the command's circuit is not configured, the circuit of the CircuitBreaker is used.
 // This is a blocking function.
@@ -92,49 +104,63 @@ func (cb *CircuitBreaker) Execute(cmd *Command) CommandResult {
 		ctx = context.Background()
 	}
 
-	for _, f := range cmd.functors {
+	for i, f := range cmd.functors {
 		if cmd.cancel {
 			break
 		}
 
-		circuitName := f.circuitName
-		if cb.circuitNameHandler != nil {
-			circuitName = cb.circuitNameHandler(circuitName)
-		}
-
-		if hystrix.GetCircuitSettings()[circuitName] == nil {
-			hystrix.ConfigureCommand(circuitName, hystrix.CommandConfig{
-				Timeout:                cb.config.Timeout,
-				MaxConcurrentRequests:  cb.config.MaxConcurrentRequests,
-				RequestVolumeThreshold: cb.config.RequestVolumeThreshold,
-				SleepWindow:            cb.config.SleepWindow,
-				ErrorPercentThreshold:  cb.config.ErrorPercentThreshold,
-			})
-		}
-
-		err := hystrix.DoC(ctx, circuitName, func(ctx context.Context) error {
-			res, err := f.exec()
-			// Write to result only if success
+		var err error
+		// if last command, execute without circuit
+		if i == len(cmd.functors)-1 {
+			res, execErr := f.exec()
+			err = execErr
 			if err == nil {
 				result = CommandResult{res: res}
 			}
-			return err
-		}, nil)
+		} else {
+			circuitName := f.circuitName
+			if cb.circuitNameHandler != nil {
+				circuitName = cb.circuitNameHandler(circuitName)
+			}
 
+			if hystrix.GetCircuitSettings()[circuitName] == nil {
+				hystrix.ConfigureCommand(circuitName, hystrix.CommandConfig{
+					Timeout:                cb.config.Timeout,
+					MaxConcurrentRequests:  cb.config.MaxConcurrentRequests,
+					RequestVolumeThreshold: cb.config.RequestVolumeThreshold,
+					SleepWindow:            cb.config.SleepWindow,
+					ErrorPercentThreshold:  cb.config.ErrorPercentThreshold,
+				})
+			}
+
+			err = hystrix.DoC(ctx, circuitName, func(ctx context.Context) error {
+				res, err := f.exec()
+				// Write to result only if success
+				if err == nil {
+					result = CommandResult{res: res}
+				}
+
+				// If the command has been cancelled, we don't count
+				// the error towars breaking the circuit, and then we break
+				if cmd.cancel {
+					result = accumulateCommandError(result, f.circuitName, err)
+					return nil
+				}
+				if err != nil {
+					log.Warn("hystrix error", "error", err, "provider", circuitName)
+				}
+				return err
+			}, nil)
+		}
 		if err == nil {
 			break
 		}
 
-		// Accumulate errors
-		if result.err != nil {
-			result.err = fmt.Errorf("%w, %s.error: %w", result.err, f.circuitName, err)
-		} else {
-			result.err = fmt.Errorf("%s.error: %w", f.circuitName, err)
-		}
+		result = accumulateCommandError(result, f.circuitName, err)
+
 		// Lets abuse every provider with the same amount of MaxConcurrentRequests,
 		// keep iterating even in case of ErrMaxConcurrency error
 	}
-
 	return result
 }
 

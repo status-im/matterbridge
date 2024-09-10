@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	gethrpc "github.com/ethereum/go-ethereum/rpc"
 
+	appCommon "github.com/status-im/status-go/common"
 	"github.com/status-im/status-go/params"
 	"github.com/status-im/status-go/rpc/chain"
 	"github.com/status-im/status-go/rpc/network"
@@ -31,12 +34,39 @@ const (
 	providerGrove       = "grove"
 	providerInfura      = "infura"
 	ProviderStatusProxy = "status-proxy"
+
+	mobile  = "mobile"
+	desktop = "desktop"
+
+	// rpcUserAgentFormat 'procurator': *an agent representing others*, aka a "proxy"
+	// allows for the rpc client to have a dedicated user agent, which is useful for the proxy server logs.
+	rpcUserAgentFormat = "procuratee-%s/%s"
+
+	// rpcUserAgentUpstreamFormat a separate user agent format for upstream, because we should not be using upstream
+	// if we see this user agent in the logs that means parts of the application are using a malconfigured http client
+	rpcUserAgentUpstreamFormat = "procuratee-%s-upstream/%s"
 )
 
 // List of RPC client errors.
 var (
-	ErrMethodNotFound = fmt.Errorf("The method does not exist/is not available")
+	ErrMethodNotFound = fmt.Errorf("the method does not exist/is not available")
 )
+
+var (
+	// rpcUserAgentName the user agent
+	rpcUserAgentName         = fmt.Sprintf(rpcUserAgentFormat, "no-GOOS", params.Version)
+	rpcUserAgentUpstreamName = fmt.Sprintf(rpcUserAgentUpstreamFormat, "no-GOOS", params.Version)
+)
+
+func init() {
+	if appCommon.IsMobilePlatform() {
+		rpcUserAgentName = fmt.Sprintf(rpcUserAgentFormat, mobile, params.Version)
+		rpcUserAgentUpstreamName = fmt.Sprintf(rpcUserAgentUpstreamFormat, mobile, params.Version)
+	} else {
+		rpcUserAgentName = fmt.Sprintf(rpcUserAgentFormat, desktop, params.Version)
+		rpcUserAgentUpstreamName = fmt.Sprintf(rpcUserAgentUpstreamFormat, desktop, params.Version)
+	}
+}
 
 // Handler defines handler for RPC methods.
 type Handler func(context.Context, uint64, ...interface{}) (interface{}, error)
@@ -108,11 +138,18 @@ func NewClient(client *gethrpc.Client, upstreamChainID uint64, upstream params.U
 		providerConfigs:    providerConfigs,
 	}
 
+	var opts []gethrpc.ClientOption
+	opts = append(opts,
+		gethrpc.WithHeaders(http.Header{
+			"User-Agent": {rpcUserAgentUpstreamName},
+		}),
+	)
+
 	if upstream.Enabled {
 		c.UpstreamChainID = upstreamChainID
 		c.upstreamEnabled = upstream.Enabled
 		c.upstreamURL = upstream.URL
-		upstreamClient, err := gethrpc.Dial(c.upstreamURL)
+		upstreamClient, err := gethrpc.DialOptions(context.Background(), c.upstreamURL, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("dial upstream server: %s", err)
 		}
@@ -120,11 +157,15 @@ func NewClient(client *gethrpc.Client, upstreamChainID uint64, upstream params.U
 		if err != nil {
 			return nil, fmt.Errorf("get RPC limiter: %s", err)
 		}
-		hostPortUpstream, err := extractHostAndPortFromURL(c.upstreamURL)
+		hostPortUpstream, err := extractHostFromURL(c.upstreamURL)
 		if err != nil {
 			hostPortUpstream = "upstream"
 		}
-		c.upstream = chain.NewSimpleClient(*chain.NewEthClient(ethclient.NewClient(upstreamClient), limiter, upstreamClient, hostPortUpstream), upstreamChainID)
+
+		// Include the chain-id in the rpc client
+		rpcName := fmt.Sprintf("%s-chain-id-%d", hostPortUpstream, upstreamChainID)
+
+		c.upstream = chain.NewSimpleClient(*chain.NewEthClient(ethclient.NewClient(upstreamClient), limiter, upstreamClient, rpcName), upstreamChainID)
 	}
 
 	c.router = newRouter(c.upstreamEnabled)
@@ -140,7 +181,7 @@ func (c *Client) SetWalletNotifier(notifier func(chainID uint64, message string)
 	c.walletNotifier = notifier
 }
 
-func extractHostAndPortFromURL(inputURL string) (string, error) {
+func extractHostFromURL(inputURL string) (string, error) {
 	parsedURL, err := url.Parse(inputURL)
 	if err != nil {
 		return "", err
@@ -187,7 +228,7 @@ func (c *Client) getClientUsingCache(chainID uint64) (chain.ClientInterface, err
 		return nil, fmt.Errorf("could not find network: %d", chainID)
 	}
 
-	ethClients := c.getEthClents(network)
+	ethClients := c.getEthClients(network)
 	if len(ethClients) == 0 {
 		return nil, fmt.Errorf("could not find any RPC URL for chain: %d", chainID)
 	}
@@ -198,7 +239,7 @@ func (c *Client) getClientUsingCache(chainID uint64) (chain.ClientInterface, err
 	return client, nil
 }
 
-func (c *Client) getEthClents(network *params.Network) []*chain.EthClient {
+func (c *Client) getEthClients(network *params.Network) []*chain.EthClient {
 	urls := make(map[string]string)
 	keys := make([]string, 0)
 	authMap := make(map[string]string)
@@ -223,7 +264,7 @@ func (c *Client) getEthClents(network *params.Network) []*chain.EthClient {
 	urls["fallback"] = network.FallbackURL
 
 	ethClients := make([]*chain.EthClient, 0)
-	for _, key := range keys {
+	for index, key := range keys {
 		var rpcClient *gethrpc.Client
 		var rpcLimiter *chain.RPCRpsLimiter
 		var err error
@@ -231,12 +272,17 @@ func (c *Client) getEthClents(network *params.Network) []*chain.EthClient {
 		url := urls[key]
 
 		if len(url) > 0 {
-			// For now we only support auth for status-proxy.
+			// For now, we only support auth for status-proxy.
 			authStr, ok := authMap[key]
 			var opts []gethrpc.ClientOption
 			if ok {
 				authEncoded := base64.StdEncoding.EncodeToString([]byte(authStr))
-				opts = append(opts, gethrpc.WithHeader("Authorization", "Basic "+authEncoded))
+				opts = append(opts,
+					gethrpc.WithHeaders(http.Header{
+						"Authorization": {"Basic " + authEncoded},
+						"User-Agent":    {rpcUserAgentName},
+					}),
+				)
 			}
 
 			rpcClient, err = gethrpc.DialOptions(context.Background(), url, opts...)
@@ -244,24 +290,29 @@ func (c *Client) getEthClents(network *params.Network) []*chain.EthClient {
 				c.log.Error("dial server "+key, "error", err)
 			}
 
-			hostPort, err = extractHostAndPortFromURL(url)
-			if err != nil {
-				hostPort = key
+			// If using the status-proxy, consider each endpoint as a separate provider
+			circuitKey := fmt.Sprintf("%s-%d", key, index)
+			// Otherwise host is good enough
+			if !strings.Contains(url, "status.im") {
+				hostPort, err = extractHostFromURL(url)
+				if err == nil {
+					circuitKey = hostPort
+				}
 			}
 
-			rpcLimiter, err = c.getRPCRpsLimiter(hostPort)
+			rpcLimiter, err = c.getRPCRpsLimiter(circuitKey)
 			if err != nil {
 				c.log.Error("get RPC limiter "+key, "error", err)
 			}
 
-			ethClients = append(ethClients, chain.NewEthClient(ethclient.NewClient(rpcClient), rpcLimiter, rpcClient, hostPort))
+			ethClients = append(ethClients, chain.NewEthClient(ethclient.NewClient(rpcClient), rpcLimiter, rpcClient, circuitKey))
 		}
 	}
 
 	return ethClients
 }
 
-// Ethclient returns ethclient.Client per chain
+// EthClient returns ethclient.Client per chain
 func (c *Client) EthClient(chainID uint64) (chain.ClientInterface, error) {
 	client, err := c.getClientUsingCache(chainID)
 	if err != nil {
@@ -316,7 +367,7 @@ func (c *Client) UpdateUpstreamURL(url string) error {
 		return err
 	}
 	c.Lock()
-	hostPortUpstream, err := extractHostAndPortFromURL(url)
+	hostPortUpstream, err := extractHostFromURL(url)
 	if err != nil {
 		hostPortUpstream = "upstream"
 	}

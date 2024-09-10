@@ -291,7 +291,7 @@ func (w *GethWakuWrapper) MarkP2PMessageAsProcessed(hash common.Hash) {
 	w.waku.MarkP2PMessageAsProcessed(hash)
 }
 
-func (w *GethWakuWrapper) RequestStoreMessages(ctx context.Context, peerID []byte, r types.MessagesRequest, processEnvelopes bool) (types.StoreRequestCursor, int, error) {
+func (w *GethWakuWrapper) RequestStoreMessages(ctx context.Context, peerID []byte, r types.MessagesRequest, processEnvelopes bool) (*types.StoreRequestCursor, int, error) {
 	return nil, 0, errors.New("not implemented")
 }
 
@@ -332,8 +332,4 @@ func (w *GethWakuWrapper) ConfirmMessageDelivered(hashes []common.Hash) {
 }
 
 func (w *GethWakuWrapper) SetStorePeerID(peerID peer.ID) {
-}
-
-func (w *GethWakuWrapper) PeerID() peer.ID {
-	panic("not implemented")
 }

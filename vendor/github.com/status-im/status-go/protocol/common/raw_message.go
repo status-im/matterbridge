@@ -45,15 +45,6 @@ const (
 	ResendMethodSendCommunityMessage ResendMethod = 2
 )
 
-// MessagePriority determines the ordering for publishing  message
-type MessagePriority = int
-
-var (
-	LowPriority    MessagePriority = 0
-	NormalPriority MessagePriority = 1
-	HighPriority   MessagePriority = 2
-)
-
 // RawMessage represent a sent or received message, kept for being able
 // to re-send/propagate
 type RawMessage struct {
@@ -82,5 +73,4 @@ type RawMessage struct {
 	PubsubTopic           string
 	ResendType            ResendType
 	ResendMethod          ResendMethod
-	Priority              *MessagePriority
 }

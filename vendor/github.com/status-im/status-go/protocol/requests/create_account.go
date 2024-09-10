@@ -33,6 +33,10 @@ type APIConfig struct {
 }
 
 type CreateAccount struct {
+	// Deprecated: BackupDisabledDataDir is the directory where backup is disabled
+	// Use `RootDataDir` instead. Effective BackupDisabledDataDir value will default to RootDataDir + "./".
+	BackupDisabledDataDir string `json:"backupDisabledDataDir"`
+
 	// RootDataDir is an absolute path to the root directory where all data will be stored.
 	RootDataDir   string `json:"rootDataDir"`
 	KdfIterations int    `json:"kdfIterations"`
@@ -43,6 +47,7 @@ type CreateAccount struct {
 	ImagePath          string              `json:"imagePath"`
 	ImageCropRectangle *ImageCropRectangle `json:"imageCropRectangle"`
 	CustomizationColor string              `json:"customizationColor"`
+	Emoji              string              `json:"emoji"`
 
 	WakuV2Nameserver                             *string `json:"wakuV2Nameserver"`
 	WakuV2LightClient                            bool    `json:"wakuV2LightClient"`
@@ -92,15 +97,17 @@ type WalletSecretsConfig struct {
 	RaribleMainnetAPIKey string `json:"raribleMainnetApiKey"`
 	RaribleTestnetAPIKey string `json:"raribleTestnetApiKey"`
 
-	AlchemyEthereumMainnetToken   string `json:"alchemyEthereumMainnetToken"`
-	AlchemyEthereumGoerliToken    string `json:"alchemyEthereumGoerliToken"`
-	AlchemyEthereumSepoliaToken   string `json:"alchemyEthereumSepoliaToken"`
-	AlchemyArbitrumMainnetToken   string `json:"alchemyArbitrumMainnetToken"`
-	AlchemyArbitrumGoerliToken    string `json:"alchemyArbitrumGoerliToken"`
-	AlchemyArbitrumSepoliaToken   string `json:"alchemyArbitrumSepoliaToken"`
-	AlchemyOptimismMainnetToken   string `json:"alchemyOptimismMainnetToken"`
-	AlchemyOptimismGoerliToken    string `json:"alchemyOptimismGoerliToken"`
-	AlchemyOptimismSepoliaToken   string `json:"alchemyOptimismSepoliaToken"`
+	AlchemyEthereumMainnetToken string `json:"alchemyEthereumMainnetToken"`
+	AlchemyEthereumGoerliToken  string `json:"alchemyEthereumGoerliToken"`
+	AlchemyEthereumSepoliaToken string `json:"alchemyEthereumSepoliaToken"`
+	AlchemyArbitrumMainnetToken string `json:"alchemyArbitrumMainnetToken"`
+	AlchemyArbitrumGoerliToken  string `json:"alchemyArbitrumGoerliToken"`
+	AlchemyArbitrumSepoliaToken string `json:"alchemyArbitrumSepoliaToken"`
+	AlchemyOptimismMainnetToken string `json:"alchemyOptimismMainnetToken"`
+	AlchemyOptimismGoerliToken  string `json:"alchemyOptimismGoerliToken"`
+	AlchemyOptimismSepoliaToken string `json:"alchemyOptimismSepoliaToken"`
+
+	StatusProxyStageName          string `json:"statusProxyStageName"`
 	StatusProxyMarketUser         string `json:"statusProxyMarketUser"`
 	StatusProxyMarketPassword     string `json:"statusProxyMarketPassword"`
 	StatusProxyBlockchainUser     string `json:"statusProxyBlockchainUser"`
@@ -130,7 +137,13 @@ func (c *CreateAccount) Validate(validation *CreateAccountValidation) error {
 	}
 
 	if len(c.RootDataDir) == 0 {
-		return ErrCreateAccountInvalidRootDataDir
+		if c.BackupDisabledDataDir == "" {
+			return ErrCreateAccountInvalidRootDataDir
+		}
+		// NOTE: Fallback to old BackupDisabledDataDir field.
+		// Remove this when both desktop and mobile use the new `RootDataDir` field.
+		// Return error if `RootDataDir` is empty.
+		c.RootDataDir = c.BackupDisabledDataDir
 	}
 
 	return nil

@@ -21,18 +21,6 @@ github.com/Jeffail/gabs
 # github.com/Masterminds/squirrel v1.5.4
 ## explicit; go 1.14
 github.com/Masterminds/squirrel
-# github.com/Philipp15b/go-steam v1.0.1-0.20200727090957-6ae9b3c0a560
-## explicit; go 1.14
-github.com/Philipp15b/go-steam
-github.com/Philipp15b/go-steam/cryptoutil
-github.com/Philipp15b/go-steam/netutil
-github.com/Philipp15b/go-steam/protocol
-github.com/Philipp15b/go-steam/protocol/gamecoordinator
-github.com/Philipp15b/go-steam/protocol/protobuf
-github.com/Philipp15b/go-steam/protocol/steamlang
-github.com/Philipp15b/go-steam/rwu
-github.com/Philipp15b/go-steam/socialcache
-github.com/Philipp15b/go-steam/steamid
 # github.com/PuerkitoBio/goquery v1.8.0
 ## explicit; go 1.13
 github.com/PuerkitoBio/goquery
@@ -431,7 +419,6 @@ github.com/golang/mock/gomock
 # github.com/golang/protobuf v1.5.3
 ## explicit; go 1.9
 github.com/golang/protobuf/proto
-github.com/golang/protobuf/protoc-gen-go/descriptor
 github.com/golang/protobuf/ptypes
 github.com/golang/protobuf/ptypes/any
 github.com/golang/protobuf/ptypes/duration
@@ -1284,7 +1271,7 @@ github.com/status-im/mvds/transport
 ## explicit; go 1.18
 github.com/status-im/rendezvous
 github.com/status-im/rendezvous/protocol
-# github.com/status-im/status-go v0.182.43
+# github.com/status-im/status-go v0.182.39-0.20240906155721-74ae4115480a
 ## explicit; go 1.21
 github.com/status-im/status-go/abi-spec
 github.com/status-im/status-go/account
@@ -1296,7 +1283,6 @@ github.com/status-im/status-go/appdatabase
 github.com/status-im/status-go/appdatabase/migrations
 github.com/status-im/status-go/appdatabase/migrationsprevnodecfg
 github.com/status-im/status-go/appmetrics
-github.com/status-im/status-go/buildinfo
 github.com/status-im/status-go/centralizedmetrics
 github.com/status-im/status-go/centralizedmetrics/common
 github.com/status-im/status-go/centralizedmetrics/providers
@@ -1574,14 +1560,12 @@ github.com/waku-org/go-discover/discover/v5wire
 github.com/waku-org/go-libp2p-rendezvous
 github.com/waku-org/go-libp2p-rendezvous/db
 github.com/waku-org/go-libp2p-rendezvous/pb
-# github.com/waku-org/go-waku v0.8.1-0.20240807022408-c2e6320953b1
+# github.com/waku-org/go-waku v0.8.1-0.20240904134226-49eb64a27dc4
 ## explicit; go 1.21
 github.com/waku-org/go-waku/logging
 github.com/waku-org/go-waku/tests
 github.com/waku-org/go-waku/waku/persistence
-github.com/waku-org/go-waku/waku/v2/api/filter
-github.com/waku-org/go-waku/waku/v2/api/missing
-github.com/waku-org/go-waku/waku/v2/api/publish
+github.com/waku-org/go-waku/waku/v2/api
 github.com/waku-org/go-waku/waku/v2/discv5
 github.com/waku-org/go-waku/waku/v2/dnsdisc
 github.com/waku-org/go-waku/waku/v2/hash

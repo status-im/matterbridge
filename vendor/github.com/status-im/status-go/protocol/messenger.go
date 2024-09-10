@@ -17,7 +17,6 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	"github.com/golang/protobuf/proto"
 	"github.com/google/uuid"
-	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
@@ -90,7 +89,7 @@ var (
 	ErrChatNotFoundError = errors.New("Chat not found")
 )
 
-var communityAdvertiseIntervalSecond int64 = 60 * 60
+const communityAdvertiseIntervalSecond int64 = 24 * 60 * 60
 
 // messageCacheIntervalMs is how long we should keep processed messages in the cache, in ms
 var messageCacheIntervalMs uint64 = 1000 * 60 * 60 * 48
@@ -360,7 +359,6 @@ func NewMessenger(
 
 	// Initialize transport layer.
 	var transp *transport.Transport
-	var peerId peer.ID
 
 	if waku, err := node.GetWaku(nil); err == nil && waku != nil {
 		transp, err = transport.NewTransport(
@@ -381,7 +379,6 @@ func NewMessenger(
 		if err != nil || wakuV2 == nil {
 			return nil, errors.Wrap(err, "failed to find Whisper and Waku V1/V2 services")
 		}
-		peerId = wakuV2.PeerID()
 		transp, err = transport.NewTransport(
 			wakuV2,
 			identity,
@@ -555,7 +552,7 @@ func NewMessenger(
 
 	var telemetryClient *telemetry.Client
 	if c.telemetryServerURL != "" {
-		telemetryClient = telemetry.NewClient(logger, c.telemetryServerURL, c.account.KeyUID, nodeName, version, telemetry.WithPeerID(peerId.String()))
+		telemetryClient = telemetry.NewClient(logger, c.telemetryServerURL, c.account.KeyUID, nodeName, version)
 		if c.wakuService != nil {
 			c.wakuService.SetStatusTelemetryClient(telemetryClient)
 		}
@@ -1079,7 +1076,6 @@ func (m *Messenger) publishContactCode() error {
 		LocalChatID: contactCodeTopic,
 		MessageType: protobuf.ApplicationMetadataMessage_CONTACT_CODE_ADVERTISEMENT,
 		Payload:     payload,
-		Priority:    &common.LowPriority,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1186,7 +1182,6 @@ func (m *Messenger) handleStandaloneChatIdentity(chat *Chat) error {
 		LocalChatID: chat.ID,
 		MessageType: protobuf.ApplicationMetadataMessage_CHAT_IDENTITY,
 		Payload:     payload,
-		Priority:    &common.LowPriority,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1593,8 +1588,8 @@ func (m *Messenger) watchChatsAndCommunitiesToUnmute() {
 			case <-time.After(1 * time.Minute):
 				response := &MessengerResponse{}
 				m.allChats.Range(func(chatID string, c *Chat) bool {
-					chatMuteTill := c.MuteTill.Truncate(time.Second)
-					currTime := time.Now().Truncate(time.Second)
+					chatMuteTill, _ := time.Parse(time.RFC3339, c.MuteTill.Format(time.RFC3339))
+					currTime, _ := time.Parse(time.RFC3339, time.Now().Format(time.RFC3339))
 
 					if currTime.After(chatMuteTill) && !chatMuteTill.Equal(time.Time{}) && c.Muted {
 						err := m.persistence.UnmuteChat(c.ID)
@@ -3513,7 +3508,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 			statusMessages := handleMessagesResponse.StatusMessages
 
 			if m.telemetryClient != nil {
-				m.telemetryClient.PushReceivedMessages(telemetry.ReceivedMessages{
+				m.telemetryClient.PushReceivedMessages(m.ctx, telemetry.ReceivedMessages{
 					Filter:     filter,
 					SSHMessage: shhMessage,
 					Messages:   statusMessages,
