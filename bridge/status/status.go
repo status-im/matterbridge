@@ -405,6 +405,7 @@ func (b *Bstatus) Connect() error {
 		gethbridge.NewNodeBridge(b.statusNode.GethNode(), nil, b.statusNode.WakuV2Service()),
 		installationID,
 		peerStore,
+		"v0.182.39-0",
 		options...,
 	)
 	if err != nil {
@@ -413,10 +414,6 @@ func (b *Bstatus) Connect() error {
 
 	messenger.SetP2PServer(b.statusNode.GethNode().Server())
 	messenger.EnableBackedupMessagesProcessing()
-
-	if err := messenger.Init(); err != nil {
-		return errors.Wrap(err, "Failed to init Messenger")
-	}
 
 	if _, err := messenger.Start(); err != nil {
 		return errors.Wrap(err, "Failed to start Messenger")
