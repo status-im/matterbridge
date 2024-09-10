@@ -72,6 +72,13 @@ type CommunityRecordBundle struct {
 	installationID *string
 }
 
+type EncryptionKeysRequestRecord struct {
+	communityID    []byte
+	channelID      string
+	requestedAt    int64
+	requestedCount uint
+}
+
 const OR = " OR "
 const communitiesBaseQuery = `
 	SELECT
@@ -339,7 +346,7 @@ func (p *Persistence) JoinedAndPendingCommunitiesWithRequests(memberIdentity *ec
 }
 
 func (p *Persistence) DeletedCommunities(memberIdentity *ecdsa.PublicKey) (comms []*Community, err error) {
-	query := communitiesBaseQuery + ` WHERE NOT c.Joined AND (r.community_id IS NULL or r.state != ?)`
+	query := communitiesBaseQuery + ` WHERE NOT c.Joined AND r.state != ?`
 
 	rows, err := p.db.Query(query, common.PubkeyToHex(memberIdentity), RequestToJoinStatePending)
 	if err != nil {
@@ -398,7 +405,7 @@ func (p *Persistence) SaveRequestToJoin(request *RequestToJoin) (err error) {
 		return ErrOldRequestToJoin
 	}
 
-	_, err = tx.Exec(`INSERT OR REPLACE INTO communities_requests_to_join(id,public_key,clock,ens_name,customization_color,chat_id,community_id,state) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, request.ID, request.PublicKey, request.Clock, request.ENSName, request.CustomizationColor, request.ChatID, request.CommunityID, request.State)
+	_, err = tx.Exec(`INSERT OR REPLACE INTO communities_requests_to_join(id,public_key,clock,ens_name,customization_color,chat_id,community_id,state,share_future_addresses) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, request.ID, request.PublicKey, request.Clock, request.ENSName, request.CustomizationColor, request.ChatID, request.CommunityID, request.State, request.ShareFutureAddresses)
 	return err
 }
 
@@ -674,7 +681,7 @@ func (p *Persistence) SaveRequestToLeave(request *RequestToLeave) error {
 
 func (p *Persistence) CanceledRequestsToJoinForUser(pk string) ([]*RequestToJoin, error) {
 	var requests []*RequestToJoin
-	rows, err := p.db.Query(`SELECT id,public_key,clock,ens_name,chat_id,community_id,state FROM communities_requests_to_join WHERE state = ? AND public_key = ?`, RequestToJoinStateCanceled, pk)
+	rows, err := p.db.Query(`SELECT id,public_key,clock,ens_name,chat_id,community_id,state, share_future_addresses FROM communities_requests_to_join WHERE state = ? AND public_key = ?`, RequestToJoinStateCanceled, pk)
 	if err != nil {
 		return nil, err
 	}
@@ -682,7 +689,7 @@ func (p *Persistence) CanceledRequestsToJoinForUser(pk string) ([]*RequestToJoin
 
 	for rows.Next() {
 		request := &RequestToJoin{}
-		err := rows.Scan(&request.ID, &request.PublicKey, &request.Clock, &request.ENSName, &request.ChatID, &request.CommunityID, &request.State)
+		err := rows.Scan(&request.ID, &request.PublicKey, &request.Clock, &request.ENSName, &request.ChatID, &request.CommunityID, &request.State, &request.ShareFutureAddresses)
 		if err != nil {
 			return nil, err
 		}
@@ -691,29 +698,9 @@ func (p *Persistence) CanceledRequestsToJoinForUser(pk string) ([]*RequestToJoin
 	return requests, nil
 }
 
-func (p *Persistence) CanceledRequestToJoinForUserForCommunityID(pk string, communityID []byte) (*RequestToJoin, error) {
-	row := p.db.QueryRow(`SELECT id,public_key,clock,ens_name,chat_id,community_id,state
-	FROM
-	communities_requests_to_join
-	WHERE
-	state = ? AND public_key = ? AND community_id = ?`,
-		RequestToJoinStateCanceled, pk, communityID)
-
-	request := &RequestToJoin{}
-
-	err := row.Scan(&request.ID, &request.PublicKey, &request.Clock, &request.ENSName, &request.ChatID, &request.CommunityID, &request.State)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	} else if err != nil {
-		return nil, err
-	}
-
-	return request, nil
-}
-
 func (p *Persistence) RequestsToJoinForUserByState(pk string, state RequestToJoinState) ([]*RequestToJoin, error) {
 	var requests []*RequestToJoin
-	rows, err := p.db.Query(`SELECT id,public_key,clock,ens_name,chat_id,community_id,state FROM communities_requests_to_join WHERE state = ? AND public_key = ?`, state, pk)
+	rows, err := p.db.Query(`SELECT id,public_key,clock,ens_name,chat_id,community_id,state,share_future_addresses FROM communities_requests_to_join WHERE state = ? AND public_key = ?`, state, pk)
 	if err != nil {
 		return nil, err
 	}
@@ -721,7 +708,7 @@ func (p *Persistence) RequestsToJoinForUserByState(pk string, state RequestToJoi
 
 	for rows.Next() {
 		request := &RequestToJoin{}
-		err := rows.Scan(&request.ID, &request.PublicKey, &request.Clock, &request.ENSName, &request.ChatID, &request.CommunityID, &request.State)
+		err := rows.Scan(&request.ID, &request.PublicKey, &request.Clock, &request.ENSName, &request.ChatID, &request.CommunityID, &request.State, &request.ShareFutureAddresses)
 		if err != nil {
 			return nil, err
 		}
@@ -741,7 +728,7 @@ func (p *Persistence) HasPendingRequestsToJoinForUserAndCommunity(userPk string,
 
 func (p *Persistence) RequestsToJoinForCommunityWithState(id []byte, state RequestToJoinState) ([]*RequestToJoin, error) {
 	var requests []*RequestToJoin
-	rows, err := p.db.Query(`SELECT id,public_key,clock,ens_name,customization_color,chat_id,community_id,state FROM communities_requests_to_join WHERE state = ? AND community_id = ?`, state, id)
+	rows, err := p.db.Query(`SELECT id,public_key,clock,ens_name,customization_color,chat_id,community_id,state, share_future_addresses FROM communities_requests_to_join WHERE state = ? AND community_id = ?`, state, id)
 	if err != nil {
 		return nil, err
 	}
@@ -749,7 +736,7 @@ func (p *Persistence) RequestsToJoinForCommunityWithState(id []byte, state Reque
 
 	for rows.Next() {
 		request := &RequestToJoin{}
-		err := rows.Scan(&request.ID, &request.PublicKey, &request.Clock, &request.ENSName, &request.CustomizationColor, &request.ChatID, &request.CommunityID, &request.State)
+		err := rows.Scan(&request.ID, &request.PublicKey, &request.Clock, &request.ENSName, &request.CustomizationColor, &request.ChatID, &request.CommunityID, &request.State, &request.ShareFutureAddresses)
 		if err != nil {
 			return nil, err
 		}
@@ -760,7 +747,7 @@ func (p *Persistence) RequestsToJoinForCommunityWithState(id []byte, state Reque
 
 func (p *Persistence) PendingRequestsToJoin() ([]*RequestToJoin, error) {
 	var requests []*RequestToJoin
-	rows, err := p.db.Query(`SELECT id,public_key,clock,ens_name,customization_color,chat_id,community_id,state FROM communities_requests_to_join WHERE state = ?`, RequestToJoinStatePending)
+	rows, err := p.db.Query(`SELECT id,public_key,clock,ens_name,customization_color,chat_id,community_id,state, share_future_addresses FROM communities_requests_to_join WHERE state = ?`, RequestToJoinStatePending)
 	if err != nil {
 		return nil, err
 	}
@@ -768,7 +755,7 @@ func (p *Persistence) PendingRequestsToJoin() ([]*RequestToJoin, error) {
 
 	for rows.Next() {
 		request := &RequestToJoin{}
-		err := rows.Scan(&request.ID, &request.PublicKey, &request.Clock, &request.ENSName, &request.CustomizationColor, &request.ChatID, &request.CommunityID, &request.State)
+		err := rows.Scan(&request.ID, &request.PublicKey, &request.Clock, &request.ENSName, &request.CustomizationColor, &request.ChatID, &request.CommunityID, &request.State, &request.ShareFutureAddresses)
 		if err != nil {
 			return nil, err
 		}
@@ -834,7 +821,7 @@ func (p *Persistence) MuteCommunityTill(communityID []byte, mutedTill time.Time)
 
 func (p *Persistence) GetRequestToJoin(id []byte) (*RequestToJoin, error) {
 	request := &RequestToJoin{}
-	err := p.db.QueryRow(`SELECT id,public_key,clock,ens_name,customization_color,chat_id,community_id,state FROM communities_requests_to_join WHERE id = ?`, id).Scan(&request.ID, &request.PublicKey, &request.Clock, &request.ENSName, &request.CustomizationColor, &request.ChatID, &request.CommunityID, &request.State)
+	err := p.db.QueryRow(`SELECT id,public_key,clock,ens_name,customization_color,chat_id,community_id,state, share_future_addresses FROM communities_requests_to_join WHERE id = ?`, id).Scan(&request.ID, &request.PublicKey, &request.Clock, &request.ENSName, &request.CustomizationColor, &request.ChatID, &request.CommunityID, &request.State, &request.ShareFutureAddresses)
 	if err != nil {
 		return nil, err
 	}
@@ -851,9 +838,19 @@ func (p *Persistence) GetNumberOfPendingRequestsToJoin(communityID types.HexByte
 	return count, nil
 }
 
+func (p *Persistence) GetRequestToJoinClockByPkAndCommunityID(pk string, communityID types.HexBytes) (uint64, error) {
+	var clock uint64
+
+	err := p.db.QueryRow(`
+		SELECT clock
+		FROM communities_requests_to_join
+		WHERE public_key = ? AND community_id = ?`, pk, communityID).Scan(&clock)
+	return clock, err
+}
+
 func (p *Persistence) GetRequestToJoinByPkAndCommunityID(pk string, communityID []byte) (*RequestToJoin, error) {
 	request := &RequestToJoin{}
-	err := p.db.QueryRow(`SELECT id,public_key,clock,ens_name,customization_color,chat_id,community_id,state FROM communities_requests_to_join WHERE public_key = ? AND community_id = ?`, pk, communityID).Scan(&request.ID, &request.PublicKey, &request.Clock, &request.ENSName, &request.CustomizationColor, &request.ChatID, &request.CommunityID, &request.State)
+	err := p.db.QueryRow(`SELECT id,public_key,clock,ens_name,customization_color,chat_id,community_id,state, share_future_addresses FROM communities_requests_to_join WHERE public_key = ? AND community_id = ?`, pk, communityID).Scan(&request.ID, &request.PublicKey, &request.Clock, &request.ENSName, &request.CustomizationColor, &request.ChatID, &request.CommunityID, &request.State, &request.ShareFutureAddresses)
 	if err != nil {
 		return nil, err
 	}
@@ -873,7 +870,7 @@ func (p *Persistence) GetRequestToJoinIDByPkAndCommunityID(pk string, communityI
 
 func (p *Persistence) GetRequestToJoinByPk(pk string, communityID []byte, state RequestToJoinState) (*RequestToJoin, error) {
 	request := &RequestToJoin{}
-	err := p.db.QueryRow(`SELECT id,public_key,clock,ens_name,customization_color,chat_id,community_id,state FROM communities_requests_to_join WHERE public_key = ? AND community_id = ? AND state = ?`, pk, communityID, state).Scan(&request.ID, &request.PublicKey, &request.Clock, &request.ENSName, &request.CustomizationColor, &request.ChatID, &request.CommunityID, &request.State)
+	err := p.db.QueryRow(`SELECT id,public_key,clock,ens_name,customization_color,chat_id,community_id,state, share_future_addresses FROM communities_requests_to_join WHERE public_key = ? AND community_id = ? AND state = ?`, pk, communityID, state).Scan(&request.ID, &request.PublicKey, &request.Clock, &request.ENSName, &request.CustomizationColor, &request.ChatID, &request.CommunityID, &request.State, &request.ShareFutureAddresses)
 	if err != nil {
 		return nil, err
 	}
@@ -1231,7 +1228,7 @@ func (p *Persistence) GetCommunityChatIDs(communityID types.HexBytes) ([]string,
 func (p *Persistence) GetAllCommunityTokens() ([]*token.CommunityToken, error) {
 	rows, err := p.db.Query(`SELECT community_id, address, type, name, symbol, description, supply_str,
 	infinite_supply, transferable, remote_self_destruct, chain_id, deploy_state, image_base64, decimals,
-	deployer, privileges_level, tx_hash FROM community_tokens`)
+	deployer, privileges_level, tx_hash, version FROM community_tokens`)
 	if err != nil {
 		return nil, err
 	}
@@ -1243,7 +1240,7 @@ func (p *Persistence) GetAllCommunityTokens() ([]*token.CommunityToken, error) {
 func (p *Persistence) GetCommunityTokens(communityID string) ([]*token.CommunityToken, error) {
 	rows, err := p.db.Query(`SELECT community_id, address, type, name, symbol, description, supply_str,
 	infinite_supply, transferable, remote_self_destruct, chain_id, deploy_state, image_base64, decimals,
-	deployer, privileges_level, tx_hash
+	deployer, privileges_level, tx_hash, version
 	FROM community_tokens WHERE community_id = ?`, communityID)
 	if err != nil {
 		return nil, err
@@ -1257,11 +1254,11 @@ func (p *Persistence) GetCommunityToken(communityID string, chainID int, address
 	token := token.CommunityToken{}
 	var supplyStr string
 	err := p.db.QueryRow(`SELECT community_id, address, type, name, symbol, description, supply_str, infinite_supply,
-		transferable, remote_self_destruct, chain_id, deploy_state, image_base64, decimals, deployer, privileges_level, tx_hash
+		transferable, remote_self_destruct, chain_id, deploy_state, image_base64, decimals, deployer, privileges_level, tx_hash, version
 		FROM community_tokens WHERE community_id = ? AND chain_id = ? AND address = ?`, communityID, chainID, address).Scan(&token.CommunityID, &token.Address, &token.TokenType, &token.Name,
 		&token.Symbol, &token.Description, &supplyStr, &token.InfiniteSupply, &token.Transferable,
 		&token.RemoteSelfDestruct, &token.ChainID, &token.DeployState, &token.Base64Image, &token.Decimals,
-		&token.Deployer, &token.PrivilegesLevel, &token.TransactionHash)
+		&token.Deployer, &token.PrivilegesLevel, &token.TransactionHash, &token.Version)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	} else if err != nil {
@@ -1280,11 +1277,11 @@ func (p *Persistence) GetCommunityTokenByChainAndAddress(chainID int, address st
 	token := token.CommunityToken{}
 	var supplyStr string
 	err := p.db.QueryRow(`SELECT community_id, address, type, name, symbol, description, supply_str, infinite_supply,
-		transferable, remote_self_destruct, chain_id, deploy_state, image_base64, decimals, deployer, privileges_level, tx_hash
+		transferable, remote_self_destruct, chain_id, deploy_state, image_base64, decimals, deployer, privileges_level, tx_hash, version
 		FROM community_tokens WHERE chain_id = ? AND address = ?`, chainID, address).Scan(&token.CommunityID, &token.Address, &token.TokenType, &token.Name,
 		&token.Symbol, &token.Description, &supplyStr, &token.InfiniteSupply, &token.Transferable,
 		&token.RemoteSelfDestruct, &token.ChainID, &token.DeployState, &token.Base64Image, &token.Decimals,
-		&token.Deployer, &token.PrivilegesLevel, &token.TransactionHash)
+		&token.Deployer, &token.PrivilegesLevel, &token.TransactionHash, &token.Version)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	} else if err != nil {
@@ -1308,7 +1305,7 @@ func (p *Persistence) getCommunityTokensInternal(rows *sql.Rows) ([]*token.Commu
 		err := rows.Scan(&token.CommunityID, &token.Address, &token.TokenType, &token.Name,
 			&token.Symbol, &token.Description, &supplyStr, &token.InfiniteSupply, &token.Transferable,
 			&token.RemoteSelfDestruct, &token.ChainID, &token.DeployState, &token.Base64Image, &token.Decimals,
-			&token.Deployer, &token.PrivilegesLevel, &token.TransactionHash)
+			&token.Deployer, &token.PrivilegesLevel, &token.TransactionHash, &token.Version)
 		if err != nil {
 			return nil, err
 		}
@@ -1335,10 +1332,10 @@ func (p *Persistence) HasCommunityToken(communityID string, address string, chai
 
 func (p *Persistence) AddCommunityToken(token *token.CommunityToken) error {
 	_, err := p.db.Exec(`INSERT INTO community_tokens (community_id, address, type, name, symbol, description, supply_str,
-		infinite_supply, transferable, remote_self_destruct, chain_id, deploy_state, image_base64, decimals, deployer, privileges_level, tx_hash)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, token.CommunityID, token.Address, token.TokenType, token.Name,
+		infinite_supply, transferable, remote_self_destruct, chain_id, deploy_state, image_base64, decimals, deployer, privileges_level, tx_hash, version)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, token.CommunityID, token.Address, token.TokenType, token.Name,
 		token.Symbol, token.Description, token.Supply.String(), token.InfiniteSupply, token.Transferable, token.RemoteSelfDestruct,
-		token.ChainID, token.DeployState, token.Base64Image, token.Decimals, token.Deployer, token.PrivilegesLevel, token.TransactionHash)
+		token.ChainID, token.DeployState, token.Base64Image, token.Decimals, token.Deployer, token.PrivilegesLevel, token.TransactionHash, token.Version)
 	return err
 }
 
@@ -1427,7 +1424,7 @@ func decodeEventsData(eventsBytes []byte, eventsDescriptionBytes []byte) (*Event
 func (p *Persistence) GetCommunityRequestsToJoinWithRevealedAddresses(communityID []byte) ([]*RequestToJoin, error) {
 	requests := []*RequestToJoin{}
 	rows, err := p.db.Query(`
-	SELECT r.id, r.public_key, r.clock, r.ens_name, r.customization_color, r.chat_id, r.state, r.community_id,
+	SELECT r.id, r.public_key, r.clock, r.ens_name, r.customization_color, r.chat_id, r.state, r.community_id, r.share_future_addresses,
 		a.address, a.chain_ids, a.is_airdrop_address, a.signature
 	FROM communities_requests_to_join r
 	LEFT JOIN communities_requests_to_join_revealed_addresses a ON r.id = a.request_id
@@ -1447,7 +1444,7 @@ func (p *Persistence) GetCommunityRequestsToJoinWithRevealedAddresses(communityI
 		var isAirdropAddress sql.NullBool
 		var signature sql.RawBytes
 
-		err = rows.Scan(&request.ID, &request.PublicKey, &request.Clock, &request.ENSName, &request.CustomizationColor, &request.ChatID, &request.State, &request.CommunityID,
+		err = rows.Scan(&request.ID, &request.PublicKey, &request.Clock, &request.ENSName, &request.CustomizationColor, &request.ChatID, &request.State, &request.CommunityID, &request.ShareFutureAddresses,
 			&address, &chainIDsStr, &isAirdropAddress, &signature)
 		if err != nil {
 			return nil, err
@@ -1655,8 +1652,8 @@ func (p *Persistence) SaveRequestsToJoin(requests []*RequestToJoin) (err error) 
 		}
 	}()
 
-	stmt, err := tx.Prepare(`INSERT OR REPLACE INTO communities_requests_to_join(id,public_key,clock,ens_name,customization_color,chat_id,community_id,state)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+	stmt, err := tx.Prepare(`INSERT OR REPLACE INTO communities_requests_to_join(id,public_key,clock,ens_name,customization_color,chat_id,community_id,state, share_future_addresses)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -1674,7 +1671,7 @@ func (p *Persistence) SaveRequestsToJoin(requests []*RequestToJoin) (err error) 
 			return ErrOldRequestToJoin
 		}
 
-		_, err = stmt.Exec(request.ID, request.PublicKey, request.Clock, request.ENSName, request.CustomizationColor, request.ChatID, request.CommunityID, request.State)
+		_, err = stmt.Exec(request.ID, request.PublicKey, request.Clock, request.ENSName, request.CustomizationColor, request.ChatID, request.CommunityID, request.State, request.ShareFutureAddresses)
 		if err != nil {
 			return err
 		}
@@ -1753,7 +1750,7 @@ func (p *Persistence) SetCuratedCommunities(communities *CuratedCommunities) err
 
 func (p *Persistence) AllNonApprovedCommunitiesRequestsToJoin() ([]*RequestToJoin, error) {
 	nonApprovedRequestsToJoin := []*RequestToJoin{}
-	rows, err := p.db.Query(`SELECT id,public_key,clock,ens_name,customization_color,chat_id,community_id,state FROM communities_requests_to_join WHERE state != ?`, RequestToJoinStateAccepted)
+	rows, err := p.db.Query(`SELECT id,public_key,clock,ens_name,customization_color,chat_id,community_id,state, share_future_addresses FROM communities_requests_to_join WHERE state != ?`, RequestToJoinStateAccepted)
 
 	if err == sql.ErrNoRows {
 		return nonApprovedRequestsToJoin, nil
@@ -1765,22 +1762,13 @@ func (p *Persistence) AllNonApprovedCommunitiesRequestsToJoin() ([]*RequestToJoi
 
 	for rows.Next() {
 		request := &RequestToJoin{}
-		err := rows.Scan(&request.ID, &request.PublicKey, &request.Clock, &request.ENSName, &request.CustomizationColor, &request.ChatID, &request.CommunityID, &request.State)
+		err := rows.Scan(&request.ID, &request.PublicKey, &request.Clock, &request.ENSName, &request.CustomizationColor, &request.ChatID, &request.CommunityID, &request.State, &request.ShareFutureAddresses)
 		if err != nil {
 			return nil, err
 		}
 		nonApprovedRequestsToJoin = append(nonApprovedRequestsToJoin, request)
 	}
 	return nonApprovedRequestsToJoin, nil
-}
-
-func (p *Persistence) RemoveAllCommunityRequestsToJoinWithRevealedAddressesExceptPublicKey(pk string, communityID []byte) error {
-	_, err := p.db.Exec(`
-	DELETE FROM communities_requests_to_join_revealed_addresses
-		WHERE request_id IN (SELECT id FROM communities_requests_to_join WHERE community_id = ? AND public_key != ?);
-	DELETE FROM communities_requests_to_join
-		WHERE community_id = ? AND public_key != ?;`, communityID, pk, communityID, pk)
-	return err
 }
 
 func (p *Persistence) SaveCommunityShard(communityID types.HexBytes, shard *shard.Shard, clock uint64) error {
@@ -2110,4 +2098,102 @@ func (p *Persistence) GetCommunityRequestsToJoinRevealedAddresses(communityID []
 	}
 
 	return accounts, nil
+}
+
+func (p *Persistence) GetEncryptionKeyRequests(communityID []byte, channelIDs map[string]struct{}) (map[string]*EncryptionKeysRequestRecord, error) {
+	result := map[string]*EncryptionKeysRequestRecord{}
+
+	query := "SELECT channel_id, requested_at, requested_count FROM community_encryption_keys_requests WHERE community_id = ? AND channel_id IN (?" + strings.Repeat(",?", len(channelIDs)-1) + ")"
+
+	args := make([]interface{}, 0, len(channelIDs)+1)
+	args = append(args, communityID)
+	for channelID := range channelIDs {
+		args = append(args, channelID)
+	}
+
+	rows, err := p.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var channelID string
+		var requestedAt int64
+		var requestedCount uint
+		err := rows.Scan(&channelID, &requestedAt, &requestedCount)
+		if err != nil {
+			return nil, err
+		}
+		result[channelID] = &EncryptionKeysRequestRecord{
+			communityID:    communityID,
+			channelID:      channelID,
+			requestedAt:    requestedAt,
+			requestedCount: requestedCount,
+		}
+	}
+
+	err = rows.Err()
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+func (p *Persistence) UpdateAndPruneEncryptionKeyRequests(communityID types.HexBytes, channelIDs []string, requestedAt int64) error {
+	tx, err := p.db.Begin()
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if err == nil {
+			err = tx.Commit()
+			return
+		}
+		// don't shadow original error
+		_ = tx.Rollback()
+	}()
+
+	if len(channelIDs) == 0 {
+		deleteQuery := "DELETE FROM community_encryption_keys_requests WHERE community_id = ?"
+		_, err = tx.Exec(deleteQuery, communityID)
+		return err
+	}
+
+	// Delete entries that do not match the channelIDs list
+	deleteQuery := "DELETE FROM community_encryption_keys_requests WHERE community_id = ? AND channel_id NOT IN (?" + strings.Repeat(",?", len(channelIDs)-1) + ")"
+	args := make([]interface{}, 0, len(channelIDs)+1)
+	args = append(args, communityID)
+	for _, channelID := range channelIDs {
+		args = append(args, channelID)
+	}
+	_, err = tx.Exec(deleteQuery, args...)
+	if err != nil {
+		return err
+	}
+
+	stmt, err := tx.Prepare(`
+        INSERT INTO community_encryption_keys_requests (community_id, channel_id, requested_at, requested_count)
+        VALUES (?, ?, ?, 1)
+        ON CONFLICT(community_id, channel_id)
+        DO UPDATE SET
+            requested_at = excluded.requested_at,
+            requested_count = community_encryption_keys_requests.requested_count + 1
+        WHERE excluded.requested_at > community_encryption_keys_requests.requested_at
+    `)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, channelID := range channelIDs {
+		_, err := stmt.Exec(communityID, channelID, requestedAt)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

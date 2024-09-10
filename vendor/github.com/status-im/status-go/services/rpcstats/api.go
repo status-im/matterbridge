@@ -2,6 +2,7 @@ package rpcstats
 
 import (
 	"context"
+	"sync"
 )
 
 // PublicAPI represents a set of APIs from the namespace.
@@ -24,11 +25,29 @@ type RPCStats struct {
 	CounterPerMethod map[string]uint `json:"methods"`
 }
 
-// GetStats retrun RPC usage stats
+// GetStats returns RPC usage stats
 func (api *PublicAPI) GetStats(context context.Context) (RPCStats, error) {
-	total, perMethod := getStats()
+	total, perMethod, perMethodPerTag := getStats()
+
+	counterPerMethod := make(map[string]uint)
+	perMethod.Range(func(key, value interface{}) bool {
+		counterPerMethod[key.(string)] = value.(uint)
+		return true
+	})
+	perMethodPerTag.Range(func(key, value interface{}) bool {
+		tag := key.(string)
+		methods := value.(*sync.Map)
+		methods.Range(func(key, value interface{}) bool {
+			method := key.(string)
+			count := value.(uint)
+			counterPerMethod[method+"_"+tag] = count
+			return true
+		})
+		return true
+	})
+
 	return RPCStats{
 		Total:            total,
-		CounterPerMethod: perMethod,
+		CounterPerMethod: counterPerMethod,
 	}, nil
 }

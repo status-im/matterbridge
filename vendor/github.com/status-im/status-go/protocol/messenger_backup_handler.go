@@ -7,12 +7,12 @@ import (
 
 	"github.com/golang/protobuf/proto"
 
+	utils "github.com/status-im/status-go/common"
 	"github.com/status-im/status-go/images"
 	"github.com/status-im/status-go/multiaccounts/errors"
 	"github.com/status-im/status-go/multiaccounts/settings"
 	"github.com/status-im/status-go/protocol/common"
 	"github.com/status-im/status-go/protocol/communities"
-	"github.com/status-im/status-go/protocol/identity"
 	"github.com/status-im/status-go/protocol/protobuf"
 	v1protocol "github.com/status-im/status-go/protocol/v1"
 	"github.com/status-im/status-go/protocol/wakusync"
@@ -113,16 +113,23 @@ func (m *Messenger) handleBackedUpProfile(message *protobuf.BackedUpProfile, bac
 		Profile: &wakusync.BackedUpProfile{},
 	}
 
-	err := m.SaveSyncDisplayName(message.DisplayName, message.DisplayNameClock)
-	if err != nil && err != errors.ErrNewClockOlderThanCurrent {
-		return err
-	}
-
-	response.SetDisplayName(message.DisplayName)
-
-	// if we already have a newer clock, then we don't need to update the display name
-	if err == errors.ErrNewClockOlderThanCurrent {
+	err := utils.ValidateDisplayName(&message.DisplayName)
+	if err != nil {
+		// Print a warning and set the display name to the account name, but don't stop the recovery
+		m.logger.Warn("invalid display name found", zap.Error(err))
 		response.SetDisplayName(m.account.Name)
+	} else {
+		err = m.SaveSyncDisplayName(message.DisplayName, message.DisplayNameClock)
+		if err != nil && err != errors.ErrNewClockOlderThanCurrent {
+			return err
+		}
+
+		response.SetDisplayName(message.DisplayName)
+
+		// if we already have a newer clock, then we don't need to update the display name
+		if err == errors.ErrNewClockOlderThanCurrent {
+			response.SetDisplayName(m.account.Name)
+		}
 	}
 
 	syncWithBackedUpImages := false
@@ -172,13 +179,6 @@ func (m *Messenger) handleBackedUpProfile(message *protobuf.BackedUpProfile, bac
 			}
 			response.SetImages(idImages)
 		}
-	}
-
-	err = m.handleSyncSocialLinks(message.SocialLinks, func(links identity.SocialLinks) {
-		response.SetSocialLinks(links)
-	})
-	if err != nil {
-		return err
 	}
 
 	profileShowcasePreferences, err := m.saveProfileShowcasePreferencesProto(message.ProfileShowcasePreferences, false)
@@ -310,15 +310,27 @@ func (m *Messenger) handleWatchOnlyAccount(message *protobuf.SyncAccount) error 
 	return nil
 }
 
+func syncInstallationCommunitiesSet(communities []*protobuf.SyncInstallationCommunity) map[string]*protobuf.SyncInstallationCommunity {
+	ret := map[string]*protobuf.SyncInstallationCommunity{}
+	for _, c := range communities {
+		id := string(c.GetId())
+		prevC, ok := ret[id]
+		if !ok || prevC.Clock < c.Clock {
+			ret[id] = c
+		}
+	}
+	return ret
+}
+
 func (m *Messenger) handleSyncedCommunities(state *ReceivedMessageState, message *protobuf.Backup) []error {
 	var errors []error
-	for _, syncCommunity := range message.Communities {
-		err := m.handleSyncInstallationCommunity(state, syncCommunity, nil)
+	for _, syncCommunity := range syncInstallationCommunitiesSet(message.Communities) {
+		err := m.handleSyncInstallationCommunity(state, syncCommunity)
 		if err != nil {
 			errors = append(errors, err)
 		}
 
-		err = m.requestCommunityKeys(state, syncCommunity)
+		err = m.requestCommunityKeysAndSharedAddresses(state, syncCommunity)
 		if err != nil {
 			errors = append(errors, err)
 		}
@@ -327,7 +339,7 @@ func (m *Messenger) handleSyncedCommunities(state *ReceivedMessageState, message
 	return errors
 }
 
-func (m *Messenger) requestCommunityKeys(state *ReceivedMessageState, syncCommunity *protobuf.SyncInstallationCommunity) error {
+func (m *Messenger) requestCommunityKeysAndSharedAddresses(state *ReceivedMessageState, syncCommunity *protobuf.SyncInstallationCommunity) error {
 	if !syncCommunity.Joined {
 		return nil
 	}
@@ -341,6 +353,32 @@ func (m *Messenger) requestCommunityKeys(state *ReceivedMessageState, syncCommun
 		return communities.ErrOrgNotFound
 	}
 
+	// Send a request to get back our previous shared addresses
+	request := &protobuf.CommunitySharedAddressesRequest{
+		CommunityId: syncCommunity.Id,
+	}
+
+	payload, err := proto.Marshal(request)
+	if err != nil {
+		return err
+	}
+
+	rawMessage := &common.RawMessage{
+		Payload:             payload,
+		Sender:              m.identity,
+		CommunityID:         community.ID(),
+		SkipEncryptionLayer: true,
+		MessageType:         protobuf.ApplicationMetadataMessage_COMMUNITY_SHARED_ADDRESSES_REQUEST,
+	}
+
+	_, err = m.SendMessageToControlNode(community, rawMessage)
+
+	if err != nil {
+		m.logger.Error("failed to request shared addresses", zap.String("communityId", community.IDString()), zap.Error(err))
+		return err
+	}
+
+	// If the community is encrypted or one channel is, ask for the encryption keys back
 	isEncrypted := syncCommunity.Encrypted || len(syncCommunity.EncryptionKeysV2) > 0
 	if !isEncrypted {
 		// check if we have encrypted channels
@@ -355,25 +393,7 @@ func (m *Messenger) requestCommunityKeys(state *ReceivedMessageState, syncCommun
 	}
 
 	if isEncrypted {
-		request := &protobuf.CommunityEncryptionKeysRequest{
-			CommunityId: syncCommunity.Id,
-		}
-
-		payload, err := proto.Marshal(request)
-		if err != nil {
-			return err
-		}
-
-		rawMessage := &common.RawMessage{
-			Payload:             payload,
-			Sender:              m.identity,
-			CommunityID:         community.ID(),
-			SkipEncryptionLayer: true,
-			MessageType:         protobuf.ApplicationMetadataMessage_COMMUNITY_ENCRYPTION_KEYS_REQUEST,
-		}
-
-		_, err = m.SendMessageToControlNode(community, rawMessage)
-
+		err = m.requestCommunityEncryptionKeys(community, nil)
 		if err != nil {
 			m.logger.Error("failed to request community encryption keys", zap.String("communityId", community.IDString()), zap.Error(err))
 			return err

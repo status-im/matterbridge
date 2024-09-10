@@ -57,9 +57,9 @@ type Entry struct {
 	activityType    Type
 	activityStatus  Status
 	amountOut       *hexutil.Big // Used for activityType SendAT, SwapAT, BridgeAT
-	amountIn        *hexutil.Big // Used for activityType ReceiveAT, BuyAT, SwapAT, BridgeAT
+	amountIn        *hexutil.Big // Used for activityType ReceiveAT, BuyAT, SwapAT, BridgeAT, ApproveAT
 	tokenOut        *Token       // Used for activityType SendAT, SwapAT, BridgeAT
-	tokenIn         *Token       // Used for activityType ReceiveAT, BuyAT, SwapAT, BridgeAT
+	tokenIn         *Token       // Used for activityType ReceiveAT, BuyAT, SwapAT, BridgeAT, ApproveAT
 	symbolOut       *string
 	symbolIn        *string
 	sender          *eth.Address
@@ -260,6 +260,8 @@ func multiTransactionTypeToActivityType(mtType transfer.MultiTransactionType) Ty
 		return SwapAT
 	} else if mtType == transfer.MultiTransactionBridge {
 		return BridgeAT
+	} else if mtType == transfer.MultiTransactionApprove {
+		return ApproveAT
 	}
 	panic("unknown multi transaction type")
 }
@@ -321,6 +323,8 @@ func activityTypesToMultiTransactionTypes(trTypes []Type) []transfer.MultiTransa
 			mtType = transfer.MultiTransactionSwap
 		} else if t == BridgeAT {
 			mtType = transfer.MultiTransactionBridge
+		} else if t == ApproveAT {
+			mtType = transfer.MultiTransactionApprove
 		} else {
 			continue
 		}
@@ -553,7 +557,7 @@ func getActivityEntries(ctx context.Context, deps FilterDependencies, addresses 
 				} else if trType.Byte == toTrType {
 					at := ReceiveAT
 					if fromAddress == ZeroAddress && transferType != nil {
-						if *transferType == TransferTypeErc721 || (*transferType == TransferTypeErc20 && methodHash.Valid && (communityMintEvent || sliceContains(inputDataMethods, methodHash.String))) {
+						if *transferType == TransferTypeErc721 || *transferType == TransferTypeErc1155 || (*transferType == TransferTypeErc20 && methodHash.Valid && (communityMintEvent || sliceContains(inputDataMethods, methodHash.String))) {
 							at = MintAT
 						}
 					}
@@ -583,11 +587,15 @@ func getActivityEntries(ctx context.Context, deps FilterDependencies, addresses 
 			inAmount, outAmount := getTrInAndOutAmounts(activityType, dbTrAmount, dbPTrAmount)
 
 			// Extract tokens and chains
-			var involvedToken *Token
+			var tokenContractAddress eth.Address
 			if tokenAddress != nil && *tokenAddress != ZeroAddress {
-				involvedToken = &Token{TokenType: Erc20, ChainID: common.ChainID(chainID.Int64), TokenID: tokenID, Address: *tokenAddress}
-			} else {
-				involvedToken = &Token{TokenType: Native, ChainID: common.ChainID(chainID.Int64), TokenID: tokenID}
+				tokenContractAddress = *tokenAddress
+			}
+			involvedToken := &Token{
+				TokenType: transferTypeToTokenType(transferType),
+				ChainID:   common.ChainID(chainID.Int64),
+				Address:   tokenContractAddress,
+				TokenID:   tokenID,
 			}
 
 			entry = newActivityEntryWithSimpleTransaction(
@@ -648,7 +656,7 @@ func getActivityEntries(ctx context.Context, deps FilterDependencies, addresses 
 
 			mtInAmount, mtOutAmount := getMtInAndOutAmounts(dbMtFromAmount, dbMtToAmount)
 
-			// Extract activity type: SendAT/SwapAT/BridgeAT
+			// Extract activity type: SendAT/SwapAT/BridgeAT/ApproveAT
 			activityType := multiTransactionTypeToActivityType(transfer.MultiTransactionType(dbMtType.Byte))
 
 			if outChainIDDB.Valid && outChainIDDB.Int64 != 0 {
@@ -717,6 +725,8 @@ func getTrInAndOutAmounts(activityType Type, trAmount sql.NullString, pTrAmount 
 
 	if ok {
 		switch activityType {
+		case ApproveAT:
+			fallthrough
 		case ContractDeploymentAT:
 			fallthrough
 		case SendAT:
@@ -772,10 +782,31 @@ func contractTypeFromDBType(dbType string) (transferType *TransferType) {
 		*transferType = TransferTypeErc20
 	case common.Erc721Transfer:
 		*transferType = TransferTypeErc721
+	case common.Erc1155Transfer:
+		*transferType = TransferTypeErc1155
 	default:
 		return nil
 	}
 	return transferType
+}
+
+func transferTypeToTokenType(transferType *TransferType) TokenType {
+	if transferType == nil {
+		return Native
+	}
+	switch *transferType {
+	case TransferTypeEth:
+		return Native
+	case TransferTypeErc20:
+		return Erc20
+	case TransferTypeErc721:
+		return Erc721
+	case TransferTypeErc1155:
+		return Erc1155
+	default:
+		log.Error(fmt.Sprintf("unexpected transfer type %d", transferType))
+	}
+	return Native
 }
 
 // lookupAndFillInTokens ignores NFTs

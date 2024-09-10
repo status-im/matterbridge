@@ -26,6 +26,11 @@ var backupTickerInterval = 120 * time.Second
 // backups
 var backupIntervalSeconds uint64 = 28800
 
+type CommunitySet struct {
+	Joined  []*communities.Community
+	Deleted []*communities.Community
+}
+
 func (m *Messenger) backupEnabled() (bool, error) {
 	return m.settings.BackupEnabled()
 }
@@ -286,7 +291,7 @@ func (m *Messenger) backupContacts(ctx context.Context) []*protobuf.Backup {
 	return backupMessages
 }
 
-func (m *Messenger) backupCommunities(ctx context.Context, clock uint64) ([]*protobuf.Backup, error) {
+func (m *Messenger) retrieveAllCommunities() (*CommunitySet, error) {
 	joinedCs, err := m.communitiesManager.JoinedAndPendingCommunitiesWithRequests()
 	if err != nil {
 		return nil, err
@@ -297,9 +302,22 @@ func (m *Messenger) backupCommunities(ctx context.Context, clock uint64) ([]*pro
 		return nil, err
 	}
 
+	return &CommunitySet{
+		Joined:  joinedCs,
+		Deleted: deletedCs,
+	}, nil
+}
+
+func (m *Messenger) backupCommunities(ctx context.Context, clock uint64) ([]*protobuf.Backup, error) {
+	communitySet, err := m.retrieveAllCommunities()
+	if err != nil {
+		return nil, err
+	}
+
 	var backupMessages []*protobuf.Backup
-	cs := append(joinedCs, deletedCs...)
-	for _, c := range cs {
+	combinedCs := append(communitySet.Joined, communitySet.Deleted...)
+
+	for _, c := range combinedCs {
 		_, beingImported := m.importingCommunities[c.IDString()]
 		if !beingImported {
 			backupMessage, err := m.backupCommunity(c, clock)
@@ -465,21 +483,6 @@ func (m *Messenger) backupProfile(ctx context.Context, clock uint64) ([]*protobu
 		pictureProtos[i] = p
 	}
 
-	socialLinks, err := m.settings.GetSocialLinks()
-	if err != nil {
-		return nil, err
-	}
-
-	socialLinksClock, err := m.settings.GetSocialLinksClock()
-	if err != nil {
-		return nil, err
-	}
-
-	syncSocialLinks := &protobuf.SyncSocialLinks{
-		SocialLinks: socialLinks.ToProtobuf(),
-		Clock:       socialLinksClock,
-	}
-
 	ensUsernameDetails, err := m.getEnsUsernameDetails()
 	if err != nil {
 		return nil, err
@@ -505,7 +508,6 @@ func (m *Messenger) backupProfile(ctx context.Context, clock uint64) ([]*protobu
 			DisplayName:                displayName,
 			Pictures:                   pictureProtos,
 			DisplayNameClock:           displayNameClock,
-			SocialLinks:                syncSocialLinks,
 			EnsUsernameDetails:         ensUsernameDetailProtos,
 			ProfileShowcasePreferences: ToProfileShowcasePreferencesProto(profileShowcasePreferences),
 		},

@@ -25,6 +25,11 @@ type WakuV2Peer struct {
 	Addresses []string      `json:"addresses"`
 }
 
+type PeerList struct {
+	FullMeshPeers []peer.ID `json:"fullMesh"`
+	AllPeers      []peer.ID `json:"all"`
+}
+
 type ConnStatusSubscription struct {
 	sync.RWMutex
 
@@ -92,6 +97,10 @@ type Waku interface {
 
 	ListenAddresses() ([]string, error)
 
+	RelayPeersByTopic(topic string) (*PeerList, error)
+
+	ENR() (string, error)
+
 	Peers() map[string]WakuV2Peer
 
 	StartDiscV5() error
@@ -119,6 +128,8 @@ type Waku interface {
 	DropPeer(peerID string) error
 
 	SubscribeToConnStatusChanges() (*ConnStatusSubscription, error)
+
+	SetCriteriaForMissingMessageVerification(peerID peer.ID, pubsubTopic string, contentTopics []string) error
 
 	// MinPow returns the PoW value required by this node.
 	MinPow() float64
@@ -178,4 +189,10 @@ type Waku interface {
 
 	// ClearEnvelopesCache clears waku envelopes cache
 	ClearEnvelopesCache()
+
+	// ConfirmMessageDelivered updates a message has been delivered in waku
+	ConfirmMessageDelivered(hash []common.Hash)
+
+	// SetStorePeerID updates the peer id of store node
+	SetStorePeerID(peerID peer.ID)
 }

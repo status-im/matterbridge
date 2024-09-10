@@ -18,6 +18,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 
 	"github.com/status-im/status-go/api/multiformat"
+	utils "github.com/status-im/status-go/common"
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/images"
@@ -27,6 +28,7 @@ import (
 	"github.com/status-im/status-go/protocol/protobuf"
 	"github.com/status-im/status-go/protocol/requests"
 	"github.com/status-im/status-go/protocol/v1"
+	"github.com/status-im/status-go/server"
 )
 
 const signatureLength = 65
@@ -51,7 +53,7 @@ type Config struct {
 	Logger                              *zap.Logger
 	RequestedToJoinAt                   uint64
 	RequestsToJoin                      []*RequestToJoin
-	MemberIdentity                      *ecdsa.PublicKey
+	MemberIdentity                      *ecdsa.PrivateKey
 	EventsData                          *EventsData
 	Shard                               *shard.Shard
 	PubsubTopicPrivateKey               *ecdsa.PrivateKey
@@ -64,13 +66,14 @@ type EventsData struct {
 }
 
 type Community struct {
-	config     *Config
-	mutex      sync.Mutex
-	timesource common.TimeSource
-	encryptor  DescriptionEncryptor
+	config      *Config
+	mutex       sync.Mutex
+	timesource  common.TimeSource
+	encryptor   DescriptionEncryptor
+	mediaServer server.MediaServerInterface
 }
 
-func New(config Config, timesource common.TimeSource, encryptor DescriptionEncryptor) (*Community, error) {
+func New(config Config, timesource common.TimeSource, encryptor DescriptionEncryptor, mediaServer server.MediaServerInterface) (*Community, error) {
 	if config.MemberIdentity == nil {
 		return nil, errors.New("no member identity")
 	}
@@ -91,7 +94,12 @@ func New(config Config, timesource common.TimeSource, encryptor DescriptionEncry
 		config.CommunityDescription = &protobuf.CommunityDescription{}
 	}
 
-	return &Community{config: &config, timesource: timesource, encryptor: encryptor}, nil
+	return &Community{
+		config:      &config,
+		timesource:  timesource,
+		encryptor:   encryptor,
+		mediaServer: mediaServer,
+	}, nil
 }
 
 type CommunityAdminSettings struct {
@@ -114,6 +122,7 @@ type CommunityChat struct {
 	CategoryID              string                               `json:"categoryID"`
 	TokenGated              bool                                 `json:"tokenGated"`
 	HideIfPermissionsNotMet bool                                 `json:"hideIfPermissionsNotMet"`
+	MissingEncryptionKey    bool                                 `json:"missingEncryptionKey"`
 }
 
 type CommunityCategory struct {
@@ -188,15 +197,15 @@ func (o *Community) MarshalPublicAPIJSON() ([]byte, error) {
 		for id, c := range o.config.CommunityDescription.Chats {
 			// NOTE: Here `CanPost` is only set for ChatMessage and Emoji reactions. But it can be different for pin/etc.
 			// Consider adding more properties to `CommunityChat` to reflect that.
-			canPost, err := o.CanPost(o.config.MemberIdentity, id, protobuf.ApplicationMetadataMessage_CHAT_MESSAGE)
+			canPost, err := o.CanPost(o.MemberIdentity(), id, protobuf.ApplicationMetadataMessage_CHAT_MESSAGE)
 			if err != nil {
 				return nil, err
 			}
-			canPostReactions, err := o.CanPost(o.config.MemberIdentity, id, protobuf.ApplicationMetadataMessage_EMOJI_REACTION)
+			canPostReactions, err := o.CanPost(o.MemberIdentity(), id, protobuf.ApplicationMetadataMessage_EMOJI_REACTION)
 			if err != nil {
 				return nil, err
 			}
-			canView := o.CanView(o.config.MemberIdentity, id)
+			canView := o.CanView(o.MemberIdentity(), id)
 
 			chat := CommunityChat{
 				ID:                      id,
@@ -259,6 +268,10 @@ func (o *Community) MarshalJSON() ([]byte, error) {
 	if o.config.MemberIdentity == nil {
 		return nil, errors.New("member identity not set")
 	}
+
+	type Image struct {
+		Uri string `json:"uri"`
+	}
 	communityItem := struct {
 		ID                          types.HexBytes                       `json:"id"`
 		MemberRole                  protobuf.CommunityMember_Roles       `json:"memberRole"`
@@ -275,7 +288,7 @@ func (o *Community) MarshalJSON() ([]byte, error) {
 		Tags                        []CommunityTag                       `json:"tags"`
 		Chats                       map[string]CommunityChat             `json:"chats"`
 		Categories                  map[string]CommunityCategory         `json:"categories"`
-		Images                      map[string]images.IdentityImage      `json:"images"`
+		Images                      map[string]Image                     `json:"images"`
 		Permissions                 *protobuf.CommunityPermissions       `json:"permissions"`
 		Members                     map[string]*protobuf.CommunityMember `json:"members"`
 		CanRequestAccess            bool                                 `json:"canRequestAccess"`
@@ -309,10 +322,10 @@ func (o *Community) MarshalJSON() ([]byte, error) {
 		Joined:                      o.config.Joined,
 		JoinedAt:                    o.config.JoinedAt,
 		Spectated:                   o.config.Spectated,
-		CanRequestAccess:            o.CanRequestAccess(o.config.MemberIdentity),
+		CanRequestAccess:            o.CanRequestAccess(o.MemberIdentity()),
 		CanJoin:                     o.canJoin(),
-		CanManageUsers:              o.CanManageUsers(o.config.MemberIdentity),
-		CanDeleteMessageForEveryone: o.CanDeleteMessageForEveryone(o.config.MemberIdentity),
+		CanManageUsers:              o.CanManageUsers(o.MemberIdentity()),
+		CanDeleteMessageForEveryone: o.CanDeleteMessageForEveryone(o.MemberIdentity()),
 		RequestedToJoinAt:           o.RequestedToJoinAt(),
 		IsMember:                    o.isMember(),
 		Muted:                       o.config.Muted,
@@ -337,15 +350,15 @@ func (o *Community) MarshalJSON() ([]byte, error) {
 		for id, c := range o.config.CommunityDescription.Chats {
 			// NOTE: Here `CanPost` is only set for ChatMessage. But it can be different for reactions/pin/etc.
 			// Consider adding more properties to `CommunityChat` to reflect that.
-			canPost, err := o.CanPost(o.config.MemberIdentity, id, protobuf.ApplicationMetadataMessage_CHAT_MESSAGE)
+			canPost, err := o.CanPost(o.MemberIdentity(), id, protobuf.ApplicationMetadataMessage_CHAT_MESSAGE)
 			if err != nil {
 				return nil, err
 			}
-			canPostReactions, err := o.CanPost(o.config.MemberIdentity, id, protobuf.ApplicationMetadataMessage_EMOJI_REACTION)
+			canPostReactions, err := o.CanPost(o.MemberIdentity(), id, protobuf.ApplicationMetadataMessage_EMOJI_REACTION)
 			if err != nil {
 				return nil, err
 			}
-			canView := o.CanView(o.config.MemberIdentity, id)
+			canView := o.CanView(o.MemberIdentity(), id)
 
 			chat := CommunityChat{
 				ID:                      id,
@@ -354,7 +367,6 @@ func (o *Community) MarshalJSON() ([]byte, error) {
 				Color:                   c.Identity.Color,
 				Description:             c.Identity.Description,
 				Permissions:             c.Permissions,
-				Members:                 c.Members,
 				CanPost:                 canPost,
 				CanView:                 canView,
 				CanPostReactions:        canPostReactions,
@@ -363,6 +375,11 @@ func (o *Community) MarshalJSON() ([]byte, error) {
 				CategoryID:              c.CategoryId,
 				HideIfPermissionsNotMet: c.HideIfPermissionsNotMet,
 				Position:                int(c.Position),
+				MissingEncryptionKey:    o.HasMissingEncryptionKey(id),
+			}
+
+			if chat.TokenGated {
+				chat.Members = c.Members
 			}
 			communityItem.Chats[id] = chat
 		}
@@ -372,18 +389,32 @@ func (o *Community) MarshalJSON() ([]byte, error) {
 		communityItem.Permissions = o.config.CommunityDescription.Permissions
 		communityItem.IntroMessage = o.config.CommunityDescription.IntroMessage
 		communityItem.OutroMessage = o.config.CommunityDescription.OutroMessage
-		communityItem.CommunityTokensMetadata = o.config.CommunityDescription.CommunityTokensMetadata
+
+		// update token meta image to url rather than base64 image
+		var tokenMetadata []*protobuf.CommunityTokenMetadata
+
+		if !utils.IsNil(o.mediaServer) {
+			for _, m := range o.config.CommunityDescription.CommunityTokensMetadata {
+				copyM := proto.Clone(m).(*protobuf.CommunityTokenMetadata)
+				copyM.Image = o.mediaServer.MakeCommunityDescriptionTokenImageURL(o.IDString(), copyM.GetSymbol())
+				tokenMetadata = append(tokenMetadata, copyM)
+			}
+			communityItem.CommunityTokensMetadata = tokenMetadata
+		}
 		communityItem.ActiveMembersCount = o.config.CommunityDescription.ActiveMembersCount
 
 		if o.config.CommunityDescription.Identity != nil {
 			communityItem.Name = o.Name()
 			communityItem.Color = o.config.CommunityDescription.Identity.Color
 			communityItem.Description = o.config.CommunityDescription.Identity.Description
-			for t, i := range o.config.CommunityDescription.Identity.Images {
-				if communityItem.Images == nil {
-					communityItem.Images = make(map[string]images.IdentityImage)
+
+			if !utils.IsNil(o.mediaServer) {
+				for t := range o.config.CommunityDescription.Identity.Images {
+					if communityItem.Images == nil {
+						communityItem.Images = make(map[string]Image)
+					}
+					communityItem.Images[t] = Image{Uri: o.mediaServer.MakeCommunityImageURL(o.IDString(), t)}
 				}
-				communityItem.Images[t] = images.IdentityImage{Name: t, Payload: i.Payload}
 			}
 		}
 
@@ -518,6 +549,15 @@ func (o *Community) Members() map[string]*protobuf.CommunityMember {
 		return o.config.CommunityDescription.Members
 	}
 	return nil
+}
+
+func (o *Community) UpdateMemberLastUpdateClock(publicKey string, clock uint64) {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
+
+	if member, exists := o.config.CommunityDescription.Members[publicKey]; exists {
+		member.LastUpdateClock = clock
+	}
 }
 
 func (o *Community) MembersCount() int {
@@ -731,11 +771,41 @@ func (o *Community) HasMember(pk *ecdsa.PublicKey) bool {
 	return o.hasMember(pk)
 }
 
+func (o *Community) isMemberInChat(pk *ecdsa.PublicKey, chatID string) bool {
+	return o.getChatMember(pk, chatID) != nil
+}
+
 func (o *Community) IsMemberInChat(pk *ecdsa.PublicKey, chatID string) bool {
 	o.mutex.Lock()
 	defer o.mutex.Unlock()
 
-	return o.getChatMember(pk, chatID) != nil
+	return o.isMemberInChat(pk, chatID)
+}
+
+// Uses bloom filter members list to estimate presence in the channel.
+// False positive rate is 0.1%.
+func (o *Community) IsMemberLikelyInChat(chatID string) bool {
+	if o.IsControlNode() || o.IsPrivilegedMember(o.MemberIdentity()) || !o.channelEncrypted(chatID) {
+		return true
+	}
+
+	chat, ok := o.config.CommunityDescription.Chats[chatID]
+	if !ok {
+		return false
+	}
+
+	// For communities controlled by clients that haven't updated to newer version yet we assume no membership.
+	if chat.MembersList == nil {
+		return false
+	}
+
+	res, err := verifyMembershipWithBloomFilter(chat.MembersList, o.config.MemberIdentity, o.ControlNode(), chatID, o.Clock())
+	if err != nil {
+		o.config.Logger.Error("failed to estimate membership", zap.Error(err))
+		return false
+	}
+
+	return res
 }
 
 func (o *Community) RemoveUserFromChat(pk *ecdsa.PublicKey, chatID string) (*protobuf.CommunityDescription, error) {
@@ -764,26 +834,10 @@ func (o *Community) RemoveUserFromChat(pk *ecdsa.PublicKey, chatID string) (*pro
 	return o.config.CommunityDescription, nil
 }
 
-func (o *Community) removeMemberFromOrg(pk *ecdsa.PublicKey) {
-	if !o.hasMember(pk) {
-		return
-	}
-
-	key := common.PubkeyToHex(pk)
-
-	// Remove from org
-	delete(o.config.CommunityDescription.Members, key)
-
-	// Remove from chats
-	for _, chat := range o.config.CommunityDescription.Chats {
-		delete(chat.Members, key)
-	}
-}
-
 func (o *Community) RemoveOurselvesFromOrg(pk *ecdsa.PublicKey) {
 	o.mutex.Lock()
 	defer o.mutex.Unlock()
-	o.removeMemberFromOrg(pk)
+	_ = o.RemoveMembersFromOrg([]string{common.PubkeyToHex(pk)})
 	o.increaseClock()
 }
 
@@ -799,8 +853,10 @@ func (o *Community) RemoveUserFromOrg(pk *ecdsa.PublicKey) (*protobuf.CommunityD
 		return nil, ErrCannotRemoveOwnerOrAdmin
 	}
 
+	pkStr := common.PubkeyToHex(pk)
+
 	if o.IsControlNode() {
-		o.removeMemberFromOrg(pk)
+		_ = o.RemoveMembersFromOrg([]string{pkStr})
 		o.increaseClock()
 	} else {
 		err := o.addNewCommunityEvent(o.ToKickCommunityMemberCommunityEvent(common.PubkeyToHex(pk)))
@@ -812,10 +868,48 @@ func (o *Community) RemoveUserFromOrg(pk *ecdsa.PublicKey) (*protobuf.CommunityD
 	return o.config.CommunityDescription, nil
 }
 
+func (o *Community) RemoveMembersFromOrg(membersToRemove []string) *CommunityChanges {
+	changes := o.emptyCommunityChanges()
+
+	if len(membersToRemove) == 0 {
+		return changes
+	}
+
+	for _, pk := range membersToRemove {
+		member, exists := o.config.CommunityDescription.Members[pk]
+		if exists {
+			changes.MembersRemoved[pk] = member
+			delete(o.config.CommunityDescription.Members, pk)
+		}
+	}
+
+	if len(changes.MembersRemoved) == 0 {
+		return changes
+	}
+
+	for chatID, chat := range o.config.CommunityDescription.Chats {
+		chatMembersToRemove := make(map[string]*protobuf.CommunityMember)
+		for _, pk := range membersToRemove {
+			chatMember, exists := chat.Members[pk]
+			if exists {
+				chatMembersToRemove[pk] = chatMember
+				delete(chat.Members, pk)
+			}
+		}
+
+		changes.ChatsModified[chatID] = &CommunityChatChanges{
+			ChatModified:   chat,
+			MembersRemoved: chatMembersToRemove,
+		}
+	}
+
+	return changes
+}
+
 func (o *Community) RemoveAllUsersFromOrg() *CommunityChanges {
 	o.increaseClock()
 
-	myPublicKey := common.PubkeyToHex(o.config.MemberIdentity)
+	myPublicKey := common.PubkeyToHex(o.MemberIdentity())
 	member := o.config.CommunityDescription.Members[myPublicKey]
 
 	membersToRemove := o.config.CommunityDescription.Members
@@ -1114,7 +1208,7 @@ func (o *Community) MuteTill() time.Time {
 }
 
 func (o *Community) MemberIdentity() *ecdsa.PublicKey {
-	return o.config.MemberIdentity
+	return &o.config.MemberIdentity.PublicKey
 }
 
 // UpdateCommunityDescription will update the community to the new community description and return a list of changes
@@ -1130,11 +1224,9 @@ func (o *Community) UpdateCommunityDescription(description *protobuf.CommunityDe
 		return nil, err
 	}
 
-	response := o.emptyCommunityChanges()
-
 	// Enables processing of identical clocks. Identical descriptions may be reprocessed upon subsequent receipt of the previously missing encryption key.
 	if description.Clock < o.config.CommunityDescription.Clock {
-		return response, nil
+		return nil, ErrInvalidCommunityDescriptionClockOutdated
 	}
 
 	originCommunity := o.CreateDeepCopy()
@@ -1145,6 +1237,8 @@ func (o *Community) UpdateCommunityDescription(description *protobuf.CommunityDe
 	if newControlNode != nil {
 		o.setControlNode(newControlNode)
 	}
+
+	response := o.emptyCommunityChanges()
 
 	// We only calculate changes if we joined/spectated the community or we requested access, otherwise not interested
 	if o.config.Joined || o.config.Spectated || o.config.RequestedToJoinAt > 0 {
@@ -1221,26 +1315,21 @@ func (o *Community) ValidateRequestToJoin(signer *ecdsa.PublicKey, request *prot
 }
 
 // ValidateRequestToJoin validates a request, checks that the right permissions are applied
-func (o *Community) ValidateEditSharedAddresses(signer *ecdsa.PublicKey, request *protobuf.CommunityEditSharedAddresses) error {
+func (o *Community) ValidateEditSharedAddresses(signer string, request *protobuf.CommunityEditSharedAddresses) error {
 	o.mutex.Lock()
 	defer o.mutex.Unlock()
-
-	// If we are not owner, fuggetaboutit
-	if !o.IsControlNode() {
-		return ErrNotOwner
-	}
 
 	if len(request.RevealedAccounts) == 0 {
 		return errors.New("no addresses were shared")
 	}
 
-	member, exists := o.config.CommunityDescription.Members[common.PubkeyToHex(signer)]
+	member, exists := o.config.CommunityDescription.Members[signer]
 	if !exists {
 		return errors.New("signer is not a community member")
 	}
 
 	if request.Clock < member.LastUpdateClock {
-		return errors.New("edit request is older than the last one we have. Ignore")
+		return ErrEditSharedAddressesRequestOutdated
 	}
 
 	return nil
@@ -1252,15 +1341,26 @@ func (o *Community) IsControlNode() bool {
 }
 
 func (o *Community) IsOwner() bool {
-	return o.IsMemberOwner(o.config.MemberIdentity)
+	return o.IsMemberOwner(o.MemberIdentity())
 }
 
 func (o *Community) IsTokenMaster() bool {
-	return o.IsMemberTokenMaster(o.config.MemberIdentity)
+	return o.IsMemberTokenMaster(o.MemberIdentity())
 }
 
 func (o *Community) IsAdmin() bool {
-	return o.IsMemberAdmin(o.config.MemberIdentity)
+	return o.IsMemberAdmin(o.MemberIdentity())
+}
+
+func (o *Community) GetTokenMasterMembers() []*ecdsa.PublicKey {
+	tokenMasterMembers := make([]*ecdsa.PublicKey, 0)
+	members := o.GetMemberPubkeys()
+	for _, member := range members {
+		if o.IsMemberTokenMaster(member) {
+			tokenMasterMembers = append(tokenMasterMembers, member)
+		}
+	}
+	return tokenMasterMembers
 }
 
 func (o *Community) GetPrivilegedMembers() []*ecdsa.PublicKey {
@@ -1300,15 +1400,15 @@ func (o *Community) GetFilteredPrivilegedMembers(skipMembers map[string]struct{}
 }
 
 func (o *Community) HasPermissionToSendCommunityEvents() bool {
-	return !o.IsControlNode() && o.hasRoles(o.config.MemberIdentity, manageCommunityRoles())
+	return !o.IsControlNode() && o.hasRoles(o.MemberIdentity(), manageCommunityRoles())
 }
 
 func (o *Community) hasPermissionToSendCommunityEvent(event protobuf.CommunityEvent_EventType) bool {
-	return !o.IsControlNode() && canRolesPerformEvent(o.rolesOf(o.config.MemberIdentity), event)
+	return !o.IsControlNode() && canRolesPerformEvent(o.rolesOf(o.MemberIdentity()), event)
 }
 
 func (o *Community) hasPermissionToSendTokenPermissionCommunityEvent(event protobuf.CommunityEvent_EventType, permissionType protobuf.CommunityTokenPermission_Type) bool {
-	roles := o.rolesOf(o.config.MemberIdentity)
+	roles := o.rolesOf(o.MemberIdentity())
 	return !o.IsControlNode() && canRolesPerformEvent(roles, event) && canRolesModifyPermission(roles, permissionType)
 }
 
@@ -1469,6 +1569,10 @@ func (o *Community) setPrivateKey(pk *ecdsa.PrivateKey) {
 	}
 }
 
+func (o *Community) SetResendAccountsClock(clock uint64) {
+	o.config.CommunityDescription.ResendAccountsClock = clock
+}
+
 func (o *Community) ControlNode() *ecdsa.PublicKey {
 	if o.config.ControlNode == nil {
 		return o.config.ID
@@ -1510,7 +1614,12 @@ func (o *Community) marshaledDescription() ([]byte, error) {
 
 	// This is only workaround to lower the size of the message that goes over the wire,
 	// see https://github.com/status-im/status-desktop/issues/12188
-	dehydrateChannelsMembers(o.IDString(), clone)
+	dehydrateChannelsMembers(clone)
+
+	err := generateBloomFiltersForChannels(clone, o.PrivateKey())
+	if err != nil {
+		o.config.Logger.Error("failed to generate bloom filters", zap.Error(err))
+	}
 
 	if o.encryptor != nil {
 		err := encryptDescription(o.encryptor, o, clone)
@@ -1557,28 +1666,19 @@ func (o *Community) ToProtocolMessageBytes() ([]byte, error) {
 	return o.toProtocolMessageBytes()
 }
 
-func channelHasTokenPermissions(communityID string, channelID string, permissions map[string]*protobuf.CommunityTokenPermission) bool {
-	for _, tokenPermission := range permissions {
-		if includes(tokenPermission.ChatIds, communityID+channelID) {
-			return true
-		}
-	}
-	return false
-}
-
-func dehydrateChannelsMembers(communityID string, description *protobuf.CommunityDescription) {
+func dehydrateChannelsMembers(description *protobuf.CommunityDescription) {
 	// To save space, we don't attach members for channels without permissions,
 	// otherwise the message will hit waku msg size limit.
 	for channelID, channel := range description.Chats {
-		if !channelHasTokenPermissions(communityID, channelID, description.TokenPermissions) {
+		if !channelHasPermissions(ChatID(description.ID, channelID), description.TokenPermissions) {
 			channel.Members = map[string]*protobuf.CommunityMember{} // clean members
 		}
 	}
 }
 
-func hydrateChannelsMembers(communityID string, description *protobuf.CommunityDescription) {
+func hydrateChannelsMembers(description *protobuf.CommunityDescription) {
 	for channelID, channel := range description.Chats {
-		if !channelHasTokenPermissions(communityID, channelID, description.TokenPermissions) {
+		if !channelHasPermissions(ChatID(description.ID, channelID), description.TokenPermissions) {
 			channel.Members = make(map[string]*protobuf.CommunityMember)
 			for pubKey, member := range description.Members {
 				channel.Members[pubKey] = member
@@ -1778,13 +1878,21 @@ func (o *Community) HasTokenPermissions() bool {
 	return len(o.tokenPermissions()) > 0
 }
 
-func (o *Community) channelEncrypted(channelID string) bool {
-	chatID := o.ChatID(channelID)
+func channelHasPermissions(chatID string, permissions map[string]*protobuf.CommunityTokenPermission) bool {
+	for _, p := range permissions {
+		if includes(p.ChatIds, chatID) {
+			return true
+		}
+	}
 
+	return false
+}
+
+func channelEncrypted(chatID string, permissions map[string]*protobuf.CommunityTokenPermission) bool {
 	hasPermission := false
 	viewableByEveryone := false
 
-	for _, p := range o.tokenPermissions() {
+	for _, p := range permissions {
 		if !includes(p.ChatIds, chatID) {
 			continue
 		}
@@ -1801,10 +1909,23 @@ func (o *Community) channelEncrypted(channelID string) bool {
 	return hasPermission && !viewableByEveryone
 }
 
+func (o *Community) channelEncrypted(channelID string) bool {
+	return channelEncrypted(o.ChatID(channelID), o.config.CommunityDescription.TokenPermissions)
+}
+
 func (o *Community) ChannelEncrypted(channelID string) bool {
 	o.mutex.Lock()
 	defer o.mutex.Unlock()
 	return o.channelEncrypted(channelID)
+}
+
+func (o *Community) HasMissingEncryptionKey(channelID string) bool {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
+
+	return o.channelEncrypted(channelID) &&
+		!o.isMemberInChat(o.MemberIdentity(), channelID) &&
+		o.IsMemberLikelyInChat(channelID)
 }
 
 func TokenPermissionsByType(permissions map[string]*CommunityTokenPermission, permissionType protobuf.CommunityTokenPermission_Type) []*CommunityTokenPermission {
@@ -2103,11 +2224,11 @@ func (o *Community) CanDeleteMessageForEveryone(pk *ecdsa.PublicKey) bool {
 }
 
 func (o *Community) isMember() bool {
-	return o.hasMember(o.config.MemberIdentity)
+	return o.hasMember(o.MemberIdentity())
 }
 
 func (o *Community) CanMemberIdentityPost(chatID string, messageType protobuf.ApplicationMetadataMessage_Type) (bool, error) {
-	return o.CanPost(o.config.MemberIdentity, chatID, messageType)
+	return o.CanPost(o.MemberIdentity(), chatID, messageType)
 }
 
 // CanJoin returns whether a user can join the community, only if it's
@@ -2169,7 +2290,7 @@ func (o *Community) RequestsToJoin() []*RequestToJoin {
 	return o.config.RequestsToJoin
 }
 
-func (o *Community) AddMember(publicKey *ecdsa.PublicKey, roles []protobuf.CommunityMember_Roles) (*CommunityChanges, error) {
+func (o *Community) AddMember(publicKey *ecdsa.PublicKey, roles []protobuf.CommunityMember_Roles, lastUpdateClock uint64) (*CommunityChanges, error) {
 	if !o.IsControlNode() {
 		return nil, ErrNotControlNode
 	}
@@ -2182,11 +2303,12 @@ func (o *Community) AddMember(publicKey *ecdsa.PublicKey, roles []protobuf.Commu
 	}
 
 	if _, ok := o.config.CommunityDescription.Members[memberKey]; !ok {
-		o.config.CommunityDescription.Members[memberKey] = &protobuf.CommunityMember{Roles: roles}
+		o.config.CommunityDescription.Members[memberKey] = &protobuf.CommunityMember{Roles: roles, LastUpdateClock: lastUpdateClock}
 		changes.MembersAdded[memberKey] = o.config.CommunityDescription.Members[memberKey]
 	}
 
 	o.increaseClock()
+
 	return changes, nil
 }
 
@@ -2272,8 +2394,12 @@ func (o *Community) populateChatWithAllMembers(chatID string) (*CommunityChanges
 	return result, nil
 }
 
+func ChatID(communityID, channelID string) string {
+	return communityID + channelID
+}
+
 func (o *Community) ChatID(channelID string) string {
-	return o.IDString() + channelID
+	return ChatID(o.IDString(), channelID)
 }
 
 func (o *Community) ChatIDs() (chatIDs []string) {
@@ -2285,21 +2411,6 @@ func (o *Community) ChatIDs() (chatIDs []string) {
 
 func (o *Community) AllowsAllMembersToPinMessage() bool {
 	return o.config.CommunityDescription.AdminSettings != nil && o.config.CommunityDescription.AdminSettings.PinMessageAllMembersEnabled
-}
-
-func (o *Community) AddMemberWithRevealedAccounts(dbRequest *RequestToJoin, roles []protobuf.CommunityMember_Roles, accounts []*protobuf.RevealedAccount) (*CommunityChanges, error) {
-	o.mutex.Lock()
-	defer o.mutex.Unlock()
-
-	if !o.IsControlNode() {
-		return nil, ErrNotControlNode
-	}
-
-	changes := o.addMemberWithRevealedAccounts(dbRequest.PublicKey, roles, accounts, dbRequest.Clock)
-
-	o.increaseClock()
-
-	return changes, nil
 }
 
 func (o *Community) CreateDeepCopy() *Community {
@@ -2534,25 +2645,6 @@ func (o *Community) deleteTokenPermission(permissionID string) (*CommunityChange
 	return changes, nil
 }
 
-func (o *Community) addMemberWithRevealedAccounts(memberKey string, roles []protobuf.CommunityMember_Roles, accounts []*protobuf.RevealedAccount, clock uint64) *CommunityChanges {
-	changes := o.emptyCommunityChanges()
-
-	if o.config.CommunityDescription.Members == nil {
-		o.config.CommunityDescription.Members = make(map[string]*protobuf.CommunityMember)
-	}
-
-	if _, ok := o.config.CommunityDescription.Members[memberKey]; !ok {
-		o.config.CommunityDescription.Members[memberKey] = &protobuf.CommunityMember{Roles: roles}
-		changes.MembersAdded[memberKey] = o.config.CommunityDescription.Members[memberKey]
-	}
-
-	o.config.CommunityDescription.Members[memberKey].RevealedAccounts = accounts
-	o.config.CommunityDescription.Members[memberKey].LastUpdateClock = clock
-	changes.MemberWalletsAdded[memberKey] = o.config.CommunityDescription.Members[memberKey].RevealedAccounts
-
-	return changes
-}
-
 func (o *Community) DeclineRequestToJoin(dbRequest *RequestToJoin) (adminEventCreated bool, err error) {
 	o.mutex.Lock()
 	defer o.mutex.Unlock()
@@ -2562,11 +2654,7 @@ func (o *Community) DeclineRequestToJoin(dbRequest *RequestToJoin) (adminEventCr
 	}
 
 	if o.IsControlNode() {
-		pk, err := common.HexToPubkey(dbRequest.PublicKey)
-		if err != nil {
-			return false, err
-		}
-		o.removeMemberFromOrg(pk)
+		o.RemoveMembersFromOrg([]string{dbRequest.PublicKey})
 		o.increaseClock()
 	} else {
 		err = o.addNewCommunityEvent(o.ToCommunityRequestToJoinRejectCommunityEvent(dbRequest.PublicKey, dbRequest.ToCommunityRequestToJoinProtobuf()))

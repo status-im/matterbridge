@@ -3,7 +3,6 @@ package collectibles
 import (
 	"database/sql"
 	"fmt"
-	"math"
 	"math/big"
 	"sync"
 
@@ -30,9 +29,9 @@ func NewOwnershipDB(sqlDb *sql.DB) *OwnershipDB {
 	}
 }
 
-const unknownUpdateTimestamp = int64(math.MaxInt64)
-
 const selectOwnershipColumns = "chain_id, contract_address, token_id"
+
+const collectiblesOwnershipColumns = "token_id, owner_address, balance"
 
 const ownershipTimestampColumns = "owner_address, chain_id, timestamp"
 const selectOwnershipTimestampColumns = "timestamp"
@@ -420,6 +419,61 @@ func (o *OwnershipDB) GetOwnedCollectibles(chainIDs []w_common.ChainID, ownerAdd
 	return thirdparty.RowsToCollectibles(rows)
 }
 
+func (o *OwnershipDB) FetchCachedCollectibleOwnersByContractAddress(chainID w_common.ChainID, contractAddress common.Address) (*thirdparty.CollectibleContractOwnership, error) {
+	query, args, err := sqlx.In(fmt.Sprintf(`SELECT %s
+		FROM collectibles_ownership_cache 
+		WHERE chain_id = ? AND contract_address = ?`, collectiblesOwnershipColumns), chainID, contractAddress)
+	if err != nil {
+		return nil, err
+	}
+
+	var ret thirdparty.CollectibleContractOwnership
+
+	stmt, err := o.db.Prepare(query)
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Close()
+
+	rows, err := stmt.Query(args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	tokenID := &bigint.BigInt{Int: big.NewInt(0)}
+	var ownerAddress common.Address
+	balance := &bigint.BigInt{Int: big.NewInt(0)}
+	var tokenBalances []thirdparty.TokenBalance
+
+	for rows.Next() {
+		err = rows.Scan(
+			(*bigint.SQLBigIntBytes)(tokenID.Int),
+			&ownerAddress,
+			(*bigint.SQLBigIntBytes)(balance.Int),
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		tokenBalance := thirdparty.TokenBalance{
+			TokenID: tokenID,
+			Balance: balance,
+		}
+		tokenBalances = append(tokenBalances, tokenBalance)
+
+		collectibleOwner := thirdparty.CollectibleOwner{
+			OwnerAddress:  ownerAddress,
+			TokenBalances: tokenBalances,
+		}
+
+		ret.ContractAddress = contractAddress
+		ret.Owners = append(ret.Owners, collectibleOwner)
+	}
+
+	return &ret, nil
+}
+
 func (o *OwnershipDB) GetOwnedCollectible(chainID w_common.ChainID, ownerAddresses common.Address, contractAddress common.Address, tokenID *big.Int) (*thirdparty.CollectibleUniqueID, error) {
 	query := fmt.Sprintf(`SELECT %s
 		FROM collectibles_ownership_cache
@@ -508,7 +562,7 @@ func (o *OwnershipDB) GetOwnership(id thirdparty.CollectibleUniqueID) ([]thirdpa
 		LEFT JOIN transfers t ON
 			c.transfer_id = t.hash
 		WHERE
-		c.chain_id = ? AND c.contract_address = ? AND c.token_id = ?`, unknownUpdateTimestamp)
+                c.chain_id = ? AND c.contract_address = ? AND c.token_id = ?`, InvalidTimestamp)
 
 	stmt, err := o.db.Prepare(query)
 	if err != nil {

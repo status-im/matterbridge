@@ -140,7 +140,8 @@ func (s *Service) InitProtocol(nodeName string, identity *ecdsa.PrivateKey, appD
 
 	s.identity = identity
 
-	dataDir := filepath.Clean(s.config.ShhextConfig.BackupDisabledDataDir)
+	// This directory should have already been created in loadNodeConfig, keeping this to ensure.
+	dataDir := filepath.Clean(s.config.RootDataDir)
 
 	if err := os.MkdirAll(dataDir, os.ModePerm); err != nil {
 		return err
@@ -173,6 +174,7 @@ func (s *Service) InitProtocol(nodeName string, identity *ecdsa.PrivateKey, appD
 		s.n,
 		s.config.ShhextConfig.InstallationID,
 		s.peerStore,
+		params.Version,
 		options...,
 	)
 	if err != nil {
@@ -183,7 +185,11 @@ func (s *Service) InitProtocol(nodeName string, identity *ecdsa.PrivateKey, appD
 	if s.config.ProcessBackedupMessages {
 		s.messenger.EnableBackedupMessagesProcessing()
 	}
-	return messenger.Init()
+
+	// Be mindful of adding more initialization code, as it can easily
+	// impact login times for mobile users. For example, we avoid calling
+	// messenger.InitFilters here.
+	return s.messenger.InitInstallations()
 }
 
 func (s *Service) StartMessenger() (*protocol.MessengerResponse, error) {
@@ -458,7 +464,7 @@ func buildMessengerOptions(
 	}
 
 	if settings.TelemetryServerURL != "" {
-		options = append(options, protocol.WithTelemetry(settings.TelemetryServerURL))
+		options = append(options, protocol.WithTelemetry(settings.TelemetryServerURL, time.Duration(settings.TelemetrySendPeriodMs)*time.Millisecond))
 	}
 
 	if settings.PushNotificationsServerEnabled {

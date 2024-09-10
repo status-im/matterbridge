@@ -1,17 +1,18 @@
 package cryptocompare
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
-	"net/http"
+	"net/url"
 	"strings"
-	"time"
 
 	"github.com/status-im/status-go/services/wallet/thirdparty"
 	"github.com/status-im/status-go/services/wallet/thirdparty/utils"
 )
 
+const baseID = "cryptocompare"
+const extraParamStatus = "Status.im"
 const baseURL = "https://min-api.cryptocompare.com"
 
 type HistoricalPricesContainer struct {
@@ -33,21 +34,42 @@ type MarketValuesContainer struct {
 	Raw map[string]map[string]thirdparty.TokenMarketValues `json:"Raw"`
 }
 
+type Params struct {
+	ID       string
+	URL      string
+	User     string
+	Password string
+}
+
 type Client struct {
-	client *http.Client
+	id         string
+	httpClient *thirdparty.HTTPClient
+	baseURL    string
+	creds      *thirdparty.BasicCreds
 }
 
 func NewClient() *Client {
-	return &Client{client: &http.Client{Timeout: time.Minute}}
+	return NewClientWithParams(Params{
+		ID:  baseID,
+		URL: baseURL,
+	})
 }
 
-func (c *Client) DoQuery(url string) (*http.Response, error) {
-	resp, err := c.client.Get(url)
-
-	if err != nil {
-		return nil, err
+func NewClientWithParams(params Params) *Client {
+	var creds *thirdparty.BasicCreds
+	if params.User != "" {
+		creds = &thirdparty.BasicCreds{
+			User:     params.User,
+			Password: params.Password,
+		}
 	}
-	return resp, nil
+
+	return &Client{
+		id:         params.ID,
+		httpClient: thirdparty.NewHTTPClient(),
+		baseURL:    params.URL,
+		creds:      creds,
+	}
 }
 
 func (c *Client) FetchPrices(symbols []string, currencies []string) (map[string]map[string]float64, error) {
@@ -56,22 +78,22 @@ func (c *Client) FetchPrices(symbols []string, currencies []string) (map[string]
 	realCurrencies := utils.RenameSymbols(currencies)
 	for _, smbls := range chunks {
 		realSymbols := utils.RenameSymbols(smbls)
-		url := fmt.Sprintf("%s/data/pricemulti?fsyms=%s&tsyms=%s&extraParams=Status.im", baseURL, strings.Join(realSymbols, ","), strings.Join(realCurrencies, ","))
-		resp, err := c.DoQuery(url)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
 
-		body, err := ioutil.ReadAll(resp.Body)
+		params := url.Values{}
+		params.Add("fsyms", strings.Join(realSymbols, ","))
+		params.Add("tsyms", strings.Join(realCurrencies, ","))
+		params.Add("extraParams", extraParamStatus)
+
+		url := fmt.Sprintf("%s/data/pricemulti", c.baseURL)
+		response, err := c.httpClient.DoGetRequest(context.Background(), url, params, c.creds)
 		if err != nil {
 			return nil, err
 		}
 
 		prices := make(map[string]map[string]float64)
-		err = json.Unmarshal(body, &prices)
+		err = json.Unmarshal(response, &prices)
 		if err != nil {
-			return nil, fmt.Errorf("%s - %s", err, string(body))
+			return nil, fmt.Errorf("%s - %s", err, string(response))
 		}
 
 		for _, symbol := range smbls {
@@ -85,20 +107,14 @@ func (c *Client) FetchPrices(symbols []string, currencies []string) (map[string]
 }
 
 func (c *Client) FetchTokenDetails(symbols []string) (map[string]thirdparty.TokenDetails, error) {
-	url := fmt.Sprintf("%s/data/all/coinlist", baseURL)
-	resp, err := c.DoQuery(url)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := ioutil.ReadAll(resp.Body)
+	url := fmt.Sprintf("%s/data/all/coinlist", c.baseURL)
+	response, err := c.httpClient.DoGetRequest(context.Background(), url, nil, c.creds)
 	if err != nil {
 		return nil, err
 	}
 
 	container := TokenDetailsContainer{}
-	err = json.Unmarshal(body, &container)
+	err = json.Unmarshal(response, &container)
 	if err != nil {
 		return nil, err
 	}
@@ -118,30 +134,30 @@ func (c *Client) FetchTokenMarketValues(symbols []string, currency string) (map[
 	item := map[string]thirdparty.TokenMarketValues{}
 	for _, smbls := range chunks {
 		realSymbols := utils.RenameSymbols(smbls)
-		url := fmt.Sprintf("%s/data/pricemultifull?fsyms=%s&tsyms=%s&extraParams=Status.im", baseURL, strings.Join(realSymbols, ","), realCurrency)
-		resp, err := c.DoQuery(url)
-		if err != nil {
-			return item, err
-		}
-		defer resp.Body.Close()
 
-		body, err := ioutil.ReadAll(resp.Body)
+		params := url.Values{}
+		params.Add("fsyms", strings.Join(realSymbols, ","))
+		params.Add("tsyms", realCurrency)
+		params.Add("extraParams", extraParamStatus)
+
+		url := fmt.Sprintf("%s/data/pricemultifull", c.baseURL)
+		response, err := c.httpClient.DoGetRequest(context.Background(), url, params, c.creds)
 		if err != nil {
-			return item, err
+			return nil, err
 		}
 
 		container := MarketValuesContainer{}
-		err = json.Unmarshal(body, &container)
+		err = json.Unmarshal(response, &container)
 
 		if len(container.Raw) == 0 {
-			return nil, fmt.Errorf("no data found - %s", string(body))
+			return nil, fmt.Errorf("no data found - %s", string(response))
 		}
 		if err != nil {
-			return nil, fmt.Errorf("%s - %s", err, string(body))
+			return nil, fmt.Errorf("%s - %s", err, string(response))
 		}
 
 		for _, symbol := range smbls {
-			item[symbol] = container.Raw[utils.GetRealSymbol(symbol)][utils.GetRealSymbol(currency)]
+			item[symbol] = container.Raw[utils.GetRealSymbol(symbol)][realCurrency]
 		}
 	}
 	return item, nil
@@ -150,20 +166,21 @@ func (c *Client) FetchTokenMarketValues(symbols []string, currency string) (map[
 func (c *Client) FetchHistoricalHourlyPrices(symbol string, currency string, limit int, aggregate int) ([]thirdparty.HistoricalPrice, error) {
 	item := []thirdparty.HistoricalPrice{}
 
-	url := fmt.Sprintf("%s/data/v2/histohour?fsym=%s&tsym=%s&aggregate=%d&limit=%d&extraParams=Status.im", baseURL, utils.GetRealSymbol(symbol), currency, aggregate, limit)
-	resp, err := c.DoQuery(url)
-	if err != nil {
-		return item, err
-	}
-	defer resp.Body.Close()
+	params := url.Values{}
+	params.Add("fsym", utils.GetRealSymbol(symbol))
+	params.Add("tsym", currency)
+	params.Add("aggregate", fmt.Sprintf("%d", aggregate))
+	params.Add("limit", fmt.Sprintf("%d", limit))
+	params.Add("extraParams", extraParamStatus)
 
-	body, err := ioutil.ReadAll(resp.Body)
+	url := fmt.Sprintf("%s/data/v2/histohour", c.baseURL)
+	response, err := c.httpClient.DoGetRequest(context.Background(), url, params, c.creds)
 	if err != nil {
 		return item, err
 	}
 
 	container := HistoricalPricesData{}
-	err = json.Unmarshal(body, &container)
+	err = json.Unmarshal(response, &container)
 	if err != nil {
 		return item, err
 	}
@@ -176,20 +193,22 @@ func (c *Client) FetchHistoricalHourlyPrices(symbol string, currency string, lim
 func (c *Client) FetchHistoricalDailyPrices(symbol string, currency string, limit int, allData bool, aggregate int) ([]thirdparty.HistoricalPrice, error) {
 	item := []thirdparty.HistoricalPrice{}
 
-	url := fmt.Sprintf("%s/data/v2/histoday?fsym=%s&tsym=%s&aggregate=%d&limit=%d&allData=%v&extraParams=Status.im", baseURL, utils.GetRealSymbol(symbol), currency, aggregate, limit, allData)
-	resp, err := c.DoQuery(url)
-	if err != nil {
-		return item, err
-	}
-	defer resp.Body.Close()
+	params := url.Values{}
+	params.Add("fsym", utils.GetRealSymbol(symbol))
+	params.Add("tsym", currency)
+	params.Add("aggregate", fmt.Sprintf("%d", aggregate))
+	params.Add("limit", fmt.Sprintf("%d", limit))
+	params.Add("allData", fmt.Sprintf("%v", allData))
+	params.Add("extraParams", extraParamStatus)
 
-	body, err := ioutil.ReadAll(resp.Body)
+	url := fmt.Sprintf("%s/data/v2/histoday", c.baseURL)
+	response, err := c.httpClient.DoGetRequest(context.Background(), url, params, c.creds)
 	if err != nil {
 		return item, err
 	}
 
 	container := HistoricalPricesData{}
-	err = json.Unmarshal(body, &container)
+	err = json.Unmarshal(response, &container)
 	if err != nil {
 		return item, err
 	}
@@ -197,4 +216,8 @@ func (c *Client) FetchHistoricalDailyPrices(symbol string, currency string, limi
 	item = container.Data.HistoricalData
 
 	return item, nil
+}
+
+func (c *Client) ID() string {
+	return c.id
 }

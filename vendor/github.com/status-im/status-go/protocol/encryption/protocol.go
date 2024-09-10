@@ -427,7 +427,7 @@ func (p *Protocol) EncryptCommunityGrants(privateKey *ecdsa.PrivateKey, recipien
 	grants := make(map[uint32][]byte)
 
 	for recipientKey, grant := range recipientGrants {
-		sharedKey, err := generateSharedKey(privateKey, recipientKey)
+		sharedKey, err := GenerateSharedKey(privateKey, recipientKey)
 		if err != nil {
 			return nil, err
 		}
@@ -452,7 +452,7 @@ func (p *Protocol) DecryptCommunityGrant(myIdentityKey *ecdsa.PrivateKey, sender
 		return nil, errors.New("can't find related grant in the map")
 	}
 
-	sharedKey, err := generateSharedKey(myIdentityKey, senderKey)
+	sharedKey, err := GenerateSharedKey(myIdentityKey, senderKey)
 	if err != nil {
 		return nil, err
 	}
@@ -538,6 +538,10 @@ func (p *Protocol) ProcessPublicBundle(myIdentityKey *ecdsa.PrivateKey, bundle *
 	}
 
 	return p.multidevice.AddInstallations(bundle.GetIdentity(), bundle.GetTimestamp(), installations, enabled)
+}
+
+func (p *Protocol) AddInstallation(identity []byte, timestamp int64, installation *multidevice.Installation, enabled bool) ([]*multidevice.Installation, error) {
+	return p.multidevice.AddInstallations(identity, timestamp, []*multidevice.Installation{installation}, enabled)
 }
 
 func (p *Protocol) GetMultiDevice() *multidevice.Multidevice {

@@ -109,6 +109,15 @@ func (w *GethWakuWrapper) ListenAddresses() ([]string, error) {
 	return nil, errors.New("not available in WakuV1")
 }
 
+func (w *GethWakuWrapper) RelayPeersByTopic(topic string) (*types.PeerList, error) {
+	return nil, errors.New("not available in WakuV1")
+}
+
+// ENR function only added for compatibility with waku V2
+func (w *GethWakuWrapper) ENR() (string, error) {
+	return "", errors.New("not available in WakuV1")
+}
+
 // PeerCount function only added for compatibility with waku V2
 func (w *GethWakuWrapper) DropPeer(peerID string) error {
 	return errors.New("not available in WakuV1")
@@ -116,6 +125,10 @@ func (w *GethWakuWrapper) DropPeer(peerID string) error {
 
 func (w *GethWakuWrapper) SubscribeToConnStatusChanges() (*types.ConnStatusSubscription, error) {
 	return nil, errors.New("not available in WakuV1")
+}
+
+func (w *GethWakuWrapper) SetCriteriaForMissingMessageVerification(peerID peer.ID, pubsubTopic string, contentTopics []string) error {
+	return errors.New("not available in WakuV1")
 }
 
 // Peers function only added for compatibility with waku V2
@@ -313,4 +326,10 @@ func GetWakuFilterFrom(f types.Filter) *wakucommon.Filter {
 // ID returns the filter ID
 func (w *wakuFilterWrapper) ID() string {
 	return w.id
+}
+
+func (w *GethWakuWrapper) ConfirmMessageDelivered(hashes []common.Hash) {
+}
+
+func (w *GethWakuWrapper) SetStorePeerID(peerID peer.ID) {
 }

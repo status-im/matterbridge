@@ -13,10 +13,10 @@ import (
 	"github.com/status-im/status-go/services/ens"
 	"github.com/status-im/status-go/services/stickers"
 	"github.com/status-im/status-go/services/wallet/bigint"
-	"github.com/status-im/status-go/services/wallet/bridge"
 	"github.com/status-im/status-go/services/wallet/collectibles"
 	walletCommon "github.com/status-im/status-go/services/wallet/common"
 	"github.com/status-im/status-go/services/wallet/market"
+	"github.com/status-im/status-go/services/wallet/router/pathprocessor"
 	"github.com/status-im/status-go/services/wallet/token"
 	"github.com/status-im/status-go/transactions"
 )
@@ -37,6 +37,14 @@ const (
 
 func (s SendType) IsCollectiblesTransfer() bool {
 	return s == ERC721Transfer || s == ERC1155Transfer
+}
+
+func (s SendType) IsEnsTransfer() bool {
+	return s == ENSRegister || s == ENSRelease || s == ENSSetPubKey
+}
+
+func (s SendType) IsStickersTransfer() bool {
+	return s == StickersBuy
 }
 
 func (s SendType) FetchPrices(marketManager *market.Manager, tokenID string) (map[string]float64, error) {
@@ -83,37 +91,76 @@ func (s SendType) FindToken(tokenManager *token.Manager, collectibles *collectib
 	}
 }
 
-func (s SendType) isTransfer() bool {
-	return s == Transfer || s == Swap || s.IsCollectiblesTransfer()
+// TODO: remove this function once we fully move to routerV2
+func (s SendType) isTransfer(routerV2Logic bool) bool {
+	return s == Transfer ||
+		s == Bridge && routerV2Logic ||
+		s == Swap ||
+		s.IsCollectiblesTransfer()
 }
 
 func (s SendType) needL1Fee() bool {
-	return s != ENSRegister && s != ENSRelease && s != ENSSetPubKey && s != StickersBuy
+	return !s.IsEnsTransfer() && !s.IsStickersTransfer()
 }
 
-func (s SendType) canUseBridge(b bridge.Bridge) bool {
-	bridgeName := b.Name()
+// canUseProcessor is used to check if certain SendType can be used with a given path processor
+func (s SendType) canUseProcessor(p pathprocessor.PathProcessor) bool {
+	pathProcessorName := p.Name()
 	switch s {
+	case Transfer:
+		return pathProcessorName == pathprocessor.ProcessorTransferName ||
+			pathProcessorName == pathprocessor.ProcessorBridgeHopName ||
+			pathProcessorName == pathprocessor.ProcessorBridgeCelerName
+	case Bridge:
+		return pathProcessorName == pathprocessor.ProcessorBridgeHopName ||
+			pathProcessorName == pathprocessor.ProcessorBridgeCelerName
+	case Swap:
+		return pathProcessorName == pathprocessor.ProcessorSwapParaswapName
 	case ERC721Transfer:
-		return bridgeName == ERC721TransferString
+		return pathProcessorName == pathprocessor.ProcessorERC721Name
 	case ERC1155Transfer:
-		return bridgeName == ERC1155TransferString
+		return pathProcessorName == pathprocessor.ProcessorERC1155Name
+	case ENSRegister:
+		return pathProcessorName == pathprocessor.ProcessorENSRegisterName
+	case ENSRelease:
+		return pathProcessorName == pathprocessor.ProcessorENSReleaseName
+	case ENSSetPubKey:
+		return pathProcessorName == pathprocessor.ProcessorENSPublicKeyName
+	case StickersBuy:
+		return pathProcessorName == pathprocessor.ProcessorStickersBuyName
 	default:
 		return true
 	}
 }
 
+func (s SendType) processZeroAmountInProcessor(amountIn *big.Int, amountOut *big.Int, processorName string) bool {
+	if amountIn.Cmp(pathprocessor.ZeroBigIntValue) == 0 {
+		if s == Transfer {
+			if processorName != pathprocessor.ProcessorTransferName {
+				return false
+			}
+		} else if s == Swap {
+			if amountOut.Cmp(pathprocessor.ZeroBigIntValue) == 0 {
+				return false
+			}
+		} else {
+			return false
+		}
+	}
+
+	return true
+}
+
 func (s SendType) isAvailableBetween(from, to *params.Network) bool {
-	if s.IsCollectiblesTransfer() {
+	if s.IsCollectiblesTransfer() ||
+		s.IsEnsTransfer() ||
+		s.IsStickersTransfer() ||
+		s == Swap {
 		return from.ChainID == to.ChainID
 	}
 
 	if s == Bridge {
 		return from.ChainID != to.ChainID
-	}
-
-	if s == Swap {
-		return from.ChainID == to.ChainID
 	}
 
 	return true
@@ -139,6 +186,10 @@ func (s SendType) isAvailableFor(network *params.Network) bool {
 		return swapAllowedNetworks[network.ChainID]
 	}
 
+	if s.IsEnsTransfer() || s.IsStickersTransfer() {
+		return network.ChainID == walletCommon.EthereumMainnet || network.ChainID == walletCommon.EthereumSepolia
+	}
+
 	// Check for any SendType available for all networks
 	if s == Transfer || s == Bridge || s.IsCollectiblesTransfer() || allAllowedNetworks[network.ChainID] {
 		return true
@@ -147,10 +198,11 @@ func (s SendType) isAvailableFor(network *params.Network) bool {
 	return false
 }
 
+// TODO: remove this function once we fully move to routerV2
 func (s SendType) EstimateGas(ensService *ens.Service, stickersService *stickers.Service, network *params.Network, from common.Address, tokenID string) uint64 {
 	tx := transactions.SendTxArgs{
 		From:  (types.Address)(from),
-		Value: (*hexutil.Big)(zero),
+		Value: (*hexutil.Big)(pathprocessor.ZeroBigIntValue),
 	}
 	switch s {
 	case ENSRegister:

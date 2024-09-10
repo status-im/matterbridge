@@ -177,11 +177,12 @@ func (s *WakuStore) Request(ctx context.Context, criteria Criteria, opts ...Requ
 	}
 
 	result := &Result{
-		store:        s,
-		messages:     response.Messages,
-		storeRequest: storeRequest,
-		peerID:       params.selectedPeer,
-		cursor:       response.PaginationCursor,
+		store:         s,
+		messages:      response.Messages,
+		storeRequest:  storeRequest,
+		storeResponse: response,
+		peerID:        params.selectedPeer,
+		cursor:        response.PaginationCursor,
 	}
 
 	return result, nil
@@ -213,12 +214,12 @@ func (s *WakuStore) Exists(ctx context.Context, messageHash wpb.MessageHash, opt
 func (s *WakuStore) next(ctx context.Context, r *Result) (*Result, error) {
 	if r.IsComplete() {
 		return &Result{
-			store:        s,
-			started:      true,
-			messages:     []*pb.WakuMessageKeyValue{},
-			cursor:       nil,
-			storeRequest: r.storeRequest,
-			peerID:       r.PeerID(),
+			store:         s,
+			messages:      nil,
+			cursor:        nil,
+			storeRequest:  r.storeRequest,
+			storeResponse: r.storeResponse,
+			peerID:        r.PeerID(),
 		}, nil
 	}
 
@@ -232,12 +233,12 @@ func (s *WakuStore) next(ctx context.Context, r *Result) (*Result, error) {
 	}
 
 	result := &Result{
-		started:      true,
-		store:        s,
-		messages:     response.Messages,
-		storeRequest: storeRequest,
-		peerID:       r.PeerID(),
-		cursor:       response.PaginationCursor,
+		store:         s,
+		messages:      response.Messages,
+		storeRequest:  storeRequest,
+		storeResponse: response,
+		peerID:        r.PeerID(),
+		cursor:        response.PaginationCursor,
 	}
 
 	return result, nil
@@ -245,12 +246,16 @@ func (s *WakuStore) next(ctx context.Context, r *Result) (*Result, error) {
 }
 
 func (s *WakuStore) queryFrom(ctx context.Context, storeRequest *pb.StoreQueryRequest, selectedPeer peer.ID) (*pb.StoreQueryResponse, error) {
-	logger := s.log.With(logging.HostID("peer", selectedPeer))
-	logger.Info("sending store request")
+	logger := s.log.With(logging.HostID("peer", selectedPeer), zap.String("requestId", hex.EncodeToString([]byte(storeRequest.RequestId))))
+
+	logger.Debug("sending store request")
 
 	stream, err := s.h.NewStream(ctx, selectedPeer, StoreQueryID_v300)
 	if err != nil {
 		logger.Error("creating stream to peer", zap.Error(err))
+		if ps, ok := s.h.Peerstore().(peerstore.WakuPeerstore); ok {
+			ps.AddConnFailure(peer.AddrInfo{ID: selectedPeer})
+		}
 		return nil, err
 	}
 

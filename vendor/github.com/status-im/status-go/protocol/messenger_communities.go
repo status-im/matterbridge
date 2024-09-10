@@ -36,6 +36,7 @@ import (
 	"github.com/status-im/status-go/protocol/communities"
 	"github.com/status-im/status-go/protocol/communities/token"
 	"github.com/status-im/status-go/protocol/discord"
+	"github.com/status-im/status-go/protocol/encryption"
 	"github.com/status-im/status-go/protocol/protobuf"
 	"github.com/status-im/status-go/protocol/requests"
 	"github.com/status-im/status-go/protocol/transport"
@@ -152,7 +153,15 @@ func (m *Messenger) publishOrg(org *communities.Community, shouldRekey bool) err
 		rawMessage.HashRatchetGroupID = org.ID()
 		rawMessage.Recipients = members
 	}
-	_, err = m.sender.SendPublic(context.Background(), org.IDString(), rawMessage)
+	messageID, err := m.sender.SendPublic(context.Background(), org.IDString(), rawMessage)
+	if err == nil {
+		m.logger.Debug("published community",
+			zap.String("pubsubTopic", org.PubsubTopic()),
+			zap.String("communityID", org.IDString()),
+			zap.String("messageID", hexutil.Encode(messageID)),
+			zap.Uint64("clock", org.Clock()),
+		)
+	}
 	return err
 }
 
@@ -179,8 +188,13 @@ func (m *Messenger) publishCommunityEvents(community *communities.Community, msg
 }
 
 func (m *Messenger) publishCommunityPrivilegedMemberSyncMessage(msg *communities.CommunityPrivilegedMemberSyncMessage) error {
+	community, err := m.GetCommunityByID(msg.CommunityPrivilegedUserSyncMessage.CommunityId)
+	if err != nil {
+		return err
+	}
 
-	m.logger.Debug("publishing privileged user sync message", zap.Any("event", msg))
+	m.logger.Debug("publishing privileged user sync message",
+		zap.Any("receivers", msg.Receivers), zap.Any("type", msg.CommunityPrivilegedUserSyncMessage.Type))
 
 	payload, err := proto.Marshal(msg.CommunityPrivilegedUserSyncMessage)
 	if err != nil {
@@ -189,7 +203,7 @@ func (m *Messenger) publishCommunityPrivilegedMemberSyncMessage(msg *communities
 
 	rawMessage := &common.RawMessage{
 		Payload:             payload,
-		Sender:              msg.CommunityPrivateKey, // if empty, sender private key will be used in SendPrivate
+		Sender:              community.PrivateKey(),
 		SkipEncryptionLayer: true,
 		MessageType:         protobuf.ApplicationMetadataMessage_COMMUNITY_PRIVILEGED_USER_SYNC_MESSAGE,
 	}
@@ -285,26 +299,12 @@ func (m *Messenger) handleCommunitiesSubscription(c chan *communities.Subscripti
 	// We check every 5 minutes if we need to publish
 	ticker := time.NewTicker(5 * time.Minute)
 
-	recentlyPublishedOrgs := func() map[string]*communities.Community {
-		result := make(map[string]*communities.Community)
-
-		controlledCommunities, err := m.communitiesManager.Controlled()
-		if err != nil {
-			m.logger.Warn("failed to retrieve orgs", zap.Error(err))
-			return result
-		}
-
-		for _, org := range controlledCommunities {
-			result[org.IDString()] = org
-		}
-
-		return result
-	}()
+	recentlyPublishedOrgs := make(map[string]*communities.Community, 0)
 
 	publishOrgAndDistributeEncryptionKeys := func(community *communities.Community) {
 		recentlyPublishedOrg := recentlyPublishedOrgs[community.IDString()]
 
-		if recentlyPublishedOrg != nil && community.Clock() <= recentlyPublishedOrg.Clock() {
+		if recentlyPublishedOrg != nil && community.Clock() < recentlyPublishedOrg.Clock() {
 			return
 		}
 
@@ -366,7 +366,6 @@ func (m *Messenger) handleCommunitiesSubscription(c chan *communities.Subscripti
 			m.logger.Warn("failed to publish public shard info", zap.Error(err))
 			return
 		}
-		m.logger.Debug("published public shard info")
 
 		// signal client with published community
 		if m.config.messengerSignalsHandler != nil {
@@ -451,28 +450,13 @@ func (m *Messenger) handleCommunitiesSubscription(c chan *communities.Subscripti
 
 					m.processCommunityChanges(state)
 
-					response, err := m.saveDataAndPrepareResponse(state)
+					_, err = m.saveDataAndPrepareResponse(state)
 					if err != nil {
 						m.logger.Error("failed to save data and prepare response")
 					}
 
-					// control node changed and we were kicked out. It now awaits our addresses
-					if communityResponse.Changes.ControlNodeChanged != nil && communityResponse.Changes.MemberKicked {
-						requestToJoin, err := m.sendSharedAddressToControlNode(communityResponse.Community.ControlNode(), communityResponse.Community)
-
-						if err != nil {
-							m.logger.Error("share address to control node failed", zap.String("id", types.EncodeHex(communityResponse.Community.ID())), zap.Error(err))
-
-							if err == communities.ErrRevealedAccountsAbsent || err == communities.ErrNoRevealedAccountsSignature {
-								m.AddActivityCenterNotificationToResponse(communityResponse.Community.IDString(), ActivityCenterNotificationTypeShareAccounts, response)
-							}
-						} else {
-							state.Response.AddRequestToJoinCommunity(requestToJoin)
-						}
-					}
-
 					if m.config.messengerSignalsHandler != nil {
-						m.config.messengerSignalsHandler.MessengerResponse(response)
+						m.config.messengerSignalsHandler.MessengerResponse(state.Response)
 					}
 				}
 
@@ -580,10 +564,37 @@ func (m *Messenger) HandleCommunityEncryptionKeysRequest(state *ReceivedMessageS
 		return communities.ErrNotControlNode
 	}
 	signer := state.CurrentMessageState.PublicKey
-	return m.handleCommunityEncryptionKeysRequest(community, signer)
+	return m.handleCommunityEncryptionKeysRequest(community, message.ChatIds, signer)
 }
 
-func (m *Messenger) handleCommunityEncryptionKeysRequest(community *communities.Community, signer *ecdsa.PublicKey) error {
+func (m *Messenger) HandleCommunitySharedAddressesRequest(state *ReceivedMessageState, message *protobuf.CommunitySharedAddressesRequest, statusMessage *v1protocol.StatusMessage) error {
+	community, err := m.communitiesManager.GetByID(message.CommunityId)
+	if err != nil {
+		return err
+	}
+
+	if !community.IsControlNode() {
+		return communities.ErrNotControlNode
+	}
+	signer := state.CurrentMessageState.PublicKey
+	return m.handleCommunitySharedAddressesRequest(state, community, signer)
+}
+
+func (m *Messenger) HandleCommunitySharedAddressesResponse(state *ReceivedMessageState, message *protobuf.CommunitySharedAddressesResponse, statusMessage *v1protocol.StatusMessage) error {
+	community, err := m.communitiesManager.GetByID(message.CommunityId)
+	if err != nil {
+		return err
+	}
+
+	signer := state.CurrentMessageState.PublicKey
+	return m.handleCommunitySharedAddressesResponse(state, community, signer, message.RevealedAccounts)
+}
+
+func (m *Messenger) HandleCommunityTokenAction(state *ReceivedMessageState, message *protobuf.CommunityTokenAction, statusMessage *v1protocol.StatusMessage) error {
+	return m.communityTokensService.ProcessCommunityTokenAction(message)
+}
+
+func (m *Messenger) handleCommunityEncryptionKeysRequest(community *communities.Community, channelIDs []string, signer *ecdsa.PublicKey) error {
 	if !community.HasMember(signer) {
 		return communities.ErrMemberNotFound
 	}
@@ -604,7 +615,17 @@ func (m *Messenger) handleCommunityEncryptionKeysRequest(community *communities.
 		}
 	}
 
+	requestedChannelIDs := map[string]bool{}
+	for _, channelID := range channelIDs {
+		requestedChannelIDs[channelID] = true
+	}
+
 	for channelID, channel := range community.Chats() {
+		// Skip channels that weren't requested
+		if len(requestedChannelIDs) > 0 && !requestedChannelIDs[channelID] {
+			continue
+		}
+
 		channelMembers := channel.GetMembers()
 		member, exists := channelMembers[pkStr]
 		if exists && community.ChannelEncrypted(channelID) {
@@ -620,6 +641,79 @@ func (m *Messenger) handleCommunityEncryptionKeysRequest(community *communities.
 	if err != nil {
 		m.logger.Error("failed to send community keys", zap.Error(err), zap.String("community ID", community.IDString()))
 	}
+
+	return nil
+}
+
+func (m *Messenger) handleCommunitySharedAddressesRequest(state *ReceivedMessageState, community *communities.Community, signer *ecdsa.PublicKey) error {
+	if !community.HasMember(signer) {
+		return communities.ErrMemberNotFound
+	}
+
+	pkStr := common.PubkeyToHex(signer)
+
+	revealedAccounts, err := m.communitiesManager.GetRevealedAddresses(community.ID(), pkStr)
+	if err != nil {
+		return err
+	}
+
+	usersSharedAddressesProto := &protobuf.CommunitySharedAddressesResponse{
+		CommunityId:      community.ID(),
+		RevealedAccounts: revealedAccounts,
+	}
+
+	payload, err := proto.Marshal(usersSharedAddressesProto)
+	if err != nil {
+		return err
+	}
+
+	rawMessage := common.RawMessage{
+		Payload:             payload,
+		Sender:              community.PrivateKey(),
+		CommunityID:         community.ID(),
+		SkipEncryptionLayer: true,
+		MessageType:         protobuf.ApplicationMetadataMessage_COMMUNITY_SHARED_ADDRESSES_RESPONSE,
+		PubsubTopic:         shard.DefaultNonProtectedPubsubTopic(),
+		ResendType:          common.ResendTypeRawMessage,
+		ResendMethod:        common.ResendMethodSendPrivate,
+		Recipients:          []*ecdsa.PublicKey{signer},
+	}
+
+	_, err = m.sender.SendPrivate(context.Background(), signer, &rawMessage)
+	if err != nil {
+		return err
+	}
+
+	if community.IsPrivilegedMember(signer) {
+		memberRole := community.MemberRole(signer)
+		newPrivilegedMember := make(map[protobuf.CommunityMember_Roles][]*ecdsa.PublicKey)
+		newPrivilegedMember[memberRole] = []*ecdsa.PublicKey{signer}
+		if err = m.communitiesManager.ShareRequestsToJoinWithPrivilegedMembers(community, newPrivilegedMember); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (m *Messenger) handleCommunitySharedAddressesResponse(state *ReceivedMessageState, community *communities.Community, signer *ecdsa.PublicKey, revealedAccounts []*protobuf.RevealedAccount) error {
+	isControlNodeMsg := common.IsPubKeyEqual(community.ControlNode(), signer)
+	if !isControlNodeMsg {
+		return errors.New(ErrSyncMessagesSentByNonControlNode)
+	}
+
+	requestID := communities.CalculateRequestID(common.PubkeyToHex(&m.identity.PublicKey), community.ID())
+	err := m.communitiesManager.SaveRequestToJoinRevealedAddresses(requestID, revealedAccounts)
+	if err != nil {
+		return nil
+	}
+
+	requestsToJoin, err := m.communitiesManager.GetCommunityRequestsToJoinWithRevealedAddresses(community.ID())
+	if err != nil {
+		return nil
+	}
+
+	state.Response.AddRequestsToJoinCommunity(requestsToJoin)
 
 	return nil
 }
@@ -1030,6 +1124,7 @@ func (m *Messenger) joinCommunity(ctx context.Context, communityID types.HexByte
 	if err = m.PublishIdentityImage(); err != nil {
 		return nil, err
 	}
+
 	// Was applicant not a member and successfully joined?
 	if !isCommunityMember && community.Joined() {
 		joinedNotification := &localnotifications.Notification{
@@ -1042,6 +1137,26 @@ func (m *Messenger) joinCommunity(ctx context.Context, communityID types.HexByte
 			Image:    "",
 		}
 		response.AddNotification(joinedNotification)
+
+		// Activity Center notification
+		requestID := communities.CalculateRequestID(common.PubkeyToHex(&m.identity.PublicKey), communityID)
+		notification, err := m.persistence.GetActivityCenterNotificationByID(requestID)
+		if err != nil {
+			return nil, err
+		}
+
+		if notification != nil && notification.MembershipStatus != ActivityCenterMembershipStatusAccepted {
+			notification.MembershipStatus = ActivityCenterMembershipStatusAccepted
+			notification.Read = false
+			notification.Deleted = false
+
+			notification.UpdatedAt = m.GetCurrentTimeInMillis()
+			err = m.addActivityCenterNotification(response, notification, nil)
+			if err != nil {
+				m.logger.Error("failed to update request to join accepted notification", zap.Error(err))
+				return nil, err
+			}
+		}
 	}
 
 	return response, nil
@@ -1075,6 +1190,9 @@ func (m *Messenger) SpectateCommunity(communityID types.HexBytes) (*MessengerRes
 	if err = m.subscribeToCommunityShard(community.ID(), community.Shard()); err != nil {
 		return nil, err
 	}
+
+	// sync community
+	m.asyncRequestAllHistoricMessages()
 
 	return response, nil
 }
@@ -1368,7 +1486,7 @@ func (m *Messenger) RequestToJoinCommunity(request *requests.RequestToJoinCommun
 		return nil, err
 	}
 
-	rawMessage := common.RawMessage{
+	rawMessage := &common.RawMessage{
 		Payload:             payload,
 		CommunityID:         community.ID(),
 		ResendType:          common.ResendTypeRawMessage,
@@ -1377,30 +1495,32 @@ func (m *Messenger) RequestToJoinCommunity(request *requests.RequestToJoinCommun
 		PubsubTopic:         shard.DefaultNonProtectedPubsubTopic(),
 	}
 
-	_, err = m.SendMessageToControlNode(community, &rawMessage)
+	_, err = m.SendMessageToControlNode(community, rawMessage)
 	if err != nil {
 		return nil, err
 	}
 
+	if _, err = m.AddRawMessageToWatch(rawMessage); err != nil {
+		return nil, err
+	}
+
 	if !community.AutoAccept() {
-		privilegedMembers := community.GetFilteredPrivilegedMembers(map[string]struct{}{})
+		privilegedMembersSorted := community.GetFilteredPrivilegedMembers(map[string]struct{}{m.IdentityPublicKeyString(): {}})
+		privMembersArray := []*ecdsa.PublicKey{}
 
-		for _, member := range privilegedMembers[protobuf.CommunityMember_ROLE_OWNER] {
-			rawMessage.Recipients = append(rawMessage.Recipients, member)
-			_, err := m.sender.SendPrivate(context.Background(), member, &rawMessage)
-			if err != nil {
-				return nil, err
-			}
-		}
-		for _, member := range privilegedMembers[protobuf.CommunityMember_ROLE_TOKEN_MASTER] {
-			rawMessage.Recipients = append(rawMessage.Recipients, member)
-			_, err := m.sender.SendPrivate(context.Background(), member, &rawMessage)
-			if err != nil {
-				return nil, err
-			}
+		if rawMessage.ResendMethod != common.ResendMethodSendPrivate {
+			privMembersArray = append(privMembersArray, privilegedMembersSorted[protobuf.CommunityMember_ROLE_OWNER]...)
 		}
 
-		// don't send revealed addresses to admins
+		privMembersArray = append(privMembersArray, privilegedMembersSorted[protobuf.CommunityMember_ROLE_TOKEN_MASTER]...)
+		privMembersArray = append(privMembersArray, privilegedMembersSorted[protobuf.CommunityMember_ROLE_ADMIN]...)
+
+		rawMessage.ResendMethod = common.ResendMethodSendPrivate
+		rawMessage.ID = ""
+		rawMessage.Recipients = privMembersArray
+
+		// don't send revealed addresses to privileged members
+		// tokenMaster and owner without community private key will receive them from control node
 		requestToJoinProto.RevealedAccounts = make([]*protobuf.RevealedAccount, 0)
 		payload, err = proto.Marshal(requestToJoinProto)
 		if err != nil {
@@ -1408,17 +1528,18 @@ func (m *Messenger) RequestToJoinCommunity(request *requests.RequestToJoinCommun
 		}
 		rawMessage.Payload = payload
 
-		for _, member := range privilegedMembers[protobuf.CommunityMember_ROLE_ADMIN] {
-			rawMessage.Recipients = append(rawMessage.Recipients, member)
-			_, err := m.sender.SendPrivate(context.Background(), member, &rawMessage)
+		for _, member := range rawMessage.Recipients {
+			_, err := m.sender.SendPrivate(context.Background(), member, rawMessage)
 			if err != nil {
 				return nil, err
 			}
 		}
-	}
 
-	if _, err = m.UpsertRawMessageToWatch(&rawMessage); err != nil {
-		return nil, err
+		if len(rawMessage.Recipients) > 0 {
+			if _, err = m.AddRawMessageToWatch(rawMessage); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	response := &MessengerResponse{}
@@ -1552,24 +1673,7 @@ func (m *Messenger) EditSharedAddressesForCommunity(request *requests.EditShared
 		return nil, err
 	}
 
-	// send edit message also to TokenMasters and Owners
-	skipMembers := make(map[string]struct{})
-	skipMembers[common.PubkeyToHex(&m.identity.PublicKey)] = struct{}{}
-
-	privilegedMembers := community.GetFilteredPrivilegedMembers(skipMembers)
-	for role, members := range privilegedMembers {
-		if len(members) == 0 || (role != protobuf.CommunityMember_ROLE_TOKEN_MASTER && role != protobuf.CommunityMember_ROLE_OWNER) {
-			continue
-		}
-		for _, member := range members {
-			rawMessage.Recipients = append(rawMessage.Recipients, member)
-			_, err := m.sender.SendPrivate(context.Background(), member, &rawMessage)
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-	if _, err = m.UpsertRawMessageToWatch(&rawMessage); err != nil {
+	if _, err = m.AddRawMessageToWatch(&rawMessage); err != nil {
 		return nil, err
 	}
 
@@ -1577,6 +1681,57 @@ func (m *Messenger) EditSharedAddressesForCommunity(request *requests.EditShared
 	response.AddCommunity(community)
 
 	return response, nil
+}
+
+func (m *Messenger) PublishTokenActionToPrivilegedMembers(communityID []byte, chainID uint64, contractAddress string, actionType protobuf.CommunityTokenAction_ActionType) error {
+
+	community, err := m.communitiesManager.GetByID(communityID)
+	if err != nil {
+		return err
+	}
+
+	tokenActionProto := &protobuf.CommunityTokenAction{
+		ChainId:         chainID,
+		ContractAddress: contractAddress,
+		ActionType:      actionType,
+	}
+
+	payload, err := proto.Marshal(tokenActionProto)
+	if err != nil {
+		return err
+	}
+
+	rawMessage := common.RawMessage{
+		Payload:      payload,
+		CommunityID:  community.ID(),
+		ResendType:   common.ResendTypeRawMessage,
+		ResendMethod: common.ResendMethodSendPrivate,
+		MessageType:  protobuf.ApplicationMetadataMessage_COMMUNITY_TOKEN_ACTION,
+		PubsubTopic:  community.PubsubTopic(),
+	}
+
+	skipMembers := make(map[string]struct{})
+	skipMembers[common.PubkeyToHex(&m.identity.PublicKey)] = struct{}{}
+	privilegedMembers := community.GetFilteredPrivilegedMembers(skipMembers)
+
+	allRecipients := privilegedMembers[protobuf.CommunityMember_ROLE_OWNER]
+	allRecipients = append(allRecipients, privilegedMembers[protobuf.CommunityMember_ROLE_TOKEN_MASTER]...)
+	rawMessage.Recipients = allRecipients
+
+	for _, recipient := range rawMessage.Recipients {
+		_, err := m.sender.SendPrivate(context.Background(), recipient, &rawMessage)
+		if err != nil {
+			return err
+		}
+	}
+
+	if len(allRecipients) > 0 {
+		if _, err = m.AddRawMessageToWatch(&rawMessage); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (m *Messenger) GetRevealedAccounts(communityID types.HexBytes, memberPk string) ([]*protobuf.RevealedAccount, error) {
@@ -1722,22 +1877,47 @@ func (m *Messenger) CancelRequestToJoinCommunity(ctx context.Context, request *r
 		return nil, err
 	}
 
+	// NOTE: rawMessage.ID is generated from payload + sender + messageType
+	// rawMessage.ID will be the same for control node and privileged members, but for
+	// community without owner token resend type is different
+	// in order not to override msg to control node by message for privileged members,
+	// we skip storing the same message for privileged members
+	avoidDuplicateWatchingForPrivilegedMembers := community.AutoAccept() || rawMessage.ResendMethod != common.ResendMethodSendPrivate
+	if avoidDuplicateWatchingForPrivilegedMembers {
+		if _, err = m.AddRawMessageToWatch(&rawMessage); err != nil {
+			return nil, err
+		}
+	}
+
 	if !community.AutoAccept() {
 		// send cancelation to community admins also
 		rawMessage.Payload = payload
+		rawMessage.ResendMethod = common.ResendMethodSendPrivate
 
-		privilegedMembers := community.GetPrivilegedMembers()
-		for _, privilegedMember := range privilegedMembers {
-			rawMessage.Recipients = append(rawMessage.Recipients, privilegedMember)
+		privilegedMembersSorted := community.GetFilteredPrivilegedMembers(map[string]struct{}{m.IdentityPublicKeyString(): {}})
+		privMembersArray := privilegedMembersSorted[protobuf.CommunityMember_ROLE_TOKEN_MASTER]
+		privMembersArray = append(privMembersArray, privilegedMembersSorted[protobuf.CommunityMember_ROLE_ADMIN]...)
+
+		if !avoidDuplicateWatchingForPrivilegedMembers {
+			// control node was added to the recipients during 'SendMessageToControlNode'
+			rawMessage.Recipients = append(rawMessage.Recipients, privMembersArray...)
+		} else {
+			privMembersArray = append(privMembersArray, privilegedMembersSorted[protobuf.CommunityMember_ROLE_OWNER]...)
+			rawMessage.Recipients = privMembersArray
+		}
+
+		for _, privilegedMember := range privMembersArray {
 			_, err := m.sender.SendPrivate(context.Background(), privilegedMember, &rawMessage)
 			if err != nil {
 				return nil, err
 			}
 		}
-	}
 
-	if _, err = m.UpsertRawMessageToWatch(&rawMessage); err != nil {
-		return nil, err
+		if !avoidDuplicateWatchingForPrivilegedMembers {
+			if _, err = m.AddRawMessageToWatch(&rawMessage); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	response := &MessengerResponse{}
@@ -1812,8 +1992,9 @@ func (m *Messenger) acceptRequestToJoinCommunity(requestToJoin *communities.Requ
 			Shard:                    community.Shard().Protobuffer(),
 		}
 
-		if m.torrentClientReady() && m.communitiesManager.TorrentFileExists(community.IDString()) {
-			magnetlink, err := m.communitiesManager.GetHistoryArchiveMagnetlink(community.ID())
+		// The purpose of this torrent code is to get the 'magnetlink' to populate 'requestToJoinResponseProto.MagnetUri'
+		if m.archiveManager.IsReady() && m.archiveManager.TorrentFileExists(community.IDString()) {
+			magnetlink, err := m.archiveManager.GetHistoryArchiveMagnetlink(community.ID())
 			if err != nil {
 				m.logger.Warn("couldn't get magnet link for community", zap.Error(err))
 				return nil, err
@@ -1848,7 +2029,7 @@ func (m *Messenger) acceptRequestToJoinCommunity(requestToJoin *communities.Requ
 			return nil, err
 		}
 
-		if _, err = m.UpsertRawMessageToWatch(rawMessage); err != nil {
+		if _, err = m.AddRawMessageToWatch(rawMessage); err != nil {
 			return nil, err
 		}
 	}
@@ -1999,7 +2180,7 @@ func (m *Messenger) LeaveCommunity(communityID types.HexBytes) (*MessengerRespon
 		return nil, err
 	}
 
-	m.communitiesManager.StopHistoryArchiveTasksInterval(communityID)
+	m.archiveManager.StopHistoryArchiveTasksInterval(communityID)
 
 	err = m.syncCommunity(context.Background(), community, m.dispatchMessage)
 	if err != nil {
@@ -2036,7 +2217,7 @@ func (m *Messenger) LeaveCommunity(communityID types.HexBytes) (*MessengerRespon
 			return nil, err
 		}
 
-		if _, err = m.UpsertRawMessageToWatch(&rawMessage); err != nil {
+		if _, err = m.AddRawMessageToWatch(&rawMessage); err != nil {
 			return nil, err
 		}
 	}
@@ -2275,16 +2456,8 @@ func (m *Messenger) DeleteCommunityChat(communityID types.HexBytes, chatID strin
 	return response, nil
 }
 
-func (m *Messenger) useShards() bool {
-	nodeConfig, err := m.settings.GetNodeConfig()
-	if err != nil {
-		return false
-	}
-	return nodeConfig.WakuV2Config.UseShardAsDefaultTopic
-}
-
 func (m *Messenger) InitCommunityFilters(communityFiltersToInitialize []transport.CommunityFilterToInitialize) ([]*transport.Filter, error) {
-	return m.transport.InitCommunityFilters(communityFiltersToInitialize, m.useShards())
+	return m.transport.InitCommunityFilters(communityFiltersToInitialize)
 }
 
 func (m *Messenger) DefaultFilters(o *communities.Community) []transport.FiltersToInitialize {
@@ -2301,12 +2474,7 @@ func (m *Messenger) DefaultFilters(o *communities.Community) []transport.Filters
 		{ChatID: updatesChannelID, PubsubTopic: communityPubsubTopic},
 		{ChatID: mlChannelID, PubsubTopic: communityPubsubTopic},
 		{ChatID: memberUpdateChannelID, PubsubTopic: communityPubsubTopic},
-	}
-
-	if m.useShards() {
-		filters = append(filters, transport.FiltersToInitialize{ChatID: uncompressedPubKey, PubsubTopic: shard.DefaultNonProtectedPubsubTopic()})
-	} else {
-		filters = append(filters, transport.FiltersToInitialize{ChatID: uncompressedPubKey, PubsubTopic: communityPubsubTopic})
+		{ChatID: uncompressedPubKey, PubsubTopic: shard.DefaultNonProtectedPubsubTopic()},
 	}
 
 	return filters
@@ -2381,7 +2549,7 @@ func (m *Messenger) CreateCommunity(request *requests.CreateCommunity, createDef
 	}
 
 	if m.config.torrentConfig != nil && m.config.torrentConfig.Enabled && communitySettings.HistoryArchiveSupportEnabled {
-		go m.communitiesManager.StartHistoryArchiveTasksInterval(community, messageArchiveInterval)
+		go m.archiveManager.StartHistoryArchiveTasksInterval(community, messageArchiveInterval)
 	}
 
 	return response, nil
@@ -2568,7 +2736,10 @@ func (m *Messenger) CreateCommunityTokenPermission(request *requests.CreateCommu
 	}
 
 	if community.IsControlNode() {
-		m.communitiesManager.StartMembersReevaluationLoop(community.ID(), true)
+		err = m.communitiesManager.ScheduleMembersReevaluation(community.ID())
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// ensure HRkeys are synced
@@ -2721,10 +2892,10 @@ func (m *Messenger) EditCommunity(request *requests.EditCommunity) (*MessengerRe
 
 	id := community.ID()
 
-	if m.torrentClientReady() {
+	if m.archiveManager.IsReady() {
 		if !communitySettings.HistoryArchiveSupportEnabled {
-			m.communitiesManager.StopHistoryArchiveTasksInterval(id)
-		} else if !m.communitiesManager.IsSeedingHistoryArchiveTorrent(id) {
+			m.archiveManager.StopHistoryArchiveTasksInterval(id)
+		} else if !m.archiveManager.IsSeedingHistoryArchiveTorrent(id) {
 			var communities []*communities.Community
 			communities = append(communities, community)
 			go m.InitHistoryArchiveTasks(communities)
@@ -2806,7 +2977,7 @@ func (m *Messenger) ImportCommunity(ctx context.Context, key *ecdsa.PrivateKey) 
 		return nil, err
 	}
 
-	if m.torrentClientReady() {
+	if m.archiveManager.IsReady() {
 		var communities []*communities.Community
 		communities = append(communities, community)
 		go m.InitHistoryArchiveTasks(communities)
@@ -2879,12 +3050,12 @@ func (m *Messenger) MyCanceledRequestsToJoin() ([]*communities.RequestToJoin, er
 	return m.communitiesManager.CanceledRequestsToJoinForUser(&m.identity.PublicKey)
 }
 
-func (m *Messenger) MyCanceledRequestToJoinForCommunityID(communityID []byte) (*communities.RequestToJoin, error) {
-	return m.communitiesManager.CanceledRequestToJoinForUserForCommunityID(&m.identity.PublicKey, communityID)
-}
-
 func (m *Messenger) MyPendingRequestsToJoin() ([]*communities.RequestToJoin, error) {
 	return m.communitiesManager.PendingRequestsToJoinForUser(&m.identity.PublicKey)
+}
+
+func (m *Messenger) LatestRequestToJoinForCommunity(communityID types.HexBytes) (*communities.RequestToJoin, error) {
+	return m.communitiesManager.GetCommunityRequestToJoinWithRevealedAddresses(m.myHexIdentity(), communityID)
 }
 
 func (m *Messenger) PendingRequestsToJoinForCommunity(id types.HexBytes) ([]*communities.RequestToJoin, error) {
@@ -3384,7 +3555,7 @@ func (m *Messenger) handleCommunityShardAndFiltersFromProto(community *communiti
 	}
 
 	// Unsubscribing from existing shard
-	if community.Shard() != nil {
+	if community.Shard() != nil && community.Shard() != shard.FromProtobuff(message.GetShard()) {
 		err := m.unsubscribeFromShard(community.Shard())
 		if err != nil {
 			return err
@@ -3397,12 +3568,14 @@ func (m *Messenger) handleCommunityShardAndFiltersFromProto(community *communiti
 	if err != nil {
 		return err
 	}
+	// Update community filters in case of change of shard
+	if community.Shard() != shard.FromProtobuff(message.GetShard()) {
+		err = m.UpdateCommunityFilters(community)
+		if err != nil {
+			return err
+		}
 
-	err = m.UpdateCommunityFilters(community)
-	if err != nil {
-		return err
 	}
-
 	return nil
 }
 
@@ -3414,6 +3587,10 @@ func (m *Messenger) handleCommunityPrivilegedUserSyncMessage(state *ReceivedMess
 	community, err := m.communitiesManager.GetByID(message.CommunityId)
 	if err != nil {
 		return err
+	}
+
+	if community.IsControlNode() {
+		return nil
 	}
 
 	// Currently this type of msg coming from the control node.
@@ -3433,18 +3610,23 @@ func (m *Messenger) handleCommunityPrivilegedUserSyncMessage(state *ReceivedMess
 	case protobuf.CommunityPrivilegedUserSyncMessage_CONTROL_NODE_ACCEPT_REQUEST_TO_JOIN:
 		fallthrough
 	case protobuf.CommunityPrivilegedUserSyncMessage_CONTROL_NODE_REJECT_REQUEST_TO_JOIN:
-		requestsToJoin, err := m.communitiesManager.HandleRequestToJoinPrivilegedUserSyncMessage(message, community.ID())
+		requestsToJoin, err := m.communitiesManager.HandleRequestToJoinPrivilegedUserSyncMessage(message, community)
 		if err != nil {
-			return nil
+			return err
 		}
 		state.Response.AddRequestsToJoinCommunity(requestsToJoin)
 
 	case protobuf.CommunityPrivilegedUserSyncMessage_CONTROL_NODE_ALL_SYNC_REQUESTS_TO_JOIN:
-		nonAcceptedRequestsToJoin, err := m.communitiesManager.HandleSyncAllRequestToJoinForNewPrivilegedMember(message, community.ID())
+		nonAcceptedRequestsToJoin, err := m.communitiesManager.HandleSyncAllRequestToJoinForNewPrivilegedMember(message, community)
 		if err != nil {
-			return nil
+			return err
 		}
 		state.Response.AddRequestsToJoinCommunity(nonAcceptedRequestsToJoin)
+	case protobuf.CommunityPrivilegedUserSyncMessage_CONTROL_NODE_MEMBER_EDIT_SHARED_ADDRESSES:
+		err = m.communitiesManager.HandleEditSharedAddressesPrivilegedUserSyncMessage(message, community)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -3521,16 +3703,16 @@ func (m *Messenger) sendSharedAddressToControlNode(receiver *ecdsa.PublicKey, co
 		return nil, err
 	}
 
-	_, err = m.UpsertRawMessageToWatch(&rawMessage)
+	_, err = m.AddRawMessageToWatch(&rawMessage)
 
 	return requestToJoin, err
 }
 
 func (m *Messenger) HandleSyncInstallationCommunity(messageState *ReceivedMessageState, syncCommunity *protobuf.SyncInstallationCommunity, statusMessage *v1protocol.StatusMessage) error {
-	return m.handleSyncInstallationCommunity(messageState, syncCommunity, nil)
+	return m.handleSyncInstallationCommunity(messageState, syncCommunity)
 }
 
-func (m *Messenger) handleSyncInstallationCommunity(messageState *ReceivedMessageState, syncCommunity *protobuf.SyncInstallationCommunity, statusMessage *v1protocol.StatusMessage) error {
+func (m *Messenger) handleSyncInstallationCommunity(messageState *ReceivedMessageState, syncCommunity *protobuf.SyncInstallationCommunity) error {
 	logger := m.logger.Named("handleSyncInstallationCommunity")
 
 	// Should handle community
@@ -3611,12 +3793,14 @@ func (m *Messenger) handleSyncInstallationCommunity(messageState *ReceivedMessag
 		return err
 	}
 
-	// TODO: handle shard
+	// Passing shard as nil so that defaultProtected shard 32 is considered
 	err = m.handleCommunityDescription(messageState, signer, &cd, syncCommunity.Description, signer, nil)
-	if err != nil {
+	// Even if the Description is outdated we should proceed in order to sync settings and joined state
+	if err != nil && err != communities.ErrInvalidCommunityDescriptionClockOutdated {
 		logger.Debug("m.handleCommunityDescription error", zap.Error(err))
 		return err
 	}
+	descriptionOutdated := err == communities.ErrInvalidCommunityDescriptionClockOutdated
 
 	if syncCommunity.Settings != nil {
 		err = m.HandleSyncCommunitySettings(messageState, syncCommunity.Settings, nil)
@@ -3644,7 +3828,7 @@ func (m *Messenger) handleSyncInstallationCommunity(messageState *ReceivedMessag
 	}
 
 	// if we are not waiting for approval, join or leave the community
-	if !pending {
+	if !pending && !descriptionOutdated {
 		var mr *MessengerResponse
 		if syncCommunity.Joined {
 			mr, err = m.joinCommunity(context.Background(), syncCommunity.Id, false)
@@ -3700,38 +3884,38 @@ func (m *Messenger) HandleSyncCommunitySettings(messageState *ReceivedMessageSta
 
 func (m *Messenger) InitHistoryArchiveTasks(communities []*communities.Community) {
 
-	m.communitiesManager.LogStdout("initializing history archive tasks")
+	m.logger.Debug("initializing history archive tasks")
 
 	for _, c := range communities {
 
 		if c.Joined() {
 			settings, err := m.communitiesManager.GetCommunitySettingsByID(c.ID())
 			if err != nil {
-				m.communitiesManager.LogStdout("failed to get community settings", zap.Error(err))
+				m.logger.Error("failed to get community settings", zap.Error(err))
 				continue
 			}
 			if !settings.HistoryArchiveSupportEnabled {
-				m.communitiesManager.LogStdout("history archive support disabled for community", zap.String("id", c.IDString()))
+				m.logger.Debug("history archive support disabled for community", zap.String("id", c.IDString()))
 				continue
 			}
 
 			// Check if there's already a torrent file for this community and seed it
-			if m.communitiesManager.TorrentFileExists(c.IDString()) {
-				err = m.communitiesManager.SeedHistoryArchiveTorrent(c.ID())
+			if m.archiveManager.TorrentFileExists(c.IDString()) {
+				err = m.archiveManager.SeedHistoryArchiveTorrent(c.ID())
 				if err != nil {
-					m.communitiesManager.LogStdout("failed to seed history archive", zap.Error(err))
+					m.logger.Error("failed to seed history archive", zap.Error(err))
 				}
 			}
 
-			filters, err := m.communitiesManager.GetCommunityChatsFilters(c.ID())
+			filters, err := m.archiveManager.GetCommunityChatsFilters(c.ID())
 			if err != nil {
-				m.communitiesManager.LogStdout("failed to get community chats filters for community", zap.Error(err))
+				m.logger.Error("failed to get community chats filters for community", zap.Error(err))
 				continue
 			}
 
 			if len(filters) == 0 {
-				m.communitiesManager.LogStdout("no filters or chats for this community starting interval", zap.String("id", c.IDString()))
-				go m.communitiesManager.StartHistoryArchiveTasksInterval(c, messageArchiveInterval)
+				m.logger.Debug("no filters or chats for this community starting interval", zap.String("id", c.IDString()))
+				go m.archiveManager.StartHistoryArchiveTasksInterval(c, messageArchiveInterval)
 				continue
 			}
 
@@ -3746,7 +3930,7 @@ func (m *Messenger) InitHistoryArchiveTasks(communities []*communities.Community
 			// possibly missed since then
 			latestWakuMessageTimestamp, err := m.communitiesManager.GetLatestWakuMessageTimestamp(topics)
 			if err != nil {
-				m.communitiesManager.LogStdout("failed to get Latest waku message timestamp", zap.Error(err))
+				m.logger.Error("failed to get Latest waku message timestamp", zap.Error(err))
 				continue
 			}
 
@@ -3764,16 +3948,16 @@ func (m *Messenger) InitHistoryArchiveTasks(communities []*communities.Community
 			ms := m.getActiveMailserver(c.ID().String())
 			_, err = m.syncFiltersFrom(*ms, filters, uint32(latestWakuMessageTimestamp))
 			if err != nil {
-				m.communitiesManager.LogStdout("failed to request missing messages", zap.Error(err))
+				m.logger.Error("failed to request missing messages", zap.Error(err))
 				continue
 			}
 
 			// We figure out the end date of the last created archive and schedule
 			// the interval for creating future archives
 			// If the last end date is at least `interval` ago, we create an archive immediately first
-			lastArchiveEndDateTimestamp, err := m.communitiesManager.GetHistoryArchivePartitionStartTimestamp(c.ID())
+			lastArchiveEndDateTimestamp, err := m.archiveManager.GetHistoryArchivePartitionStartTimestamp(c.ID())
 			if err != nil {
-				m.communitiesManager.LogStdout("failed to get archive partition start timestamp", zap.Error(err))
+				m.logger.Error("failed to get archive partition start timestamp", zap.Error(err))
 				continue
 			}
 
@@ -3784,35 +3968,35 @@ func (m *Messenger) InitHistoryArchiveTasks(communities []*communities.Community
 			if lastArchiveEndDateTimestamp == 0 {
 				// No prior messages to be archived, so we just kick off the archive creation loop
 				// for future archives
-				go m.communitiesManager.StartHistoryArchiveTasksInterval(c, messageArchiveInterval)
+				go m.archiveManager.StartHistoryArchiveTasksInterval(c, messageArchiveInterval)
 			} else if durationSinceLastArchive < messageArchiveInterval {
 				// Last archive is less than `interval` old, wait until `interval` is complete,
 				// then create archive and kick off archive creation loop for future archives
 				// Seed current archive in the meantime
-				err := m.communitiesManager.SeedHistoryArchiveTorrent(c.ID())
+				err := m.archiveManager.SeedHistoryArchiveTorrent(c.ID())
 				if err != nil {
-					m.communitiesManager.LogStdout("failed to seed history archive", zap.Error(err))
+					m.logger.Error("failed to seed history archive", zap.Error(err))
 				}
 				timeToNextInterval := messageArchiveInterval - durationSinceLastArchive
 
-				m.communitiesManager.LogStdout("starting history archive tasks interval in", zap.Any("timeLeft", timeToNextInterval))
+				m.logger.Debug("starting history archive tasks interval in", zap.Any("timeLeft", timeToNextInterval))
 				time.AfterFunc(timeToNextInterval, func() {
-					err := m.communitiesManager.CreateAndSeedHistoryArchive(c.ID(), topics, lastArchiveEndDate, to.Add(timeToNextInterval), messageArchiveInterval, c.Encrypted())
+					err := m.archiveManager.CreateAndSeedHistoryArchive(c.ID(), topics, lastArchiveEndDate, to.Add(timeToNextInterval), messageArchiveInterval, c.Encrypted())
 					if err != nil {
-						m.communitiesManager.LogStdout("failed to get create and seed history archive", zap.Error(err))
+						m.logger.Error("failed to get create and seed history archive", zap.Error(err))
 					}
-					go m.communitiesManager.StartHistoryArchiveTasksInterval(c, messageArchiveInterval)
+					go m.archiveManager.StartHistoryArchiveTasksInterval(c, messageArchiveInterval)
 				})
 			} else {
 				// Looks like the last archive was generated more than `interval`
 				// ago, so lets create a new archive now and then schedule the archive
 				// creation loop
-				err := m.communitiesManager.CreateAndSeedHistoryArchive(c.ID(), topics, lastArchiveEndDate, to, messageArchiveInterval, c.Encrypted())
+				err := m.archiveManager.CreateAndSeedHistoryArchive(c.ID(), topics, lastArchiveEndDate, to, messageArchiveInterval, c.Encrypted())
 				if err != nil {
-					m.communitiesManager.LogStdout("failed to get create and seed history archive", zap.Error(err))
+					m.logger.Error("failed to get create and seed history archive", zap.Error(err))
 				}
 
-				go m.communitiesManager.StartHistoryArchiveTasksInterval(c, messageArchiveInterval)
+				go m.archiveManager.StartHistoryArchiveTasksInterval(c, messageArchiveInterval)
 			}
 		}
 	}
@@ -3830,12 +4014,12 @@ func (m *Messenger) enableHistoryArchivesImportAfterDelay() {
 func (m *Messenger) checkIfIMemberOfCommunity(communityID types.HexBytes) error {
 	community, err := m.communitiesManager.GetByID(communityID)
 	if err != nil {
-		m.communitiesManager.LogStdout("couldn't get community to import archives", zap.Error(err))
+		m.logger.Error("couldn't get community to import archives", zap.Error(err))
 		return err
 	}
 
 	if !community.HasMember(&m.identity.PublicKey) {
-		m.communitiesManager.LogStdout("can't import archives when user not a member of community")
+		m.logger.Error("can't import archives when user not a member of community")
 		return ErrUserNotMember
 	}
 
@@ -3843,7 +4027,7 @@ func (m *Messenger) checkIfIMemberOfCommunity(communityID types.HexBytes) error 
 }
 
 func (m *Messenger) resumeHistoryArchivesImport(communityID types.HexBytes) error {
-	archiveIDsToImport, err := m.communitiesManager.GetMessageArchiveIDsToImport(communityID)
+	archiveIDsToImport, err := m.archiveManager.GetMessageArchiveIDsToImport(communityID)
 	if err != nil {
 		return err
 	}
@@ -3857,7 +4041,7 @@ func (m *Messenger) resumeHistoryArchivesImport(communityID types.HexBytes) erro
 		return err
 	}
 
-	currentTask := m.communitiesManager.GetHistoryArchiveDownloadTask(communityID.String())
+	currentTask := m.archiveManager.GetHistoryArchiveDownloadTask(communityID.String())
 	// no need to resume imports if there's already a task ongoing
 	if currentTask != nil {
 		return nil
@@ -3870,7 +4054,7 @@ func (m *Messenger) resumeHistoryArchivesImport(communityID types.HexBytes) erro
 		Cancelled:  false,
 	}
 
-	m.communitiesManager.AddHistoryArchiveDownloadTask(communityID.String(), task)
+	m.archiveManager.AddHistoryArchiveDownloadTask(communityID.String(), task)
 
 	// this wait groups tracks the ongoing task for a particular community
 	task.Waiter.Add(1)
@@ -3879,7 +4063,7 @@ func (m *Messenger) resumeHistoryArchivesImport(communityID types.HexBytes) erro
 		defer task.Waiter.Done()
 		err := m.importHistoryArchives(communityID, task.CancelChan)
 		if err != nil {
-			m.communitiesManager.LogStdout("failed to import history archives", zap.Error(err))
+			m.logger.Error("failed to import history archives", zap.Error(err))
 		}
 		m.config.messengerSignalsHandler.DownloadingHistoryArchivesFinished(types.EncodeHex(communityID))
 	}()
@@ -3911,37 +4095,55 @@ func (m *Messenger) importHistoryArchives(communityID types.HexBytes, cancel cha
 		return nil
 	}
 
+	delayImport := false
+
 importMessageArchivesLoop:
 	for {
+		if delayImport {
+			select {
+			case <-ctx.Done():
+				m.logger.Debug("interrupted importing history archive messages")
+				return nil
+			case <-time.After(1 * time.Hour):
+				delayImport = false
+			}
+		}
+
 		select {
 		case <-ctx.Done():
-			m.communitiesManager.LogStdout("interrupted importing history archive messages")
+			m.logger.Debug("interrupted importing history archive messages")
 			return nil
 		case <-importTicker.C:
 			err := m.checkIfIMemberOfCommunity(communityID)
 			if err != nil {
 				break importMessageArchivesLoop
 			}
-			archiveIDsToImport, err := m.communitiesManager.GetMessageArchiveIDsToImport(communityID)
+			archiveIDsToImport, err := m.archiveManager.GetMessageArchiveIDsToImport(communityID)
 			if err != nil {
-				m.communitiesManager.LogStdout("couldn't get message archive IDs to import", zap.Error(err))
+				m.logger.Error("couldn't get message archive IDs to import", zap.Error(err))
 				return err
 			}
 
 			if len(archiveIDsToImport) == 0 {
-				m.communitiesManager.LogStdout("no message archives to import")
+				m.logger.Debug("no message archives to import")
 				break importMessageArchivesLoop
 			}
 
-			m.communitiesManager.LogStdout(fmt.Sprintf("importing message archive, %d left", len(archiveIDsToImport)))
+			m.logger.Info("importing message archive", zap.Int("left", len(archiveIDsToImport)))
 
 			// only process one archive at a time, so in case of cancel we don't
 			// wait for all archives to be processed first
 			downloadedArchiveID := archiveIDsToImport[0]
 
-			archiveMessages, err := m.communitiesManager.ExtractMessagesFromHistoryArchive(communityID, downloadedArchiveID)
+			archiveMessages, err := m.archiveManager.ExtractMessagesFromHistoryArchive(communityID, downloadedArchiveID)
 			if err != nil {
-				m.communitiesManager.LogStdout("failed to extract history archive messages", zap.Error(err))
+				if errors.Is(err, encryption.ErrHashRatchetGroupIDNotFound) {
+					// In case we're missing hash ratchet keys, best we can do is
+					// to wait for them to be received and try import again.
+					delayImport = true
+					continue
+				}
+				m.logger.Error("failed to extract history archive messages", zap.Error(err))
 				continue
 			}
 
@@ -3950,14 +4152,14 @@ importMessageArchivesLoop:
 			for _, messagesChunk := range chunkSlice(archiveMessages, importMessagesChunkSize) {
 				if err := m.importRateLimiter.Wait(ctx); err != nil {
 					if !errors.Is(err, context.Canceled) {
-						m.communitiesManager.LogStdout("rate limiter error when handling archive messages", zap.Error(err))
+						m.logger.Error("rate limiter error when handling archive messages", zap.Error(err))
 					}
 					continue importMessageArchivesLoop
 				}
 
 				response, err := m.handleArchiveMessages(messagesChunk)
 				if err != nil {
-					m.communitiesManager.LogStdout("failed to handle archive messages", zap.Error(err))
+					m.logger.Error("failed to handle archive messages", zap.Error(err))
 					continue importMessageArchivesLoop
 				}
 
@@ -3969,9 +4171,9 @@ importMessageArchivesLoop:
 				}
 			}
 
-			err = m.communitiesManager.SetMessageArchiveIDImported(communityID, downloadedArchiveID, true)
+			err = m.archiveManager.SetMessageArchiveIDImported(communityID, downloadedArchiveID, true)
 			if err != nil {
-				m.communitiesManager.LogStdout("failed to mark history message archive as imported", zap.Error(err))
+				m.logger.Error("failed to mark history message archive as imported", zap.Error(err))
 				continue
 			}
 		}
@@ -3986,7 +4188,7 @@ func (m *Messenger) dispatchMagnetlinkMessage(communityID string) error {
 		return err
 	}
 
-	magnetlink, err := m.communitiesManager.GetHistoryArchiveMagnetlink(community.ID())
+	magnetlink, err := m.archiveManager.GetHistoryArchiveMagnetlink(community.ID())
 	if err != nil {
 		return err
 	}
@@ -4040,8 +4242,8 @@ func (m *Messenger) EnableCommunityHistoryArchiveProtocol() error {
 	}
 
 	m.config.torrentConfig = &nodeConfig.TorrentConfig
-	m.communitiesManager.SetTorrentConfig(&nodeConfig.TorrentConfig)
-	err = m.communitiesManager.StartTorrentClient()
+	m.archiveManager.SetTorrentConfig(&nodeConfig.TorrentConfig)
+	err = m.archiveManager.StartTorrentClient()
 	if err != nil {
 		return err
 	}
@@ -4054,7 +4256,9 @@ func (m *Messenger) EnableCommunityHistoryArchiveProtocol() error {
 	if len(controlledCommunities) > 0 {
 		go m.InitHistoryArchiveTasks(controlledCommunities)
 	}
-	m.config.messengerSignalsHandler.HistoryArchivesProtocolEnabled()
+	if m.config.messengerSignalsHandler != nil {
+		m.config.messengerSignalsHandler.HistoryArchivesProtocolEnabled()
+	}
 	return nil
 }
 
@@ -4068,16 +4272,21 @@ func (m *Messenger) DisableCommunityHistoryArchiveProtocol() error {
 		return nil
 	}
 
-	m.communitiesManager.StopTorrentClient()
+	err = m.archiveManager.Stop()
+	if err != nil {
+		m.logger.Error("failed to stop torrent manager", zap.Error(err))
+	}
 
 	nodeConfig.TorrentConfig.Enabled = false
 	err = m.settings.SaveSetting("node-config", nodeConfig)
 	m.config.torrentConfig = &nodeConfig.TorrentConfig
-	m.communitiesManager.SetTorrentConfig(&nodeConfig.TorrentConfig)
+	m.archiveManager.SetTorrentConfig(&nodeConfig.TorrentConfig)
 	if err != nil {
 		return err
 	}
-	m.config.messengerSignalsHandler.HistoryArchivesProtocolDisabled()
+	if m.config.messengerSignalsHandler != nil {
+		m.config.messengerSignalsHandler.HistoryArchivesProtocolDisabled()
+	}
 	return nil
 }
 
@@ -4175,15 +4384,6 @@ func (m *Messenger) pinMessagesToWakuMessages(pinMessages []*common.PinMessage, 
 	}
 
 	return wakuMessages, nil
-}
-
-func (m *Messenger) torrentClientReady() bool {
-	// Simply checking for `torrentConfig.Enabled` isn't enough
-	// as there's a possiblity that the torrent client couldn't
-	// be instantiated (for example in case of port conflicts)
-	return m.config.torrentConfig != nil &&
-		m.config.torrentConfig.Enabled &&
-		m.communitiesManager.TorrentClientStarted()
 }
 
 func (m *Messenger) chatMessagesToWakuMessages(chatMessages []*common.Message, c *communities.Community) ([]*types.Message, error) {
@@ -4322,14 +4522,6 @@ func (m *Messenger) CheckPermissionsToJoinCommunity(request *requests.CheckPermi
 	return m.communitiesManager.CheckPermissionToJoin(request.CommunityID, addresses)
 }
 
-func (m *Messenger) CheckPermissionsToJoinCommunityLight(request *requests.CheckPermissionToJoinCommunity) (bool, error) {
-	if err := request.Validate(); err != nil {
-		return false, err
-	}
-
-	return m.communitiesManager.CheckPermissionToJoinLight(request.CommunityID)
-}
-
 func (m *Messenger) getSharedAddresses(communityID types.HexBytes, requestAddresses []string) ([]gethcommon.Address, error) {
 	addressesMap := make(map[string]struct{})
 
@@ -4391,22 +4583,6 @@ func (m *Messenger) CheckAllCommunityChannelsPermissions(request *requests.Check
 	}
 
 	return m.communitiesManager.CheckAllChannelsPermissions(request.CommunityID, addresses)
-}
-
-func (m *Messenger) CheckCommunityChannelPermissionsLight(request *requests.CheckCommunityChannelPermissions) (*communities.CheckChannelPermissionsResponse, error) {
-	if err := request.Validate(); err != nil {
-		return nil, err
-	}
-
-	return m.communitiesManager.CheckChannelPermissionsLight(request.CommunityID, request.ChatID)
-}
-
-func (m *Messenger) CheckAllCommunityChannelsPermissionsLight(request *requests.CheckAllCommunityChannelsPermissions) (*communities.CheckAllChannelsPermissionsResponse, error) {
-	if err := request.Validate(); err != nil {
-		return nil, err
-	}
-
-	return m.communitiesManager.CheckAllChannelsPermissionsLight(request.CommunityID)
 }
 
 func (m *Messenger) GetCommunityCheckChannelPermissionResponses(communityID types.HexBytes) (*communities.CheckAllChannelsPermissionsResponse, error) {
@@ -4584,6 +4760,9 @@ func (m *Messenger) processCommunityChanges(messageState *ReceivedMessageState) 
 				m.logger.Error("cannot merge join community response", zap.Error(err))
 				continue
 			}
+		} else if changes.MemberSoftKicked {
+			m.leaveCommunityOnSoftKick(changes.Community, messageState.Response)
+			m.shareRevealedAccountsOnSoftKick(changes.Community, messageState.Response)
 
 		} else if changes.MemberKicked {
 			notificationType := ActivityCenterNotificationTypeCommunityKicked
@@ -4643,6 +4822,8 @@ func (m *Messenger) PromoteSelfToControlNode(communityID types.HexBytes) (*Messe
 	if m.config.messengerSignalsHandler != nil {
 		m.config.messengerSignalsHandler.MessengerResponse(&response)
 	}
+
+	m.communitiesManager.StartMembersReevaluationLoop(community.ID(), false)
 
 	return &response, nil
 }
@@ -4718,30 +4899,26 @@ func (m *Messenger) AddActivityCenterNotificationToResponse(communityID string, 
 }
 
 func (m *Messenger) leaveCommunityDueToKickOrBan(changes *communities.CommunityChanges, acType ActivityCenterType, stateResponse *MessengerResponse) {
-	// during the ownership change kicked user must stay in the spectate mode
-	ownerhipChange := changes.ControlNodeChanged != nil
-	response, err := m.kickedOutOfCommunity(changes.Community.ID(), ownerhipChange)
+	response, err := m.kickedOutOfCommunity(changes.Community.ID(), false)
 	if err != nil {
 		m.logger.Error("cannot leave community", zap.Error(err))
 		return
 	}
 
-	if !ownerhipChange {
-		// Activity Center notification
-		notification := &ActivityCenterNotification{
-			ID:          types.FromHex(uuid.New().String()),
-			Type:        acType,
-			Timestamp:   m.getTimesource().GetCurrentTime(),
-			CommunityID: changes.Community.IDString(),
-			Read:        false,
-			UpdatedAt:   m.GetCurrentTimeInMillis(),
-		}
+	// Activity Center notification
+	notification := &ActivityCenterNotification{
+		ID:          types.FromHex(uuid.New().String()),
+		Type:        acType,
+		Timestamp:   m.getTimesource().GetCurrentTime(),
+		CommunityID: changes.Community.IDString(),
+		Read:        false,
+		UpdatedAt:   m.GetCurrentTimeInMillis(),
+	}
 
-		err = m.addActivityCenterNotification(response, notification, nil)
-		if err != nil {
-			m.logger.Error("failed to save notification", zap.Error(err))
-			return
-		}
+	err = m.addActivityCenterNotification(response, notification, nil)
+	if err != nil {
+		m.logger.Error("failed to save notification", zap.Error(err))
+		return
 	}
 
 	if err := stateResponse.Merge(response); err != nil {
@@ -4852,4 +5029,94 @@ func (m *Messenger) HandleDeleteCommunityMemberMessages(state *ReceivedMessageSt
 	}
 
 	return state.Response.Merge(deleteMessagesResponse)
+}
+
+func (m *Messenger) leaveCommunityOnSoftKick(community *communities.Community, messengerResponse *MessengerResponse) {
+	response, err := m.kickedOutOfCommunity(community.ID(), true)
+	if err != nil {
+		m.logger.Error("member soft kick error", zap.String("communityID", types.EncodeHex(community.ID())), zap.Error(err))
+	}
+
+	if err := messengerResponse.Merge(response); err != nil {
+		m.logger.Error("cannot merge leaveCommunityOnSoftKick response", zap.String("communityID", types.EncodeHex(community.ID())), zap.Error(err))
+	}
+}
+
+func (m *Messenger) shareRevealedAccountsOnSoftKick(community *communities.Community, messengerResponse *MessengerResponse) {
+	requestToJoin, err := m.sendSharedAddressToControlNode(community.ControlNode(), community)
+	if err != nil {
+		m.logger.Error("share address to control node failed", zap.String("id", types.EncodeHex(community.ID())), zap.Error(err))
+
+		if err == communities.ErrRevealedAccountsAbsent || err == communities.ErrNoRevealedAccountsSignature {
+			m.AddActivityCenterNotificationToResponse(community.IDString(), ActivityCenterNotificationTypeShareAccounts, messengerResponse)
+		}
+	} else {
+		messengerResponse.AddRequestToJoinCommunity(requestToJoin)
+	}
+}
+
+func (m *Messenger) requestCommunityEncryptionKeys(community *communities.Community, channelIDs []string) error {
+	m.logger.Debug("request community encryption keys",
+		zap.String("communityID", community.IDString()),
+		zap.Strings("channels", channelIDs))
+
+	request := &protobuf.CommunityEncryptionKeysRequest{
+		CommunityId: community.ID(),
+		ChatIds:     channelIDs,
+	}
+
+	payload, err := proto.Marshal(request)
+	if err != nil {
+		return err
+	}
+
+	rawMessage := &common.RawMessage{
+		Payload:             payload,
+		Sender:              m.identity,
+		CommunityID:         community.ID(),
+		SkipEncryptionLayer: true,
+		MessageType:         protobuf.ApplicationMetadataMessage_COMMUNITY_ENCRYPTION_KEYS_REQUEST,
+	}
+
+	_, err = m.SendMessageToControlNode(community, rawMessage)
+	return err
+}
+
+func (m *Messenger) startRequestMissingCommunityChannelsHRKeysLoop() {
+	logger := m.logger.Named("requestMissingCommunityChannelsHRKeysLoop")
+
+	go func() {
+		for {
+			select {
+			case <-time.After(5 * time.Minute):
+				communitiesChannels, err := m.communitiesManager.DetermineChannelsForHRKeysRequest()
+				if err != nil {
+					logger.Error("failed to determine channels for encryption keys request", zap.Error(err))
+					continue
+				}
+
+				for _, cc := range communitiesChannels {
+					err := m.requestCommunityEncryptionKeys(cc.Community, cc.ChannelIDs)
+					if err != nil {
+						logger.Error("failed to request channels' encryption keys",
+							zap.String("communityID", cc.Community.IDString()),
+							zap.Strings("channelIDs", cc.ChannelIDs),
+							zap.Error(err))
+						continue
+					}
+
+					err = m.communitiesManager.UpdateEncryptionKeysRequests(cc.Community.ID(), cc.ChannelIDs)
+					if err != nil {
+						logger.Error("failed to update channels' encryption keys requests",
+							zap.String("communityID", cc.Community.IDString()),
+							zap.Strings("channelIDs", cc.ChannelIDs),
+							zap.Error(err))
+					}
+				}
+
+			case <-m.quit:
+				return
+			}
+		}
+	}()
 }

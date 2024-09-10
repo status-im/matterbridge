@@ -533,7 +533,14 @@ func (d *ERC20TransfersDownloader) blocksFromLogs(parent context.Context, logs [
 // time to get logs for 100000 blocks = 1.144686979s. with 249 events in the result set.
 func (d *ERC20TransfersDownloader) GetHeadersInRange(parent context.Context, from, to *big.Int) ([]*DBHeader, error) {
 	start := time.Now()
-	log.Debug("get erc20 transfers in range start", "chainID", d.client.NetworkID(), "from", from, "to", to)
+	log.Debug("get erc20 transfers in range start", "chainID", d.client.NetworkID(), "from", from, "to", to, "accounts", d.accounts)
+
+	// TODO #16062: Figure out real root cause of invalid range
+	if from != nil && to != nil && from.Cmp(to) > 0 {
+		log.Error("invalid range", "chainID", d.client.NetworkID(), "from", from, "to", to, "accounts", d.accounts)
+		return nil, errors.New("invalid range")
+	}
+
 	headers := []*DBHeader{}
 	ctx := context.Background()
 	var err error
@@ -596,7 +603,7 @@ func (d *ERC20TransfersDownloader) GetHeadersInRange(parent context.Context, fro
 	}
 
 	log.Debug("get erc20 transfers in range end", "chainID", d.client.NetworkID(),
-		"from", from, "to", to, "headers", len(headers), "took", time.Since(start))
+		"from", from, "to", to, "headers", len(headers), "accounts", d.accounts, "took", time.Since(start))
 	return headers, nil
 }
 

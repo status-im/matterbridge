@@ -116,7 +116,7 @@ func (m *Messenger) HandleSyncRawMessages(rawMessages []*protobuf.RawMessage) er
 			if err != nil {
 				return err
 			}
-			err = m.handleSyncInstallationCommunity(state, &message, nil)
+			err = m.handleSyncInstallationCommunity(state, &message)
 			if err != nil {
 				m.logger.Error("failed to handleSyncCommunity when HandleSyncRawMessages", zap.Error(err))
 				continue
@@ -251,17 +251,6 @@ func (m *Messenger) HandleSyncRawMessages(rawMessages []*protobuf.RawMessage) er
 			err = m.HandleSyncSavedAddress(state, &message, nil)
 			if err != nil {
 				m.logger.Error("failed to handleSyncSavedAddress when HandleSyncRawMessages", zap.Error(err))
-				continue
-			}
-		case protobuf.ApplicationMetadataMessage_SYNC_SOCIAL_LINKS:
-			var message protobuf.SyncSocialLinks
-			err := proto.Unmarshal(rawMessage.GetPayload(), &message)
-			if err != nil {
-				return err
-			}
-			err = m.HandleSyncSocialLinks(state, &message, nil)
-			if err != nil {
-				m.logger.Error("failed to HandleSyncSocialLinks when HandleSyncRawMessages", zap.Error(err))
 				continue
 			}
 		case protobuf.ApplicationMetadataMessage_SYNC_ENS_USERNAME_DETAIL:

@@ -12,7 +12,6 @@ import (
 	"github.com/status-im/status-go/multiaccounts/common"
 	"github.com/status-im/status-go/multiaccounts/settings"
 	notificationssettings "github.com/status-im/status-go/multiaccounts/settings_notifications"
-	sociallinkssettings "github.com/status-im/status-go/multiaccounts/settings_social_links"
 	walletsettings "github.com/status-im/status-go/multiaccounts/settings_wallet"
 	"github.com/status-im/status-go/nodecfg"
 	"github.com/status-im/status-go/params"
@@ -285,11 +284,17 @@ func (a *Keypair) Operability() AccountOperable {
 	return AccountFullyOperable
 }
 
+// TODO: implement clean full interface. This might require refactoring Database methods
+type AccountsStorage interface {
+	GetKeypairByKeyUID(keyUID string) (*Keypair, error)
+	GetAccountByAddress(address types.Address) (*Account, error)
+	AddressExists(address types.Address) (bool, error)
+}
+
 // Database sql wrapper for operations with browser objects.
 type Database struct {
 	settings.DatabaseSettingsManager
 	*notificationssettings.NotificationsSettings
-	*sociallinkssettings.SocialLinksSettings
 	*walletsettings.WalletSettings
 	db *sql.DB
 }
@@ -305,10 +310,9 @@ func NewDB(db *sql.DB) (*Database, error) {
 		return nil, err
 	}
 	sn := notificationssettings.NewNotificationsSettings(db)
-	ssl := sociallinkssettings.NewSocialLinksSettings(db)
 	sw := walletsettings.NewWalletSettings(db)
 
-	return &Database{sDB, sn, ssl, sw, db}, nil
+	return &Database{sDB, sn, sw, db}, nil
 }
 
 // DB Gets db sql.DB
@@ -1736,17 +1740,27 @@ func (db *Database) ResolveSuggestedPathForKeypair(keyUID string) (suggestedPath
 
 	nextIndex := kp.LastUsedDerivationIndex + 1
 	for i := nextIndex; i < numOfAddressesToGenerater; i++ {
-		suggestedPath := fmt.Sprintf("%s%d", statusWalletRootPath, i)
-
+		suggestedPath = fmt.Sprintf("%s%d", statusWalletRootPath, i)
+		relativePath := fmt.Sprintf("m/%d", i)
 		found := false
 		for _, acc := range kp.Accounts {
-			if acc.Path != suggestedPath {
+			if acc.Path != suggestedPath && acc.Path != relativePath {
 				continue
 			}
 			found = true
 			break
 		}
 		if !found {
+			// relate custom migration https://github.com/status-im/status-go/pull/5279/files#diff-e62600839ff3a2748953a173d3627e2c48a252b0a962a25a873b778313f81494
+			if kp.Type == KeypairTypeProfile {
+				walletRootAddress, err := db.GetWalletRootAddress()
+				if err != nil {
+					return relativePath, err
+				}
+				if kp.DerivedFrom == walletRootAddress.Hex() { // derive from wallet root
+					return relativePath, nil
+				}
+			}
 			return suggestedPath, nil
 		}
 	}

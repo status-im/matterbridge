@@ -147,10 +147,11 @@ INSERT INTO settings (
   wallet_token_preferences_group_by_community,
   wallet_collectible_preferences_group_by_collection,
   wallet_collectible_preferences_group_by_community,
-  test_networks_enabled
+  test_networks_enabled,
+  fleet
 ) VALUES (
 ?,?,?,?,?,?,?,?,?,?,?,?,?,?,
-?,?,?,?,?,?,?,?,?,'id',?,?,?,?,?,?,?,?,?,?)`,
+?,?,?,?,?,?,?,?,?,'id',?,?,?,?,?,?,?,?,?,?,?)`,
 		s.Address,
 		s.Currency,
 		s.CurrentNetwork,
@@ -184,6 +185,7 @@ INSERT INTO settings (
 		s.CollectibleGroupByCollection,
 		s.CollectibleGroupByCommunity,
 		s.TestNetworksEnabled,
+		s.Fleet,
 	)
 	if err != nil {
 		return err
@@ -763,6 +765,14 @@ func (db *Database) GetIsGoerliEnabled() (result bool, err error) {
 
 func (db *Database) SetPeerSyncingEnabled(value bool) error {
 	return db.SaveSettingField(PeerSyncingEnabled, value)
+}
+
+func (db *Database) SetSyncingOnMobileNetwork(value bool) error {
+	err := db.SaveSettingField(SyncingOnMobileNetwork, value)
+	if err != nil {
+		return err
+	}
+	return db.SaveSettingField(RememberSyncingChoice, true)
 }
 
 func (db *Database) GetPeerSyncingEnabled() (result bool, err error) {

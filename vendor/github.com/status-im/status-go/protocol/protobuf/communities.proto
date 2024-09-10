@@ -44,6 +44,20 @@ message CommunityTokenMetadata {
   string symbol = 5;
   string name = 6;
   uint32 decimals = 7;
+  string version = 8;
+}
+
+message CommunityTokenAction {
+  enum ActionType {
+    UNKNOWN_ACTION_TYPE = 0;
+    AIRDROP = 1;
+    BURN = 2;
+    REMOTE_DESTRUCT = 3;
+  }
+
+  uint64 chain_id = 1;
+  string contract_address = 2;
+  ActionType action_type = 3;
 }
 
 message CommunityPermissions {
@@ -110,7 +124,8 @@ message CommunityDescription {
   uint64 active_members_count = 17;
   string ID = 18;
   map<string,CommunityBanInfo>banned_members = 19;
-
+  // request to resend revealed addresses
+  uint64 resend_accounts_clock = 20;
   // key is hash ratchet key_id + seq_no
   map<string, bytes> privateData = 100;
 }
@@ -131,6 +146,13 @@ message CommunityChat {
   int32 position = 5;
   bool viewers_can_post_reactions = 6;
   bool hide_if_permissions_not_met = 7;
+  CommunityBloomFilter members_list = 8;
+}
+
+message CommunityBloomFilter {
+  bytes data = 1;
+  uint64 m = 2;
+  uint64 k = 3;
 }
 
 message CommunityCategory {
@@ -281,4 +303,14 @@ message CommunityUpdateGrant {
 
 message CommunityEncryptionKeysRequest {
   bytes community_id = 1;
+  repeated string chat_ids = 2;
+}
+
+message CommunitySharedAddressesRequest {
+  bytes community_id = 1;
+}
+
+message CommunitySharedAddressesResponse {
+  bytes community_id = 1;
+  repeated RevealedAccount revealed_accounts = 3;
 }

@@ -398,6 +398,11 @@ func (api *PublicAPI) Communities(parent context.Context) ([]*communities.Commun
 	return api.service.messenger.Communities()
 }
 
+// Deprecated: renamed back to Communities. Should be removed after implementing on all platforms
+func (api *PublicAPI) SerializedCommunities(parent context.Context) ([]*communities.Community, error) {
+	return api.Communities(parent)
+}
+
 // JoinedCommunities returns a list of communities that the user has joined
 func (api *PublicAPI) JoinedCommunities(parent context.Context) ([]*communities.Community, error) {
 	return api.service.messenger.JoinedCommunities()
@@ -574,6 +579,10 @@ func (api *PublicAPI) DeleteCommunityTokenPermission(request *requests.DeleteCom
 
 func (api *PublicAPI) EditCommunityTokenPermission(request *requests.EditCommunityTokenPermission) (*protocol.MessengerResponse, error) {
 	return api.service.messenger.EditCommunityTokenPermission(request)
+}
+
+func (api *PublicAPI) LatestRequestToJoinForCommunity(id types.HexBytes) (*communities.RequestToJoin, error) {
+	return api.service.messenger.LatestRequestToJoinForCommunity(id)
 }
 
 // MyPendingRequestsToJoin returns the pending requests for the logged in user
@@ -1051,6 +1060,14 @@ func (api *PublicAPI) SyncDevices(ctx context.Context, name, picture string) err
 	return api.service.messenger.SyncDevices(ctx, name, picture, nil)
 }
 
+func (api *PublicAPI) EnableAndSyncInstallation(request *requests.EnableAndSyncInstallation) error {
+	return api.service.messenger.EnableAndSyncInstallation(request)
+}
+
+func (api *PublicAPI) EnableInstallationAndPair(request *requests.EnableInstallationAndPair) (*protocol.MessengerResponse, error) {
+	return api.service.messenger.EnableInstallationAndPair(request)
+}
+
 func (api *PublicAPI) AddBookmark(ctx context.Context, bookmark browsers.Bookmark) error {
 	return api.service.messenger.AddBookmark(ctx, bookmark)
 }
@@ -1107,6 +1124,15 @@ func (api *PublicAPI) DeleteSavedAddress(ctx context.Context, address ethcommon.
 
 func (api *PublicAPI) GetSavedAddresses(ctx context.Context) ([]*wallet.SavedAddress, error) {
 	return api.service.messenger.GetSavedAddresses(ctx)
+}
+
+func (api *PublicAPI) GetSavedAddressesPerMode(ctx context.Context, testnetMode bool) ([]*wallet.SavedAddress, error) {
+	return api.service.messenger.GetSavedAddressesPerMode(testnetMode)
+}
+
+// RemainingCapacityForSavedAddresses returns the number of saved addresses that can be added
+func (api *PublicAPI) RemainingCapacityForSavedAddresses(ctx context.Context, testnetMode bool) (int, error) {
+	return api.service.messenger.RemainingCapacityForSavedAddresses(testnetMode)
 }
 
 // PushNotifications server endpoints
@@ -1480,8 +1506,16 @@ func (api *PublicAPI) Peers() map[string]types.WakuV2Peer {
 	return api.service.messenger.Peers()
 }
 
+func (api *PublicAPI) RelayPeersByTopic(topic string) (*types.PeerList, error) {
+	return api.service.messenger.RelayPeersByTopic(topic)
+}
+
 func (api *PublicAPI) ListenAddresses() ([]string, error) {
 	return api.service.messenger.ListenAddresses()
+}
+
+func (api *PublicAPI) Enr() (string, error) {
+	return api.service.messenger.ENR()
 }
 
 func (api *PublicAPI) ChangeIdentityImageShowTo(showTo settings.ProfilePicturesShowToType) error {
@@ -1507,6 +1541,10 @@ func (api *PublicAPI) ToggleUseMailservers(value bool) error {
 
 func (api *PublicAPI) TogglePeerSyncing(request *requests.TogglePeerSyncingRequest) error {
 	return api.service.messenger.TogglePeerSyncing(request)
+}
+
+func (api *PublicAPI) SetSyncingOnMobileNetwork(request *requests.SetSyncingOnMobileNetwork) error {
+	return api.service.messenger.SetSyncingOnMobileNetwork(request)
 }
 
 func (api *PublicAPI) SetPinnedMailservers(pinnedMailservers map[string]string) error {
@@ -1590,24 +1628,12 @@ func (api *PublicAPI) CheckPermissionsToJoinCommunity(request *requests.CheckPer
 	return api.service.messenger.CheckPermissionsToJoinCommunity(request)
 }
 
-func (api *PublicAPI) CheckPermissionsToJoinCommunityLight(request *requests.CheckPermissionToJoinCommunity) (bool, error) {
-	return api.service.messenger.CheckPermissionsToJoinCommunityLight(request)
-}
-
 func (api *PublicAPI) CheckCommunityChannelPermissions(request *requests.CheckCommunityChannelPermissions) (*communities.CheckChannelPermissionsResponse, error) {
 	return api.service.messenger.CheckCommunityChannelPermissions(request)
 }
 
-func (api *PublicAPI) CheckCommunityChannelPermissionsLight(request *requests.CheckCommunityChannelPermissions) (*communities.CheckChannelPermissionsResponse, error) {
-	return api.service.messenger.CheckCommunityChannelPermissionsLight(request)
-}
-
 func (api *PublicAPI) CheckAllCommunityChannelsPermissions(request *requests.CheckAllCommunityChannelsPermissions) (*communities.CheckAllChannelsPermissionsResponse, error) {
 	return api.service.messenger.CheckAllCommunityChannelsPermissions(request)
-}
-
-func (api *PublicAPI) CheckAllCommunityChannelsPermissionsLight(request *requests.CheckAllCommunityChannelsPermissions) (*communities.CheckAllChannelsPermissionsResponse, error) {
-	return api.service.messenger.CheckAllCommunityChannelsPermissionsLight(request)
 }
 
 func (api *PublicAPI) CollectCommunityMetrics(request *requests.CommunityMetricsRequest) (*protocol.CommunityMetricsResponse, error) {
@@ -1781,12 +1807,24 @@ func (api *PublicAPI) SetLightClient(request *requests.SetLightClient) error {
 	return api.service.messenger.SetLightClient(request)
 }
 
+func (api *PublicAPI) SetStoreConfirmationForMessagesSent(request *requests.SetStoreConfirmationForMessagesSent) error {
+	return api.service.messenger.SetStoreConfirmationForMessagesSent(request)
+}
+
 func (api *PublicAPI) SetLogLevel(request *requests.SetLogLevel) error {
 	return api.service.messenger.SetLogLevel(request)
 }
 
+func (api *PublicAPI) SetMaxLogBackups(request *requests.SetMaxLogBackups) error {
+	return api.service.messenger.SetMaxLogBackups(request)
+}
+
 func (api *PublicAPI) SetCustomNodes(request *requests.SetCustomNodes) error {
 	return api.service.messenger.SetCustomNodes(request)
+}
+
+func (api *PublicAPI) SaveNewWakuNode(request *requests.SaveNewWakuNode) error {
+	return api.service.messenger.SaveNewWakuNode(request)
 }
 
 func (api *PublicAPI) SetCustomizationColor(ctx context.Context, request *requests.SetCustomizationColor) error {

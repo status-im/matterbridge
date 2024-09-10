@@ -5,44 +5,55 @@ import (
 )
 
 type RPCUsageStats struct {
-	total            uint
-	counterPerMethod map[string]uint
-	rw               sync.RWMutex
+	total                  uint
+	counterPerMethod       *sync.Map
+	counterPerMethodPerTag *sync.Map
 }
 
 var stats *RPCUsageStats
+var mu sync.Mutex
 
 func getInstance() *RPCUsageStats {
+	mu.Lock()
+	defer mu.Unlock()
+
 	if stats == nil {
-		stats = &RPCUsageStats{
-			total:            0,
-			counterPerMethod: map[string]uint{},
-		}
+		stats = &RPCUsageStats{}
+		stats.counterPerMethod = &sync.Map{}
+		stats.counterPerMethodPerTag = &sync.Map{}
 	}
 	return stats
 }
 
-func getStats() (uint, map[string]uint) {
+func getStats() (uint, *sync.Map, *sync.Map) {
 	stats := getInstance()
-	stats.rw.RLock()
-	defer stats.rw.RUnlock()
-	return stats.total, stats.counterPerMethod
+	return stats.total, stats.counterPerMethod, stats.counterPerMethodPerTag
 }
 
 func resetStats() {
 	stats := getInstance()
-	stats.rw.Lock()
-	defer stats.rw.Unlock()
-
 	stats.total = 0
-	stats.counterPerMethod = map[string]uint{}
+	stats.counterPerMethod = &sync.Map{}
+	stats.counterPerMethodPerTag = &sync.Map{}
 }
 
 func CountCall(method string) {
 	stats := getInstance()
-	stats.rw.Lock()
-	defer stats.rw.Unlock()
-
 	stats.total++
-	stats.counterPerMethod[method]++
+	value, _ := stats.counterPerMethod.LoadOrStore(method, uint(0))
+	stats.counterPerMethod.Store(method, value.(uint)+1)
+}
+
+func CountCallWithTag(method string, tag string) {
+	if tag == "" {
+		CountCall(method)
+		return
+	}
+
+	stats := getInstance()
+	value, _ := stats.counterPerMethodPerTag.LoadOrStore(tag, &sync.Map{})
+	methodMap := value.(*sync.Map)
+	value, _ = methodMap.LoadOrStore(method, uint(0))
+	methodMap.Store(method, value.(uint)+1)
+	stats.total++
 }

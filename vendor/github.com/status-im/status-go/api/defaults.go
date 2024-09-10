@@ -21,15 +21,13 @@ import (
 const pathWalletRoot = "m/44'/60'/0'/0"
 const pathEIP1581 = "m/43'/60'/1581'"
 const pathDefaultChat = pathEIP1581 + "/0'/0"
+const pathEncryption = pathEIP1581 + "/1'/0"
 const pathDefaultWallet = pathWalletRoot + "/0"
 const defaultMnemonicLength = 12
 const shardsTestClusterID = 16
 const walletAccountDefaultName = "Account 1"
 const keystoreRelativePath = "keystore"
 const DefaultKeycardPairingDataFile = "/ethereum/mainnet_rpc/keycard/pairings.json"
-
-const DefaultArchivesRelativePath = "data/archivedata"
-const DefaultTorrentTorrentsRelativePath = "data/torrents"
 
 const DefaultDataDir = "/ethereum/mainnet_rpc"
 const DefaultNodeName = "StatusIM"
@@ -38,25 +36,26 @@ const DefaultLogLevel = "ERROR"
 const DefaultMaxPeers = 20
 const DefaultMaxPendingPeers = 20
 const DefaultListenAddr = ":0"
-const DefaultMaxMessageDeliveryAttempts = 6
+const DefaultMaxMessageDeliveryAttempts = 3
 const DefaultVerifyTransactionChainID = 1
 
-var paths = []string{pathWalletRoot, pathEIP1581, pathDefaultChat, pathDefaultWallet}
+var paths = []string{pathWalletRoot, pathEIP1581, pathDefaultChat, pathDefaultWallet, pathEncryption}
 
 var DefaultFleet = params.FleetShardsTest
 
-func defaultSettings(generatedAccountInfo generator.GeneratedAccountInfo, derivedAddresses map[string]generator.AccountInfo, mnemonic *string) (*settings.Settings, error) {
+var overrideApiConfig = overrideApiConfigProd
+
+func defaultSettings(keyUID string, address string, derivedAddresses map[string]generator.AccountInfo) (*settings.Settings, error) {
 	chatKeyString := derivedAddresses[pathDefaultChat].PublicKey
 
 	s := &settings.Settings{}
-	s.Mnemonic = &generatedAccountInfo.Mnemonic
 	s.BackupEnabled = true
 	logLevel := "INFO"
 	s.LogLevel = &logLevel
 	s.ProfilePicturesShowTo = settings.ProfilePicturesShowToEveryone
 	s.ProfilePicturesVisibility = settings.ProfilePicturesVisibilityEveryone
-	s.KeyUID = generatedAccountInfo.KeyUID
-	s.Address = types.HexToAddress(generatedAccountInfo.Address)
+	s.KeyUID = keyUID
+	s.Address = types.HexToAddress(address)
 	s.WalletRootAddress = types.HexToAddress(derivedAddresses[pathWalletRoot].Address)
 	s.URLUnfurlingMode = settings.URLUnfurlingAlwaysAsk
 
@@ -70,7 +69,6 @@ func defaultSettings(generatedAccountInfo generator.GeneratedAccountInfo, derive
 
 	s.DappsAddress = types.HexToAddress(derivedAddresses[pathDefaultWallet].Address)
 	s.EIP1581Address = types.HexToAddress(derivedAddresses[pathEIP1581].Address)
-	s.Mnemonic = mnemonic
 
 	signingPhrase, err := buildSigningPhrase()
 	if err != nil {
@@ -141,8 +139,10 @@ func SetFleet(fleet string, nodeConfig *params.NodeConfig) error {
 		Host:           "0.0.0.0",
 		AutoUpdate:     true,
 		// mobile may need override following options
-		LightClient: specifiedWakuV2Config.LightClient,
-		Nameserver:  specifiedWakuV2Config.Nameserver,
+		LightClient:                            specifiedWakuV2Config.LightClient,
+		EnableStoreConfirmationForMessagesSent: specifiedWakuV2Config.EnableStoreConfirmationForMessagesSent,
+		EnableMissingMessageVerification:       specifiedWakuV2Config.EnableMissingMessageVerification,
+		Nameserver:                             specifiedWakuV2Config.Nameserver,
 	}
 
 	clusterConfig, err := params.LoadClusterConfigFromFleet(fleet)
@@ -152,20 +152,23 @@ func SetFleet(fleet string, nodeConfig *params.NodeConfig) error {
 	nodeConfig.ClusterConfig = *clusterConfig
 	nodeConfig.ClusterConfig.Fleet = fleet
 	nodeConfig.ClusterConfig.WakuNodes = params.DefaultWakuNodes(fleet)
-	nodeConfig.ClusterConfig.DiscV5BootstrapNodes = params.DefaultWakuNodes(fleet)
+	nodeConfig.ClusterConfig.DiscV5BootstrapNodes = params.DefaultDiscV5Nodes(fleet)
 
 	if fleet == params.FleetShardsTest {
 		nodeConfig.ClusterConfig.ClusterID = shardsTestClusterID
-		nodeConfig.WakuV2Config.UseShardAsDefaultTopic = true
 	}
 
 	return nil
 }
 
-func buildWalletConfig(request *requests.WalletSecretsConfig) params.WalletConfig {
+func buildWalletConfig(request *requests.WalletSecretsConfig, statusProxyEnabled bool) params.WalletConfig {
 	walletConfig := params.WalletConfig{
 		Enabled:        true,
 		AlchemyAPIKeys: make(map[uint64]string),
+	}
+
+	if request.StatusProxyStageName != "" {
+		walletConfig.StatusProxyStageName = request.StatusProxyStageName
 	}
 
 	if request.OpenseaAPIKey != "" {
@@ -215,8 +218,36 @@ func buildWalletConfig(request *requests.WalletSecretsConfig) params.WalletConfi
 	if request.AlchemyOptimismSepoliaToken != "" {
 		walletConfig.AlchemyAPIKeys[optimismSepoliaChainID] = request.AlchemyOptimismSepoliaToken
 	}
+	if request.StatusProxyMarketUser != "" {
+		walletConfig.StatusProxyMarketUser = request.StatusProxyMarketUser
+	}
+	if request.StatusProxyMarketPassword != "" {
+		walletConfig.StatusProxyMarketPassword = request.StatusProxyMarketPassword
+	}
+	if request.StatusProxyBlockchainUser != "" {
+		walletConfig.StatusProxyBlockchainUser = request.StatusProxyBlockchainUser
+	}
+	if request.StatusProxyBlockchainPassword != "" {
+		walletConfig.StatusProxyBlockchainPassword = request.StatusProxyBlockchainPassword
+	}
+
+	walletConfig.StatusProxyEnabled = statusProxyEnabled
 
 	return walletConfig
+}
+
+func overrideApiConfigProd(nodeConfig *params.NodeConfig, config *requests.APIConfig) {
+	nodeConfig.APIModules = config.APIModules
+	nodeConfig.ConnectorConfig.Enabled = config.ConnectorEnabled
+
+	nodeConfig.HTTPEnabled = config.HTTPEnabled
+	nodeConfig.HTTPHost = config.HTTPHost
+	nodeConfig.HTTPPort = config.HTTPPort
+	nodeConfig.HTTPVirtualHosts = config.HTTPVirtualHosts
+
+	nodeConfig.WSEnabled = config.WSEnabled
+	nodeConfig.WSHost = config.WSHost
+	nodeConfig.WSPort = config.WSPort
 }
 
 func defaultNodeConfig(installationID string, request *requests.CreateAccount, opts ...params.Option) (*params.NodeConfig, error) {
@@ -227,8 +258,11 @@ func defaultNodeConfig(installationID string, request *requests.CreateAccount, o
 	nodeConfig.LogDir = request.LogFilePath
 	nodeConfig.LogLevel = DefaultLogLevel
 	nodeConfig.DataDir = DefaultDataDir
-	nodeConfig.KeycardPairingDataFile = DefaultKeycardPairingDataFile
 	nodeConfig.ProcessBackedupMessages = false
+	nodeConfig.KeycardPairingDataFile = DefaultKeycardPairingDataFile
+	if request.KeycardPairingDataFile != nil {
+		nodeConfig.KeycardPairingDataFile = *request.KeycardPairingDataFile
+	}
 
 	if request.LogLevel != nil {
 		nodeConfig.LogLevel = *request.LogLevel
@@ -237,7 +271,11 @@ func defaultNodeConfig(installationID string, request *requests.CreateAccount, o
 		nodeConfig.LogEnabled = false
 	}
 
-	nodeConfig.Networks = BuildDefaultNetworks(&request.WalletSecretsConfig)
+	if request.TestOverrideNetworks != nil {
+		nodeConfig.Networks = request.TestOverrideNetworks
+	} else {
+		nodeConfig.Networks = BuildDefaultNetworks(&request.WalletSecretsConfig)
+	}
 
 	if request.NetworkID != nil {
 		nodeConfig.NetworkID = *request.NetworkID
@@ -251,7 +289,7 @@ func defaultNodeConfig(installationID string, request *requests.CreateAccount, o
 			URL:     request.UpstreamConfig,
 		}
 	} else {
-		nodeConfig.UpstreamConfig.URL = defaultNetworks[0].RPCURL
+		nodeConfig.UpstreamConfig.URL = mainnet(request.WalletSecretsConfig.StatusProxyStageName).RPCURL
 		nodeConfig.UpstreamConfig.Enabled = true
 	}
 
@@ -261,7 +299,7 @@ func defaultNodeConfig(installationID string, request *requests.CreateAccount, o
 	nodeConfig.MaxPeers = DefaultMaxPeers
 	nodeConfig.MaxPendingPeers = DefaultMaxPendingPeers
 
-	nodeConfig.WalletConfig = buildWalletConfig(&request.WalletSecretsConfig)
+	nodeConfig.WalletConfig = buildWalletConfig(&request.WalletSecretsConfig, request.StatusProxyEnabled)
 
 	nodeConfig.LocalNotificationsConfig = params.LocalNotificationsConfig{Enabled: true}
 	nodeConfig.BrowsersConfig = params.BrowsersConfig{Enabled: true}
@@ -270,7 +308,12 @@ func defaultNodeConfig(installationID string, request *requests.CreateAccount, o
 
 	nodeConfig.ListenAddr = DefaultListenAddr
 
-	err := SetDefaultFleet(nodeConfig)
+	fleet := request.WakuV2Fleet
+	if fleet == "" {
+		fleet = DefaultFleet
+	}
+
+	err := SetFleet(fleet, nodeConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -279,12 +322,23 @@ func defaultNodeConfig(installationID string, request *requests.CreateAccount, o
 		nodeConfig.WakuV2Config.LightClient = true
 	}
 
+	if request.WakuV2EnableMissingMessageVerification {
+		nodeConfig.WakuV2Config.EnableMissingMessageVerification = true
+	}
+
+	if request.WakuV2EnableStoreConfirmationForMessagesSent {
+		nodeConfig.WakuV2Config.EnableStoreConfirmationForMessagesSent = true
+	}
+
 	if request.WakuV2Nameserver != nil {
 		nodeConfig.WakuV2Config.Nameserver = *request.WakuV2Nameserver
 	}
 
+	if request.TelemetryServerURL != "" {
+		nodeConfig.WakuV2Config.TelemetryServerURL = request.TelemetryServerURL
+	}
+
 	nodeConfig.ShhextConfig = params.ShhextConfig{
-		BackupDisabledDataDir:      request.BackupDisabledDataDir,
 		InstallationID:             installationID,
 		MaxMessageDeliveryAttempts: DefaultMaxMessageDeliveryAttempts,
 		MailServerConfirmations:    true,
@@ -296,13 +350,13 @@ func defaultNodeConfig(installationID string, request *requests.CreateAccount, o
 	if request.VerifyTransactionURL != nil {
 		nodeConfig.ShhextConfig.VerifyTransactionURL = *request.VerifyTransactionURL
 	} else {
-		nodeConfig.ShhextConfig.VerifyTransactionURL = defaultNetworks[0].FallbackURL
+		nodeConfig.ShhextConfig.VerifyTransactionURL = mainnet(request.WalletSecretsConfig.StatusProxyStageName).FallbackURL
 	}
 
 	if request.VerifyENSURL != nil {
 		nodeConfig.ShhextConfig.VerifyENSURL = *request.VerifyENSURL
 	} else {
-		nodeConfig.ShhextConfig.VerifyENSURL = defaultNetworks[0].FallbackURL
+		nodeConfig.ShhextConfig.VerifyENSURL = mainnet(request.WalletSecretsConfig.StatusProxyStageName).FallbackURL
 	}
 
 	if request.VerifyTransactionChainID != nil {
@@ -320,8 +374,8 @@ func defaultNodeConfig(installationID string, request *requests.CreateAccount, o
 	nodeConfig.TorrentConfig = params.TorrentConfig{
 		Enabled:    false,
 		Port:       0,
-		DataDir:    filepath.Join(nodeConfig.RootDataDir, DefaultArchivesRelativePath),
-		TorrentDir: filepath.Join(nodeConfig.RootDataDir, DefaultTorrentTorrentsRelativePath),
+		DataDir:    filepath.Join(nodeConfig.RootDataDir, params.ArchivesRelativePath),
+		TorrentDir: filepath.Join(nodeConfig.RootDataDir, params.TorrentTorrentsRelativePath),
 	}
 
 	if request.TorrentConfigEnabled != nil {
@@ -333,10 +387,7 @@ func defaultNodeConfig(installationID string, request *requests.CreateAccount, o
 	}
 
 	if request.APIConfig != nil {
-		nodeConfig.HTTPEnabled = true
-		nodeConfig.HTTPHost = request.APIConfig.HTTPHost
-		nodeConfig.HTTPPort = request.APIConfig.HTTPPort
-		nodeConfig.APIModules = request.APIConfig.APIModules
+		overrideApiConfig(nodeConfig, request.APIConfig)
 	}
 
 	for _, opt := range opts {

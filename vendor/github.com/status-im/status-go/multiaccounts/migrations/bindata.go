@@ -12,6 +12,8 @@
 // 1660238799_accounts_kdf.up.sql (115B)
 // 1679505708_add_customization_color.up.sql (78B)
 // 1687853321_add_customization_color_updated_at.up.sql (80B)
+// 1719915420_add_appmetrics.up.sql (377B)
+// 1724407149_add_has_accepted_terms_to_accounts.up.sql (81B)
 // doc.go (94B)
 
 package migrations
@@ -320,6 +322,46 @@ func _1687853321_add_customization_color_updated_atUpSql() (*asset, error) {
 	return a, nil
 }
 
+var __1719915420_add_appmetricsUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x84\x8f\x41\x4b\xc3\x40\x10\x46\xef\xf9\x15\xdf\xb1\x05\x4f\x42\x4f\x9e\x36\x75\xaa\xc1\x31\x91\xed\x56\xec\x29\xac\xc9\x14\x16\xb2\x9b\xb0\xd9\xe4\xe0\xaf\x17\x6b\x05\x89\x05\x4f\x33\xf0\x1e\xcc\xbc\xad\x26\x65\x08\x46\xe5\x4c\x68\x24\xa4\x68\x3b\xf7\x21\xad\x97\x14\x5d\x33\xd6\x97\x89\x55\x06\x00\xae\xc5\x9e\x74\xa1\x18\x2f\xba\x78\x56\xfa\x88\x27\x3a\xde\x9c\x91\xcc\x12\x52\x1d\xac\x17\xbc\x2a\xbd\x7d\x54\x7a\x75\xbb\xd9\xac\x51\x56\x06\xe5\x81\xf9\xb7\x35\xdb\x6e\x12\xe4\x5c\xe5\x0b\x9c\x9c\x97\x31\x59\x3f\xa0\x28\x0d\x3d\x90\x5e\xf0\xa1\xb3\xe9\xd4\x47\xff\x73\x62\x81\xed\x30\xd4\xb3\xc4\xd1\xf5\xe1\x8f\x91\xad\xef\xb2\xec\xbf\xda\x69\x72\xed\x25\xf5\xbc\x1a\x7a\x33\x57\x52\x83\x7d\xef\xa4\x45\x5e\x55\x8c\x7b\xda\xa9\x03\x1b\xec\x14\xef\xe9\x9b\x4f\xa3\xc4\xba\xe9\xc3\xc9\x45\x7f\x55\xfb\xfa\xe5\x33\x00\x00\xff\xff\xb4\x2e\xc7\x2d\x79\x01\x00\x00")
+
+func _1719915420_add_appmetricsUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1719915420_add_appmetricsUpSql,
+		"1719915420_add_appmetrics.up.sql",
+	)
+}
+
+func _1719915420_add_appmetricsUpSql() (*asset, error) {
+	bytes, err := _1719915420_add_appmetricsUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1719915420_add_appmetrics.up.sql", size: 377, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x7a, 0x1f, 0xe9, 0x9e, 0xd6, 0xbd, 0xa7, 0x56, 0xc0, 0x5, 0x4c, 0x5c, 0x46, 0x48, 0xed, 0x1e, 0xb6, 0x84, 0x18, 0xd, 0x8f, 0x60, 0x79, 0x29, 0xfd, 0xb2, 0xa5, 0xa, 0x86, 0xdc, 0x45, 0x2c}}
+	return a, nil
+}
+
+var __1724407149_add_has_accepted_terms_to_accountsUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x04\xc0\x4b\x0e\x82\x21\x0c\x04\xe0\xbd\xa7\x98\x7b\xb8\x2a\x52\x56\x63\x9b\x68\x39\x00\xa9\x24\x6e\x7c\x44\xf0\xfe\xff\x27\x0c\xbd\x21\xa4\x50\x31\x32\x3f\xff\xf7\x5e\x90\x5a\x71\x71\xf6\xab\xe1\x39\x96\x64\xce\xef\x9e\x8f\x98\xbf\xd7\x42\x71\xa7\x8a\xc1\x3c\x60\x9d\x44\xd5\x26\x9d\x81\x26\xbc\xeb\xf9\x74\x04\x00\x00\xff\xff\xe0\x5c\x3b\x08\x51\x00\x00\x00")
+
+func _1724407149_add_has_accepted_terms_to_accountsUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1724407149_add_has_accepted_terms_to_accountsUpSql,
+		"1724407149_add_has_accepted_terms_to_accounts.up.sql",
+	)
+}
+
+func _1724407149_add_has_accepted_terms_to_accountsUpSql() (*asset, error) {
+	bytes, err := _1724407149_add_has_accepted_terms_to_accountsUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1724407149_add_has_accepted_terms_to_accounts.up.sql", size: 81, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x20, 0xc9, 0xc3, 0x79, 0x4f, 0xc5, 0xc, 0x76, 0x17, 0x26, 0x53, 0x92, 0xc1, 0xa1, 0xdd, 0x63, 0xdf, 0xc4, 0x2c, 0x6f, 0x59, 0x0, 0x4, 0xf5, 0x43, 0x45, 0x2f, 0x75, 0x8c, 0x2c, 0xae, 0xe8}}
+	return a, nil
+}
+
 var _docGo = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x2c\xcb\x41\x0e\x02\x31\x08\x05\xd0\x7d\x4f\xf1\x2f\x00\xe8\xca\xc4\xc4\xc3\xa0\x43\x08\x19\x5b\xc6\x96\xfb\xc7\x4d\xdf\xfe\x5d\xfa\x39\xd5\x0d\xeb\xf7\x6d\x4d\xc4\xf3\xe9\x36\x6c\x6a\x19\x3c\xe9\x1d\xe3\xd0\x52\x50\xcf\xa3\xa2\xdb\xeb\xfe\xb8\x6d\xa0\xeb\x74\xf4\xf0\xa9\x15\x39\x16\x28\xc1\x2c\x7b\xb0\x27\x58\xda\x3f\x00\x00\xff\xff\x57\xd4\xd5\x90\x5e\x00\x00\x00")
 
 func docGoBytes() ([]byte, error) {
@@ -443,6 +485,8 @@ var _bindata = map[string]func() (*asset, error){
 	"1660238799_accounts_kdf.up.sql":                       _1660238799_accounts_kdfUpSql,
 	"1679505708_add_customization_color.up.sql":            _1679505708_add_customization_colorUpSql,
 	"1687853321_add_customization_color_updated_at.up.sql": _1687853321_add_customization_color_updated_atUpSql,
+	"1719915420_add_appmetrics.up.sql":                     _1719915420_add_appmetricsUpSql,
+	"1724407149_add_has_accepted_terms_to_accounts.up.sql": _1724407149_add_has_accepted_terms_to_accountsUpSql,
 	"doc.go": docGo,
 }
 
@@ -504,6 +548,8 @@ var _bintree = &bintree{nil, map[string]*bintree{
 	"1660238799_accounts_kdf.up.sql":                       {_1660238799_accounts_kdfUpSql, map[string]*bintree{}},
 	"1679505708_add_customization_color.up.sql":            {_1679505708_add_customization_colorUpSql, map[string]*bintree{}},
 	"1687853321_add_customization_color_updated_at.up.sql": {_1687853321_add_customization_color_updated_atUpSql, map[string]*bintree{}},
+	"1719915420_add_appmetrics.up.sql":                     {_1719915420_add_appmetricsUpSql, map[string]*bintree{}},
+	"1724407149_add_has_accepted_terms_to_accounts.up.sql": {_1724407149_add_has_accepted_terms_to_accountsUpSql, map[string]*bintree{}},
 	"doc.go": {docGo, map[string]*bintree{}},
 }}
 

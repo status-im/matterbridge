@@ -39,25 +39,21 @@ func (s *Shard) PubsubTopic() string {
 	return ""
 }
 
-func DefaultNonProtectedPubsubTopic() string {
-	return (&Shard{
-		Cluster: MainStatusShardCluster,
-		Index:   NonProtectedShardIndex,
-	}).PubsubTopic()
-}
-
 const MainStatusShardCluster = 16
 const DefaultShardIndex = 32
 const NonProtectedShardIndex = 64
-const UndefinedShardValue = 0
 
 func DefaultShardPubsubTopic() string {
 	return wakuproto.NewStaticShardingPubsubTopic(MainStatusShardCluster, DefaultShardIndex).String()
 }
 
-func DefaultShard() *Shard {
+func DefaultNonProtectedShard() *Shard {
 	return &Shard{
 		Cluster: MainStatusShardCluster,
 		Index:   NonProtectedShardIndex,
 	}
+}
+
+func DefaultNonProtectedPubsubTopic() string {
+	return DefaultNonProtectedShard().PubsubTopic()
 }
