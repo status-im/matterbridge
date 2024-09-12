@@ -337,7 +337,7 @@ func (b *Bdiscord) handleEventBotUser(msg *config.Message, channelID string) (st
 	}
 
 	m := discordgo.MessageSend{
-		Content:         msg.Username + msg.Text,
+		Content:         msg.Username + ": " + msg.Text,
 		AllowedMentions: b.getAllowedMentions(),
 	}
 
