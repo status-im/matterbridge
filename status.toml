@@ -12,6 +12,7 @@
     RemoteNickFormat="{NICK}"
     DataDir="path to status data dir"
     NodeConfigFile="path to json with node config and fleets"
+    PreserveThreading=true
 
 [discord]
     [discord.mydiscord]
@@ -19,6 +20,7 @@
     Server=""
     AutoWebhooks=true
     RemoteNickFormat="{NICK}"
+    PreserveThreading=true
 
 [[gateway]]
 name="gateway3"

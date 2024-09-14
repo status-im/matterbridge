@@ -219,6 +219,7 @@ func (b *Bstatus) propagateMessage(msg *common.Message) {
 		Text:      msg.Text,
 		Channel:   msg.ChatId,
 		ID:        msg.ID,
+		ParentID:  msg.ResponseTo,
 		Account:   b.Account,
 	}
 }
@@ -243,6 +244,10 @@ func (b *Bstatus) toStatusMsg(msg config.Message) *common.Message {
 				originalParentID = originalMessageIds.ParentID
 			}
 		}
+	}
+
+	if msg.ParentID != "" {
+		originalParentID = msg.ParentID
 	}
 
 	message.Payload = &protobuf.ChatMessage_BridgeMessage{
@@ -297,6 +302,8 @@ func (b *Bstatus) Send(msg config.Message) (string, error) {
 		return "", errors.Wrap(err, "failed to get status message for bridge message")
 	}
 
+	sentMessageID := ""
+
 	if statusMessageID != "" {
 		decodedStatusMessageID, err := types.DecodeHex(statusMessageID)
 		if err != nil {
@@ -307,18 +314,20 @@ func (b *Bstatus) Send(msg config.Message) (string, error) {
 			Text:        msg.Text,
 			ContentType: protobuf.ChatMessage_BRIDGE_MESSAGE,
 		}
-		_, err = b.messenger.EditMessage(context.Background(), editedMessage)
+		response, err := b.messenger.EditMessage(context.Background(), editedMessage)
 		if err != nil {
 			return "", errors.Wrap(err, "failed to edit message")
 		}
+		sentMessageID = response.Messages()[0].ID
 	} else {
-		_, err := b.messenger.SendChatMessage(context.Background(), statusMessageToSend)
+		response, err := b.messenger.SendChatMessage(context.Background(), statusMessageToSend)
 		if err != nil {
 			return "", errors.Wrap(err, "failed to send message")
 		}
+		sentMessageID = response.Messages()[0].ID
 	}
 
-	return "", nil
+	return sentMessageID, nil
 }
 
 func (b *Bstatus) Connect() error {
