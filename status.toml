@@ -13,6 +13,15 @@
     DataDir="path to status data dir"
     NodeConfigFile="path to json with node config and fleets"
     PreserveThreading=true
+    #Maximum length of message sent to irc server. If it exceeds
+    #<clipped message> will be add to the message.
+    #OPTIONAL (default 400)
+    MessageLength=1600
+    #Maximum amount of messages to hold in queue. If queue is full
+    #messages will be dropped.
+    #<clipped message> will be add to the message that fills the queue.
+    #OPTIONAL (default 30)
+    MessageQueue=100
 
 [discord]
     [discord.mydiscord]
@@ -21,6 +30,15 @@
     AutoWebhooks=true
     RemoteNickFormat="{NICK}"
     PreserveThreading=true
+    #Maximum length of message sent to irc server. If it exceeds
+    #<clipped message> will be add to the message.
+    #OPTIONAL (default 400)
+    MessageLength=1600
+    #Maximum amount of messages to hold in queue. If queue is full
+    #messages will be dropped.
+    #<clipped message> will be add to the message that fills the queue.
+    #OPTIONAL (default 30)
+    MessageQueue=100
 
 [[gateway]]
 name="gateway3"
@@ -32,4 +50,4 @@ enable=true
     [[gateway.inout]]
     account="discord.mydiscord"
     channel="general"
-    
+
