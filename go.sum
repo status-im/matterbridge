@@ -1603,8 +1603,6 @@ github.com/libp2p/go-libp2p v0.36.2 h1:BbqRkDaGC3/5xfaJakLV/BrpjlAuYqSB0lRvtzL3B
 github.com/libp2p/go-libp2p v0.36.2/go.mod h1:XO3joasRE4Eup8yCTTP/+kX+g92mOgRaadk46LmPhHY=
 github.com/libp2p/go-libp2p-asn-util v0.4.1 h1:xqL7++IKD9TBFMgnLPZR6/6iYhawHKHl950SO9L6n94=
 github.com/libp2p/go-libp2p-asn-util v0.4.1/go.mod h1:d/NI6XZ9qxw67b4e+NgpQexCIiFYJjErASrYW4PFDN8=
-github.com/libp2p/go-libp2p-pubsub v0.12.0 h1:PENNZjSfk8KYxANRlpipdS7+BfLmOl3L2E/6vSNjbdI=
-github.com/libp2p/go-libp2p-pubsub v0.12.0/go.mod h1:Oi0zw9aw8/Y5GC99zt+Ef2gYAl+0nZlwdJonDyOz/sE=
 github.com/libp2p/go-libp2p-testing v0.12.0 h1:EPvBb4kKMWO29qP4mZGyhVzUyR25dvfUIK5WDu6iPUA=
 github.com/libp2p/go-libp2p-testing v0.12.0/go.mod h1:KcGDRXyN7sQCllucn1cOOS+Dmm7ujhfEyXQL5lvkcPg=
 github.com/libp2p/go-maddr-filter v0.1.0/go.mod h1:VzZhTXkMucEGGEOSKddrwGiOv0tUhgnKqNEmIAz/bPU=
@@ -2449,8 +2447,8 @@ github.com/status-im/extkeys v1.1.0 h1:jH8GKSNgGxT64T6FRSaG7VmrJokVugn1ealo/V4wm
 github.com/status-im/extkeys v1.1.0/go.mod h1:D6WDVwhax0M/x1hRcQTm7gMgV33/SYSnsV/+4IIfZfA=
 github.com/status-im/go-ethereum v1.10.25-status.19 h1:iiX5x4R5vRRXnFkNgyyQY2qJM/4HB6JPFAe0OGeVQGg=
 github.com/status-im/go-ethereum v1.10.25-status.19/go.mod h1:f0JvrNPETLEqhIN5aG3VKAt8zR0WmCwkusdvgGzfQf4=
-github.com/status-im/go-sqlcipher/v4 v4.5.4-status.2 h1:Oi9JTAI2DZEe5UKlpUcvKBCCSn3ULsLIrix7jPnEoPE=
-github.com/status-im/go-sqlcipher/v4 v4.5.4-status.2/go.mod h1:mF2UmIpBnzFeBdu/ypTDb/LdbS0nk0dfSN1WUsWTjMA=
+github.com/status-im/go-sqlcipher/v4 v4.5.4-status.3 h1:/73h1w1hUfb3wVyTlNrUIwahZxatgesCHa6lwO57C2M=
+github.com/status-im/go-sqlcipher/v4 v4.5.4-status.3/go.mod h1:mF2UmIpBnzFeBdu/ypTDb/LdbS0nk0dfSN1WUsWTjMA=
 github.com/status-im/keycard-go v0.0.0-20190316090335-8537d3370df4/go.mod h1:RZLeN1LMWmRsyYjvAu+I6Dm9QmlDaIIt+Y+4Kd7Tp+Q=
 github.com/status-im/keycard-go v0.0.0-20200402102358-957c09536969 h1:Oo2KZNP70KE0+IUJSidPj/BFS/RXNHmKIJOdckzml2E=
 github.com/status-im/keycard-go v0.0.0-20200402102358-957c09536969/go.mod h1:RZLeN1LMWmRsyYjvAu+I6Dm9QmlDaIIt+Y+4Kd7Tp+Q=
@@ -2590,6 +2588,8 @@ github.com/vmihailenco/tagparser/v2 v2.0.0 h1:y09buUbR+b5aycVFQs/g70pqKVZNBmxwAh
 github.com/vmihailenco/tagparser/v2 v2.0.0/go.mod h1:Wri+At7QHww0WTrCBeu4J6bNtoV6mEfg5OIWRZA9qds=
 github.com/waku-org/go-discover v0.0.0-20240506173252-4912704efdc5 h1:4K3IS97JryAEV8pRXB//qPcg+8bPXl/O+AOLt3FeCKc=
 github.com/waku-org/go-discover v0.0.0-20240506173252-4912704efdc5/go.mod h1:eBHgM6T4EG0RZzxpxKy+rGz/6Dw2Nd8DWxS0lm9ESDw=
+github.com/waku-org/go-libp2p-pubsub v0.12.0-gowaku.0.20240823143342-b0f2429ca27f h1:4dQcthDPhxQIY96BFm6Ab2m57+I/z9+FgaYnIER6IfM=
+github.com/waku-org/go-libp2p-pubsub v0.12.0-gowaku.0.20240823143342-b0f2429ca27f/go.mod h1:Oi0zw9aw8/Y5GC99zt+Ef2gYAl+0nZlwdJonDyOz/sE=
 github.com/waku-org/go-libp2p-rendezvous v0.0.0-20240110193335-a67d1cc760a0 h1:R4YYx2QamhBRl/moIxkDCNW+OP7AHbyWLBygDc/xIMo=
 github.com/waku-org/go-libp2p-rendezvous v0.0.0-20240110193335-a67d1cc760a0/go.mod h1:EhZP9fee0DYjKH/IOQvoNSy1tSHp2iZadsHGphcAJgY=
 github.com/waku-org/go-waku v0.8.1-0.20250411145637-900b98812a91 h1:CZ1ogAn3+xC3WDPcsHhhWAW4KSNb1wauzpQRl/KE7Ig=

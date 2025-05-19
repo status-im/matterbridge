@@ -723,7 +723,7 @@ github.com/libp2p/go-libp2p/p2p/transport/webtransport
 # github.com/libp2p/go-libp2p-asn-util v0.4.1
 ## explicit; go 1.19
 github.com/libp2p/go-libp2p-asn-util
-# github.com/libp2p/go-libp2p-pubsub v0.12.0
+# github.com/libp2p/go-libp2p-pubsub v0.12.0 => github.com/waku-org/go-libp2p-pubsub v0.12.0-gowaku.0.20240823143342-b0f2429ca27f
 ## explicit; go 1.21
 github.com/libp2p/go-libp2p-pubsub
 github.com/libp2p/go-libp2p-pubsub/pb
@@ -940,7 +940,7 @@ github.com/multiformats/go-varint
 # github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822
 ## explicit
 github.com/munnerz/goautoneg
-# github.com/mutecomm/go-sqlcipher/v4 v4.4.2 => github.com/status-im/go-sqlcipher/v4 v4.5.4-status.2
+# github.com/mutecomm/go-sqlcipher/v4 v4.4.2 => github.com/status-im/go-sqlcipher/v4 v4.5.4-status.3
 ## explicit; go 1.12
 github.com/mutecomm/go-sqlcipher/v4
 # github.com/nelsonken/gomf v0.0.0-20190423072027-c65cc0469e94
@@ -2131,4 +2131,3 @@ zombiezen.com/go/sqlite
 zombiezen.com/go/sqlite/fs
 zombiezen.com/go/sqlite/sqlitex
 # github.com/nfnt/resize => github.com/status-im/resize v0.0.0-20201215164250-7c6d9f0d3088
-# github.com/libp2p/go-libp2p-pubsub v0.11.0 => github.com/waku-org/go-libp2p-pubsub v0.0.0-20240703191659-2cbb09eac9b5
