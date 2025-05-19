@@ -23,12 +23,12 @@ import (
 	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/images"
 	"github.com/status-im/status-go/protocol/common"
-	"github.com/status-im/status-go/protocol/common/shard"
 	community_token "github.com/status-im/status-go/protocol/communities/token"
 	"github.com/status-im/status-go/protocol/protobuf"
 	"github.com/status-im/status-go/protocol/requests"
 	"github.com/status-im/status-go/protocol/v1"
 	"github.com/status-im/status-go/server"
+	"github.com/status-im/status-go/wakuv2"
 )
 
 const signatureLength = 65
@@ -55,7 +55,7 @@ type Config struct {
 	RequestsToJoin                      []*RequestToJoin
 	MemberIdentity                      *ecdsa.PrivateKey
 	EventsData                          *EventsData
-	Shard                               *shard.Shard
+	Shard                               *wakuv2.Shard
 	PubsubTopicPrivateKey               *ecdsa.PrivateKey
 	LastOpenedAt                        int64
 }
@@ -71,6 +71,13 @@ type Community struct {
 	timesource  common.TimeSource
 	encryptor   DescriptionEncryptor
 	mediaServer server.MediaServerInterface
+}
+
+type ReadonlyCommunity interface {
+	ID() types.HexBytes
+	IsControlNode() bool
+	CanPost(pk *ecdsa.PublicKey, chatID string, messageType protobuf.ApplicationMetadataMessage_Type) (bool, error)
+	IsBanned(pk *ecdsa.PublicKey) bool
 }
 
 func New(config Config, timesource common.TimeSource, encryptor DescriptionEncryptor, mediaServer server.MediaServerInterface) (*Community, error) {
@@ -172,7 +179,7 @@ func (o *Community) MarshalPublicAPIJSON() ([]byte, error) {
 		ActiveMembersCount      uint64                               `json:"activeMembersCount"`
 		PubsubTopic             string                               `json:"pubsubTopic"`
 		PubsubTopicKey          string                               `json:"pubsubTopicKey"`
-		Shard                   *shard.Shard                         `json:"shard"`
+		Shard                   *wakuv2.Shard                        `json:"shard"`
 	}{
 		ID:             o.ID(),
 		Verified:       o.config.Verified,
@@ -308,7 +315,7 @@ func (o *Community) MarshalJSON() ([]byte, error) {
 		ActiveMembersCount          uint64                               `json:"activeMembersCount"`
 		PubsubTopic                 string                               `json:"pubsubTopic"`
 		PubsubTopicKey              string                               `json:"pubsubTopicKey"`
-		Shard                       *shard.Shard                         `json:"shard"`
+		Shard                       *wakuv2.Shard                        `json:"shard"`
 		LastOpenedAt                int64                                `json:"lastOpenedAt"`
 		Clock                       uint64                               `json:"clock"`
 	}{
@@ -461,7 +468,7 @@ func (o *Community) DescriptionText() string {
 	return ""
 }
 
-func (o *Community) Shard() *shard.Shard {
+func (o *Community) Shard() *wakuv2.Shard {
 	if o != nil && o.config != nil {
 		return o.config.Shard
 	}
@@ -1273,10 +1280,9 @@ func (o *Community) ValidateRequestToJoin(signer *ecdsa.PublicKey, request *prot
 	defer o.mutex.Unlock()
 
 	if o.IsControlNode() {
-		// TODO: Enable this once mobile supports revealed addresses.
-		// if len(request.RevealedAccounts) == 0 {
-		// 	return errors.New("no addresses revealed")
-		// }
+		if len(request.RevealedAccounts) == 0 {
+			return errors.New("no addresses revealed")
+		}
 	} else if o.HasPermissionToSendCommunityEvents() {
 		if o.AutoAccept() {
 			return errors.New("auto-accept community requests can only be processed by the control node")
@@ -1569,6 +1575,13 @@ func (o *Community) setPrivateKey(pk *ecdsa.PrivateKey) {
 	}
 }
 
+func (o *Community) UniversalChatID() string {
+	// Using Member updates channelID as chatID to act as a universal content-topic for all chats in the community as explained here https://forum.vac.dev/t/status-communities-review-and-proposed-usage-of-waku-content-topics/335
+	// This is to match filter criteria of community with the content-topic usage.
+	// This specific topic is chosen as existing users before the change are already subscribed to this and will not get affected by it.
+	return o.MemberUpdateChannelID()
+}
+
 func (o *Community) SetResendAccountsClock(clock uint64) {
 	o.config.CommunityDescription.ResendAccountsClock = clock
 }
@@ -1626,6 +1639,12 @@ func (o *Community) marshaledDescription() ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	// Ensure that communities created prior to the introduction of tokenized ownership
+	// propagate community ID through the description.
+	if len(clone.ID) == 0 {
+		clone.ID = o.IDString()
 	}
 
 	return proto.Marshal(clone)
@@ -2439,7 +2458,8 @@ func (o *Community) CreateDeepCopy() *Community {
 			PubsubTopicPrivateKey:               o.config.PubsubTopicPrivateKey,
 			LastOpenedAt:                        o.config.LastOpenedAt,
 		},
-		timesource: o.timesource,
+		timesource:  o.timesource,
+		mediaServer: o.mediaServer,
 	}
 }
 

@@ -14,7 +14,11 @@ import (
 
 	"sync"
 
-	"github.com/ethereum/go-ethereum/log"
+	"go.uber.org/zap"
+
+	"github.com/status-im/status-go/logutils"
+	"github.com/status-im/status-go/logutils/callog"
+	"github.com/status-im/status-go/logutils/requestlog"
 )
 
 // MobileSignalHandler is a simple callback function that gets called when any signal is received
@@ -24,7 +28,7 @@ type MobileSignalHandler func([]byte)
 var mobileSignalHandler MobileSignalHandler
 
 // All general log messages in this package should be routed through this logger.
-var logger = log.New("package", "status-go/signal")
+var logger = logutils.ZapLogger().Named("signal")
 
 // Envelope is a general signal sent upward from node to RN app
 type Envelope struct {
@@ -45,9 +49,11 @@ func send(typ string, event interface{}) {
 	signal := NewEnvelope(typ, event)
 	data, err := json.Marshal(&signal)
 	if err != nil {
-		logger.Error("Marshalling signal envelope", "error", err)
+		logger.Error("Marshalling signal envelope", zap.Error(err))
 		return
 	}
+	callog.LogSignal(requestlog.GetRequestLogger(), typ, event)
+
 	// If a Go implementation of signal handler is set, let's use it.
 	if mobileSignalHandler != nil {
 		mobileSignalHandler(data)
@@ -84,7 +90,7 @@ func ResetDefaultNodeNotificationHandler() {
 
 // TriggerDefaultNodeNotificationHandler triggers default notification handler (helpful in tests)
 func TriggerDefaultNodeNotificationHandler(jsonEvent string) {
-	logger.Trace("Notification received", "event", jsonEvent)
+	logger.Debug("Notification received", zap.String("event", jsonEvent))
 }
 
 // nolint: golint
@@ -109,6 +115,10 @@ func TriggerTestSignal() {
 // this function uses pure go implementation
 func SetMobileSignalHandler(handler MobileSignalHandler) {
 	mobileSignalHandler = handler
+}
+
+func ResetMobileSignalHandler() {
+	mobileSignalHandler = nil
 }
 
 // SetSignalEventCallback set callback

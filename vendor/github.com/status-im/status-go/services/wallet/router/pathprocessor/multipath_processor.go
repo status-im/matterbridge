@@ -4,13 +4,14 @@ import (
 	"math/big"
 
 	"github.com/status-im/status-go/eth-node/types"
-	"github.com/status-im/status-go/transactions"
+	walletCommon "github.com/status-im/status-go/services/wallet/common"
+	"github.com/status-im/status-go/services/wallet/wallettypes"
 )
 
 type MultipathProcessorTxArgs struct {
 	Name              string `json:"bridgeName"`
 	ChainID           uint64
-	TransferTx        *transactions.SendTxArgs
+	TransferTx        *wallettypes.SendTxArgs
 	HopTx             *HopBridgeTxArgs
 	CbridgeTx         *CelerBridgeTxArgs
 	ERC721TransferTx  *ERC721TxArgs
@@ -31,7 +32,7 @@ func (t *MultipathProcessorTxArgs) Value() *big.Int {
 		return t.ERC1155TransferTx.Amount.ToInt()
 	}
 
-	return ZeroBigIntValue
+	return walletCommon.ZeroBigIntValue()
 }
 
 func (t *MultipathProcessorTxArgs) From() types.Address {

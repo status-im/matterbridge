@@ -2,24 +2,33 @@ package balancefetcher
 
 import (
 	"context"
-	"errors"
 	"math/big"
 	"sync"
 	"time"
 
+	"go.uber.org/zap"
+
+	"github.com/pkg/errors"
+
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/log"
+
+	gocommon "github.com/status-im/status-go/common"
 	"github.com/status-im/status-go/contracts"
 	"github.com/status-im/status-go/contracts/ethscan"
 	"github.com/status-im/status-go/contracts/ierc20"
+	"github.com/status-im/status-go/logutils"
 	"github.com/status-im/status-go/rpc/chain"
 	"github.com/status-im/status-go/services/wallet/async"
 )
 
 var NativeChainAddress = common.HexToAddress("0x")
 var requestTimeout = 20 * time.Second
+
+var (
+	errScanningContract = errors.New("error scanning contract")
+)
 
 const (
 	tokenChunkSize = 500
@@ -67,8 +76,7 @@ func (bf *DefaultBalanceFetcher) fetchBalancesForChain(parent context.Context, c
 
 	ethScanContract, availableAtBlock, err := bf.contractMaker.NewEthScan(client.NetworkID())
 	if err != nil {
-		log.Error("error scanning contract", "err", err)
-		return nil, err
+		return nil, errors.Wrap(err, errScanningContract.Error())
 	}
 
 	fetchChainBalance := false
@@ -139,7 +147,7 @@ func (bf *DefaultBalanceFetcher) FetchChainBalances(parent context.Context, acco
 		BlockNumber: atBlock,
 	}, accounts)
 	if err != nil {
-		log.Error("can't fetch chain balance 5", "err", err)
+		logutils.ZapLogger().Error("can't fetch chain balance 5", zap.Error(err))
 		return nil, err
 	}
 	for idx, account := range accounts {
@@ -163,12 +171,18 @@ func (bf *DefaultBalanceFetcher) FetchTokenBalancesWithScanContract(ctx context.
 		BlockNumber: atBlock,
 	}, account, chunk)
 	if err != nil {
-		log.Error("can't fetch erc20 token balance 6", "account", account, "error", err)
+		as := account.String()
+		logutils.ZapLogger().Error("can't fetch erc20 token balance 6", zap.String("account", gocommon.TruncateWithDot(as)), zap.Error(err))
 		return nil, err
 	}
 
 	if len(res) != len(chunk) {
-		log.Error("can't fetch erc20 token balance 7", "account", account, "error", "response not complete", "expected", len(chunk), "got", len(res))
+		logutils.ZapLogger().Error("can't fetch erc20 token balance 7",
+			zap.Stringer("account", account),
+			zap.Error(errors.New("response not complete")),
+			zap.Int("expected", len(chunk)),
+			zap.Int("got", len(res)),
+		)
 		return nil, errors.New("response not complete")
 	}
 
@@ -194,7 +208,11 @@ func (bf *DefaultBalanceFetcher) fetchTokenBalancesWithTokenContracts(ctx contex
 		balance, err := bf.GetTokenBalanceAt(ctx, client, account, token, atBlock)
 		if err != nil {
 			if err != bind.ErrNoCode {
-				log.Error("can't fetch erc20 token balance 8", "account", account, "token", token, "error", "on fetching token balance")
+				logutils.ZapLogger().Error("can't fetch erc20 token balance 8",
+					zap.Stringer("account", account),
+					zap.Stringer("token", token),
+					zap.Error(errors.New("on fetching token balance")),
+				)
 				return nil, err
 			}
 		}
@@ -308,6 +326,10 @@ func (bf *DefaultBalanceFetcher) GetBalancesAtByChain(parent context.Context, cl
 	case <-group.WaitAsync():
 	case <-parent.Done():
 		return nil, parent.Err()
+	}
+	if group.Error() != nil {
+		logutils.ZapLogger().Error("failed to get balances by chain", zap.Error(group.Error()))
+		return nil, group.Error()
 	}
 	return response, nil
 }

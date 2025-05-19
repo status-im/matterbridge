@@ -8,10 +8,13 @@ import (
 	"strings"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/status-im/status-go/deprecation"
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
 	userimage "github.com/status-im/status-go/images"
+	"github.com/status-im/status-go/logutils"
 	"github.com/status-im/status-go/protocol/common"
 	"github.com/status-im/status-go/protocol/communities"
 	"github.com/status-im/status-go/protocol/protobuf"
@@ -56,9 +59,12 @@ const (
 	MuteFor15MinsDuration = 15 * time.Minute
 	MuteFor1HrsDuration   = time.Hour
 	MuteFor8HrsDuration   = 8 * time.Hour
+	MuteFor24HrsDuration  = 24 * time.Hour
 	MuteFor1WeekDuration  = 7 * 24 * time.Hour
 )
 
+// NOTE: Add items to the end of the list, because desktop and mobile
+// use this enum by number rater than by string.
 const (
 	MuteFor15Min requests.MutingVariation = iota + 1
 	MuteFor1Hr
@@ -67,6 +73,7 @@ const (
 	MuteTillUnmuted
 	MuteTill1Min
 	Unmuted
+	MuteFor24Hr
 )
 
 const pkStringLength = 68
@@ -409,12 +416,23 @@ func (c *Chat) NextClockAndTimestamp(timesource common.TimeSource) (uint64, uint
 }
 
 func (c *Chat) UpdateFromMessage(message *common.Message, timesource common.TimeSource) error {
-	c.Timestamp = int64(timesource.GetCurrentTime())
+	currentTime := timesource.GetCurrentTime()
+
+	// validate use the time from our side to prevent time manipulation attack,
+	// such protect need NTP works well, e.g. get one correct offset at least or
+	// user device time is correct
+	if err := validateClockValue(message.Clock, currentTime); err != nil {
+		logutils.ZapLogger().Error("received a message that clock value is invalid", zap.Uint64("message clock", message.Clock), zap.Uint64("currentTime", currentTime), zap.Error(err))
+		return err
+	}
+
+	c.Timestamp = int64(currentTime)
 
 	// If the clock of the last message is lower, we set the message
 	if c.LastMessage == nil || c.LastMessage.Clock <= message.Clock {
 		c.LastMessage = message
 	}
+
 	// If the clock is higher we set the clock
 	if c.LastClockValue < message.Clock {
 		c.LastClockValue = message.Clock

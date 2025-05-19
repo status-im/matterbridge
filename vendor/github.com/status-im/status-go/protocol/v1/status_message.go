@@ -7,16 +7,19 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/jinzhu/copier"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/log"
 	utils "github.com/status-im/status-go/common"
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
+	"github.com/status-im/status-go/logutils"
 	"github.com/status-im/status-go/protocol/encryption"
 	"github.com/status-im/status-go/protocol/encryption/multidevice"
 	"github.com/status-im/status-go/protocol/encryption/sharedsecret"
 	"github.com/status-im/status-go/protocol/protobuf"
+
+	messagingtypes "github.com/status-im/status-go/messaging/types"
 )
 
 // TransportLayer is the lowest layer and represents waku message.
@@ -26,7 +29,7 @@ type TransportLayer struct {
 	Hash      []byte           `json:"-"`
 	SigPubKey *ecdsa.PublicKey `json:"-"`
 	Dst       *ecdsa.PublicKey
-	Message   *types.Message `json:"message"`
+	Message   *messagingtypes.ReceivedMessage `json:"message"`
 }
 
 // EncryptionLayer handles optional encryption.
@@ -89,19 +92,19 @@ func (m *StatusMessage) Clone() (*StatusMessage, error) {
 	return copy, err
 }
 
-func (m *StatusMessage) HandleTransportLayer(wakuMessage *types.Message) error {
-	publicKey, err := crypto.UnmarshalPubkey(wakuMessage.Sig)
+func (m *StatusMessage) HandleTransportLayer(msg *messagingtypes.ReceivedMessage) error {
+	publicKey, err := crypto.UnmarshalPubkey(msg.Sig)
 	if err != nil {
 		return errors.Wrap(err, "failed to get signature")
 	}
 
-	m.TransportLayer.Message = wakuMessage
-	m.TransportLayer.Hash = wakuMessage.Hash
+	m.TransportLayer.Message = msg
+	m.TransportLayer.Hash = msg.Hash
 	m.TransportLayer.SigPubKey = publicKey
-	m.TransportLayer.Payload = wakuMessage.Payload
+	m.TransportLayer.Payload = msg.Payload
 
-	if wakuMessage.Dst != nil {
-		publicKey, err := crypto.UnmarshalPubkey(wakuMessage.Dst)
+	if msg.Dst != nil {
+		publicKey, err := crypto.UnmarshalPubkey(msg.Dst)
 		if err != nil {
 			return err
 		}
@@ -166,7 +169,10 @@ func (m *StatusMessage) HandleApplicationLayer() error {
 	m.ApplicationLayer.SigPubKey = recoveredKey
 	// Calculate ID using the wrapped record
 	m.ApplicationLayer.ID = MessageID(recoveredKey, m.EncryptionLayer.Payload)
-	log.Debug("calculated ID for envelope", "envelopeHash", hexutil.Encode(m.TransportLayer.Hash), "messageId", hexutil.Encode(m.ApplicationLayer.ID))
+	logutils.ZapLogger().Debug("calculated ID for envelope",
+		zap.String("envelopeHash", hexutil.Encode(m.TransportLayer.Hash)),
+		zap.String("messageId", hexutil.Encode(m.ApplicationLayer.ID)),
+	)
 
 	m.ApplicationLayer.Payload = message.Payload
 	m.ApplicationLayer.Type = message.Type

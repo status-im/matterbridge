@@ -1,11 +1,13 @@
 package utils
 
 import (
+	"runtime/debug"
 	"strings"
 
 	logging "github.com/ipfs/go-log/v2"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 var log *zap.Logger
@@ -19,7 +21,7 @@ func Logger(name ...string) *zap.Logger {
 	}
 
 	if log == nil {
-		InitLogger("console", "stdout", loggerName)
+		InitLogger("console", "stdout", loggerName, zapcore.InfoLevel)
 	}
 	return log
 }
@@ -39,8 +41,9 @@ func MessagesLogger(prefix string) *zap.Logger {
 }
 
 // InitLogger initializes a global logger using an specific encoding
-func InitLogger(encoding string, output string, name string) {
+func InitLogger(encoding string, output string, name string, level zapcore.Level) {
 	cfg := logging.GetConfig()
+	cfg.Level = logging.LogLevel(level)
 
 	if encoding == "json" {
 		cfg.Format = logging.JSONOutput
@@ -78,4 +81,11 @@ func InitLogger(encoding string, output string, name string) {
 	logging.SetupLogging(cfg)
 
 	log = logging.Logger(name).Desugar()
+}
+
+func LogOnPanic() {
+	if err := recover(); err != nil {
+		Logger().Error("panic in goroutine", zap.Any("error", err), zap.String("stacktrace", string(debug.Stack())))
+		panic(err)
+	}
 }

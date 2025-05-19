@@ -10,12 +10,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/peer"
+
+	gocommon "github.com/status-im/status-go/common"
 	"github.com/status-im/status-go/protocol/wakusync"
 
 	"github.com/status-im/status-go/protocol/identity"
-
-	"github.com/status-im/status-go/eth-node/types"
-	waku2 "github.com/status-im/status-go/wakuv2"
 
 	"github.com/stretchr/testify/suite"
 
@@ -24,6 +24,8 @@ import (
 	"github.com/status-im/status-go/protocol/protobuf"
 	"github.com/status-im/status-go/protocol/requests"
 	"github.com/status-im/status-go/protocol/tt"
+
+	wakutypes "github.com/status-im/status-go/waku/types"
 )
 
 var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -203,8 +205,9 @@ func WaitOnSignaledCommunityFound(m *Messenger, action func(), condition func(co
 	}
 }
 
-func WaitForConnectionStatus(s *suite.Suite, waku *waku2.Waku, action func() bool) {
-	subscription := waku.SubscribeToConnStatusChanges()
+func WaitForConnectionStatus(s *suite.Suite, waku wakutypes.Waku, action func() bool) {
+	subscription, err := waku.SubscribeToConnStatusChanges()
+	s.Require().NoError(err)
 	defer subscription.Unsubscribe()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -226,7 +229,7 @@ func WaitForConnectionStatus(s *suite.Suite, waku *waku2.Waku, action func() boo
 	}
 }
 
-func hasAllPeers(m map[string]types.WakuV2Peer, checkSlice []string) bool {
+func hasAllPeers(m map[peer.ID]wakutypes.WakuV2Peer, checkSlice peer.IDSlice) bool {
 	for _, check := range checkSlice {
 		if _, ok := m[check]; !ok {
 			return false
@@ -235,8 +238,9 @@ func hasAllPeers(m map[string]types.WakuV2Peer, checkSlice []string) bool {
 	return true
 }
 
-func WaitForPeersConnected(s *suite.Suite, waku *waku2.Waku, action func() []string) {
-	subscription := waku.SubscribeToConnStatusChanges()
+func WaitForPeersConnected(s *suite.Suite, waku wakutypes.Waku, action func() peer.IDSlice) {
+	subscription, err := waku.SubscribeToConnStatusChanges()
+	s.Require().NoError(err)
 	defer subscription.Unsubscribe()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -274,7 +278,7 @@ func FindFirstByContentType(messages []*common.Message, contentType protobuf.Cha
 
 func PairDevices(s *suite.Suite, device1, device2 *Messenger) {
 	// Send pairing data
-	response, err := device1.SendPairInstallation(context.Background(), nil)
+	response, err := device1.SendPairInstallation(context.Background(), "", nil)
 	s.Require().NoError(err)
 	s.Require().NotNil(response)
 	s.Len(response.Chats(), 1)
@@ -303,7 +307,7 @@ func PairDevices(s *suite.Suite, device1, device2 *Messenger) {
 	s.Require().NotNil(response)
 
 	// Ensure installation is enabled
-	err = device2.EnableInstallation(device1.installationID)
+	_, err = device2.EnableInstallation(device1.installationID)
 	s.Require().NoError(err)
 }
 
@@ -316,6 +320,7 @@ func SetSettingsAndWaitForChange(s *suite.Suite, messenger *Messenger, timeout t
 	wg.Add(1)
 
 	go func() {
+		defer gocommon.LogOnPanic()
 		defer wg.Done()
 		for !allEventsReceived {
 			select {
@@ -341,6 +346,7 @@ func SetIdentityImagesAndWaitForChange(s *suite.Suite, messenger *Messenger, tim
 	wg.Add(1)
 
 	go func() {
+		defer gocommon.LogOnPanic()
 		defer wg.Done()
 		select {
 		case event := <-channel:
@@ -359,8 +365,10 @@ func SetIdentityImagesAndWaitForChange(s *suite.Suite, messenger *Messenger, tim
 	s.Require().True(ok)
 }
 
-func WaitForAvailableStoreNode(s *suite.Suite, m *Messenger, timeout time.Duration) {
-	available := m.waitForAvailableStoreNode(timeout)
+func WaitForAvailableStoreNode(s *suite.Suite, m *Messenger, ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	available := m.messaging.WaitForAvailableStoreNode(ctx)
 	s.Require().True(available)
 }
 

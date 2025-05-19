@@ -9,6 +9,8 @@ import (
 	"net/url"
 
 	"go.uber.org/zap"
+
+	"github.com/status-im/status-go/common"
 )
 
 type Server struct {
@@ -53,11 +55,26 @@ func (s *Server) mustGetHost() string {
 	return fmt.Sprintf("%s:%d", s.hostname, s.MustGetPort())
 }
 
-func (s *Server) listenAndServe() {
-	cfg := &tls.Config{Certificates: []tls.Certificate{*s.cert}, ServerName: s.hostname, MinVersion: tls.VersionTLS12}
+func (s *Server) createListener() (net.Listener, error) {
+	host := s.getHost()
+	if s.cert == nil {
+		// HTTP mode
+		return net.Listen("tcp", host)
+	}
 
-	// in case of restart, we should use the same port as the first start in order not to break existing links
-	listener, err := tls.Listen("tcp", s.getHost(), cfg)
+	// HTTPS mode
+	cfg := &tls.Config{
+		Certificates: []tls.Certificate{*s.cert},
+		ServerName:   s.hostname,
+		MinVersion:   tls.VersionTLS12,
+	}
+	return tls.Listen("tcp", host, cfg)
+}
+
+func (s *Server) listenAndServe() {
+	defer common.LogOnPanic()
+
+	listener, err := s.createListener()
 	if err != nil {
 		s.logger.Error("failed to start server, retrying", zap.Error(err))
 		s.ResetPort()

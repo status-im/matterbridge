@@ -27,10 +27,10 @@ var (
 		Name: "waku2_envelopes_received_total",
 		Help: "Number of envelopes received.",
 	})
-	EnvelopesValidatedCounter = prom.NewCounter(prom.CounterOpts{
+	EnvelopesValidatedCounter = prom.NewCounterVec(prom.CounterOpts{
 		Name: "waku2_envelopes_validated_total",
 		Help: "Number of envelopes processed successfully.",
-	})
+	}, []string{"pubsubTopic", "type"})
 	EnvelopesRejectedCounter = prom.NewCounterVec(prom.CounterOpts{
 		Name: "waku2_envelopes_rejected_total",
 		Help: "Number of envelopes rejected.",
@@ -48,37 +48,17 @@ var (
 		Help:    "Size of processed Waku envelopes in bytes.",
 		Buckets: prom.ExponentialBuckets(256, 4, 10),
 	})
-	RateLimitsProcessed = prom.NewCounter(prom.CounterOpts{
-		Name: "waku2_rate_limits_processed_total",
-		Help: "Number of packets Waku rate limiter processed.",
-	})
-	RateLimitsExceeded = prom.NewCounterVec(prom.CounterOpts{
-		Name: "waku2_rate_limits_exceeded_total",
-		Help: "Number of times the Waku rate limits were exceeded",
-	}, []string{"type"})
-	BridgeSent = prom.NewCounter(prom.CounterOpts{
-		Name: "waku2_bridge_sent_total",
-		Help: "Number of envelopes bridged from Waku",
-	})
-	BridgeReceivedSucceed = prom.NewCounter(prom.CounterOpts{
-		Name: "waku2_bridge_received_success_total",
-		Help: "Number of envelopes bridged to Waku and successfully added",
-	})
-	BridgeReceivedFailed = prom.NewCounter(prom.CounterOpts{
-		Name: "waku2_bridge_received_failure_total",
-		Help: "Number of envelopes bridged to Waku and failed to be added",
-	})
+	PeerCountByOrigin = prom.NewGaugeVec(prom.GaugeOpts{
+		Name: "waku_peer_count_by_origin",
+		Help: "Number of peers by origin",
+	}, []string{"origin"})
 )
 
 func init() {
 	prom.MustRegister(EnvelopesReceivedCounter)
-	prom.MustRegister(EnvelopesRejectedCounter)
+	prom.MustRegister(EnvelopesValidatedCounter)
 	prom.MustRegister(EnvelopesCacheFailedCounter)
 	prom.MustRegister(EnvelopesCachedCounter)
 	prom.MustRegister(EnvelopesSizeMeter)
-	prom.MustRegister(RateLimitsProcessed)
-	prom.MustRegister(RateLimitsExceeded)
-	prom.MustRegister(BridgeSent)
-	prom.MustRegister(BridgeReceivedSucceed)
-	prom.MustRegister(BridgeReceivedFailed)
+	prom.MustRegister(PeerCountByOrigin)
 }

@@ -10,12 +10,14 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-msgio/pbio"
+	"github.com/multiformats/go-multiaddr"
 	"github.com/waku-org/go-waku/waku/v2/peermanager"
 	"github.com/waku-org/go-waku/waku/v2/peerstore"
 	"github.com/waku-org/go-waku/waku/v2/protocol"
 	wenr "github.com/waku-org/go-waku/waku/v2/protocol/enr"
 	"github.com/waku-org/go-waku/waku/v2/protocol/peer_exchange/pb"
 	"github.com/waku-org/go-waku/waku/v2/service"
+	"github.com/waku-org/go-waku/waku/v2/utils"
 	"go.uber.org/zap"
 )
 
@@ -35,7 +37,7 @@ func (wakuPX *WakuPeerExchange) Request(ctx context.Context, numPeers int, opts 
 	}
 
 	if params.pm != nil && params.peerAddr != nil {
-		pData, err := wakuPX.pm.AddPeer(params.peerAddr, peerstore.Static, []string{}, PeerExchangeID_v20alpha1)
+		pData, err := wakuPX.pm.AddPeer([]multiaddr.Multiaddr{params.peerAddr}, peerstore.Static, []string{}, PeerExchangeID_v20alpha1)
 		if err != nil {
 			return err
 		}
@@ -76,8 +78,8 @@ func (wakuPX *WakuPeerExchange) Request(ctx context.Context, numPeers int, opts 
 
 	stream, err := wakuPX.h.NewStream(ctx, params.selectedPeer, PeerExchangeID_v20alpha1)
 	if err != nil {
-		if ps, ok := wakuPX.h.Peerstore().(peerstore.WakuPeerstore); ok {
-			ps.AddConnFailure(peer.AddrInfo{ID: params.selectedPeer})
+		if wakuPX.pm != nil {
+			wakuPX.pm.HandleDialError(err, params.selectedPeer)
 		}
 		return err
 	}
@@ -123,13 +125,11 @@ func (wakuPX *WakuPeerExchange) handleResponse(ctx context.Context, response *pb
 		}
 
 		if params.clusterID != 0 {
-			wakuPX.log.Debug("clusterID is non zero, filtering by shard")
 			rs, err := wenr.RelaySharding(enrRecord)
 			if err != nil || rs == nil || !rs.Contains(uint16(params.clusterID), uint16(params.shard)) {
 				wakuPX.log.Debug("peer doesn't matches filter", zap.Int("shard", params.shard))
 				continue
 			}
-			wakuPX.log.Debug("peer matches filter", zap.Int("shard", params.shard))
 		}
 
 		enodeRecord, err := enode.New(enode.ValidSchemes, enrRecord)
@@ -156,6 +156,7 @@ func (wakuPX *WakuPeerExchange) handleResponse(ctx context.Context, response *pb
 		wakuPX.log.Info("connecting to newly discovered peers", zap.Int("count", len(discoveredPeers)))
 		wakuPX.WaitGroup().Add(1)
 		go func() {
+			defer utils.LogOnPanic()
 			defer wakuPX.WaitGroup().Done()
 
 			peerCh := make(chan service.PeerData)

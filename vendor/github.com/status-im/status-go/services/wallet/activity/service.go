@@ -10,18 +10,20 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/event"
-	"github.com/ethereum/go-ethereum/log"
 
+	"github.com/status-im/status-go/logutils"
 	"github.com/status-im/status-go/multiaccounts/accounts"
+	ac "github.com/status-im/status-go/services/wallet/activity/common"
 	"github.com/status-im/status-go/services/wallet/async"
 	"github.com/status-im/status-go/services/wallet/collectibles"
 	w_common "github.com/status-im/status-go/services/wallet/common"
 	"github.com/status-im/status-go/services/wallet/thirdparty"
 	"github.com/status-im/status-go/services/wallet/token"
 	"github.com/status-im/status-go/services/wallet/walletevent"
-	"github.com/status-im/status-go/transactions"
 )
 
 const (
@@ -65,22 +67,21 @@ type Service struct {
 
 	scheduler *async.MultiClientScheduler
 
-	sessions      map[SessionID]*Session
-	lastSessionID atomic.Int32
-	subscriptions event.Subscription
-	ch            chan walletevent.Event
+	sessions              map[SessionID]*Session
+	lastSessionID         atomic.Int32
+	subscriptions         event.Subscription
+	subscriptionsCancelFn context.CancelFunc
+	ch                    chan walletevent.Event
 	// sessionsRWMutex is used to protect all sessions related members
 	sessionsRWMutex  sync.RWMutex
 	debounceDuration time.Duration
-
-	pendingTracker *transactions.PendingTxTracker
 }
 
 func (s *Service) nextSessionID() SessionID {
 	return SessionID(s.lastSessionID.Add(1))
 }
 
-func NewService(db *sql.DB, accountsDB *accounts.Database, tokenManager token.ManagerInterface, collectibles collectibles.ManagerInterface, eventFeed *event.Feed, pendingTracker *transactions.PendingTxTracker) *Service {
+func NewService(db *sql.DB, accountsDB *accounts.Database, tokenManager token.ManagerInterface, collectibles collectibles.ManagerInterface, eventFeed *event.Feed) *Service {
 	return &Service{
 		db:           db,
 		accountsDB:   accountsDB,
@@ -92,8 +93,6 @@ func NewService(db *sql.DB, accountsDB *accounts.Database, tokenManager token.Ma
 		sessions: make(map[SessionID]*Session),
 		// here to be overwritten by tests
 		debounceDuration: 1 * time.Second,
-
-		pendingTracker: pendingTracker,
 	}
 }
 
@@ -112,38 +111,6 @@ type FilterResponse struct {
 	// based on a simple heuristic
 	HasMore   bool      `json:"hasMore"`
 	ErrorCode ErrorCode `json:"errorCode"`
-}
-
-// FilterActivityAsync allows only one filter task to run at a time
-// it cancels the current one if a new one is started
-// and should not expect other owners to have data in one of the queried tables
-//
-// All calls will trigger an EventActivityFilteringDone event with the result of the filtering
-// TODO #12120: replace with session based APIs
-func (s *Service) FilterActivityAsync(requestID int32, addresses []common.Address, chainIDs []w_common.ChainID, filter Filter, offset int, limit int) {
-	s.scheduler.Enqueue(requestID, filterTask, func(ctx context.Context) (interface{}, error) {
-		allAddresses := s.areAllAddresses(addresses)
-		activities, err := getActivityEntries(ctx, s.getDeps(), addresses, allAddresses, chainIDs, filter, offset, limit)
-		return activities, err
-	}, func(result interface{}, taskType async.TaskType, err error) {
-		res := FilterResponse{
-			ErrorCode: ErrorCodeFailed,
-		}
-
-		if errors.Is(err, context.Canceled) || errors.Is(err, async.ErrTaskOverwritten) {
-			res.ErrorCode = ErrorCodeTaskCanceled
-		} else if err == nil {
-			activities := result.([]Entry)
-			res.Activities = activities
-			res.Offset = offset
-			res.HasMore = len(activities) == limit
-			res.ErrorCode = ErrorCodeSuccess
-		}
-
-		sendResponseEvent(s.eventFeed, &requestID, EventActivityFilteringDone, res, err)
-
-		s.getActivityDetailsAsync(requestID, res.Activities)
-	})
 }
 
 type CollectibleHeader struct {
@@ -204,17 +171,9 @@ func (s *Service) GetActivityCollectiblesAsync(requestID int32, chainIDs []w_com
 	})
 }
 
-func (s *Service) GetMultiTxDetails(ctx context.Context, multiTxID int) (*EntryDetails, error) {
-	return getMultiTxDetails(ctx, s.db, multiTxID)
-}
-
-func (s *Service) GetTxDetails(ctx context.Context, id string) (*EntryDetails, error) {
-	return getTxDetails(ctx, s.db, id)
-}
-
 // getActivityDetails check if any of the entries have details that are not loaded then fetch and emit result
-func (s *Service) getActivityDetails(ctx context.Context, entries []Entry) ([]*EntryData, error) {
-	res := make([]*EntryData, 0)
+func (s *Service) getActivityDetails(ctx context.Context, entries []Entry) ([]*ac.EntryData, error) {
+	res := make([]*ac.EntryData, 0)
 	var err error
 	ids := make([]thirdparty.CollectibleUniqueID, 0)
 	entriesForIds := make(map[string][]*Entry)
@@ -248,11 +207,14 @@ func (s *Service) getActivityDetails(ctx context.Context, entries []Entry) ([]*E
 		return nil, nil
 	}
 
-	log.Debug("wallet.activity.Service lazyLoadDetails", "entries.len", len(entries), "ids.len", len(ids))
+	logutils.ZapLogger().Debug("wallet.activity.Service lazyLoadDetails",
+		zap.Int("entries.len", len(entries)),
+		zap.Int("ids.len", len(ids)),
+	)
 
 	colData, err := s.collectibles.FetchAssetsByCollectibleUniqueID(ctx, ids, true)
 	if err != nil {
-		log.Error("Error fetching collectible details", "error", err)
+		logutils.ZapLogger().Error("Error fetching collectible details", zap.Error(err))
 		return nil, err
 	}
 
@@ -269,11 +231,12 @@ func (s *Service) getActivityDetails(ctx context.Context, entries []Entry) ([]*E
 				continue
 			}
 			for _, e := range entryList {
-				data := &EntryData{
+				data := &ac.EntryData{
+					Key:     e.Key(),
 					NftName: nftName,
 					NftURL:  nftURL,
 				}
-				if e.payloadType == MultiTransactionPT {
+				if e.payloadType == ac.MultiTransactionPT {
 					data.ID = w_common.NewAndSet(e.id)
 				} else {
 					data.Transaction = e.transaction
@@ -361,14 +324,14 @@ func (s *Service) Stop() {
 func (s *Service) getDeps() FilterDependencies {
 	return FilterDependencies{
 		db: s.db,
-		tokenSymbol: func(t Token) string {
-			info := s.tokenManager.LookupTokenIdentity(uint64(t.ChainID), t.Address, t.TokenType == Native)
+		tokenSymbol: func(t ac.Token) string {
+			info := s.tokenManager.LookupTokenIdentity(uint64(t.ChainID), t.Address, t.TokenType == ac.Native)
 			if info == nil {
 				return ""
 			}
 			return info.Symbol
 		},
-		tokenFromSymbol: func(chainID *w_common.ChainID, symbol string) *Token {
+		tokenFromSymbol: func(chainID *w_common.ChainID, symbol string) *ac.Token {
 			var cID *uint64
 			if chainID != nil {
 				cID = new(uint64)
@@ -378,11 +341,11 @@ func (s *Service) getDeps() FilterDependencies {
 			if t == nil {
 				return nil
 			}
-			tokenType := Native
+			tokenType := ac.Native
 			if !detectedNative {
-				tokenType = Erc20
+				tokenType = ac.Erc20
 			}
-			return &Token{
+			return &ac.Token{
 				TokenType: tokenType,
 				ChainID:   w_common.ChainID(t.ChainID),
 				Address:   t.Address,
@@ -397,7 +360,7 @@ func (s *Service) getDeps() FilterDependencies {
 func sendResponseEvent(eventFeed *event.Feed, requestID *int32, eventType walletevent.EventType, payloadObj interface{}, resErr error) {
 	payload, err := json.Marshal(payloadObj)
 	if err != nil {
-		log.Error("Error marshaling response: %v; result error: %w", err, resErr)
+		logutils.ZapLogger().Error("Error marshaling", zap.NamedError("response", err), zap.NamedError("result", resErr))
 	} else {
 		err = resErr
 	}
@@ -406,7 +369,12 @@ func sendResponseEvent(eventFeed *event.Feed, requestID *int32, eventType wallet
 	if requestID != nil {
 		requestIDStr = strconv.Itoa(int(*requestID))
 	}
-	log.Debug("wallet.api.activity.Service RESPONSE", "requestID", requestIDStr, "eventType", eventType, "error", err, "payload.len", len(payload))
+	logutils.ZapLogger().Debug("wallet.api.activity.Service RESPONSE",
+		zap.String("requestID", requestIDStr),
+		zap.String("eventType", string(eventType)),
+		zap.Error(err),
+		zap.Int("payload.len", len(payload)),
+	)
 
 	event := walletevent.Event{
 		Type:    eventType,
@@ -439,7 +407,7 @@ func (s *Service) areAllAddresses(addresses []common.Address) bool {
 	// Compare with addresses in accountsDB
 	walletAddresses, err := s.getWalletAddreses()
 	if err != nil {
-		log.Error("Error getting wallet addresses", "error", err)
+		logutils.ZapLogger().Error("Error getting wallet addresses", zap.Error(err))
 		return false
 	}
 

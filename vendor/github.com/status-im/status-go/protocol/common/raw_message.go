@@ -45,6 +45,15 @@ const (
 	ResendMethodSendCommunityMessage ResendMethod = 2
 )
 
+// MessagePriority determines the ordering for publishing  message
+type MessagePriority = int
+
+var (
+	LowPriority    MessagePriority = 0
+	NormalPriority MessagePriority = 1
+	HighPriority   MessagePriority = 2
+)
+
 // RawMessage represent a sent or received message, kept for being able
 // to re-send/propagate
 type RawMessage struct {
@@ -56,6 +65,7 @@ type RawMessage struct {
 	// don't wrap message into ProtocolMessage.
 	// when this is true, the message will not be resent via ResendTypeDataSync, but it's possible to
 	// resend it via ResendTypeRawMessage specified in ResendType
+	// MVDS only supports sending encrypted message.
 	SkipEncryptionLayer   bool
 	SendPushNotification  bool
 	MessageType           protobuf.ApplicationMetadataMessage_Type
@@ -70,7 +80,9 @@ type RawMessage struct {
 	Ephemeral             bool
 	BeforeDispatch        func(*RawMessage) error
 	HashRatchetGroupID    []byte
+	ContentTopic          string
 	PubsubTopic           string
 	ResendType            ResendType
 	ResendMethod          ResendMethod
+	Priority              *MessagePriority
 }

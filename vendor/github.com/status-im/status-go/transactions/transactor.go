@@ -1,5 +1,7 @@
 package transactions
 
+//go:generate mockgen -package=mock_transactor -source=transactor.go -destination=mock/transactor.go
+
 import (
 	"bytes"
 	"context"
@@ -8,19 +10,22 @@ import (
 	"math/big"
 	"time"
 
+	"go.uber.org/zap"
+
 	ethereum "github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	gethtypes "github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/log"
 
 	"github.com/status-im/status-go/account"
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
+	"github.com/status-im/status-go/logutils"
 	"github.com/status-im/status-go/params"
 	"github.com/status-im/status-go/rpc"
 	"github.com/status-im/status-go/services/wallet/bigint"
 	wallet_common "github.com/status-im/status-go/services/wallet/common"
+	"github.com/status-im/status-go/services/wallet/wallettypes"
 )
 
 const (
@@ -46,14 +51,14 @@ func (e *ErrBadNonce) Error() string {
 
 // Transactor is an interface that defines the methods for validating and sending transactions.
 type TransactorIface interface {
-	NextNonce(rpcClient rpc.ClientInterface, chainID uint64, from types.Address) (uint64, error)
+	NextNonce(ctx context.Context, rpcClient rpc.ClientInterface, chainID uint64, from types.Address) (uint64, error)
 	EstimateGas(network *params.Network, from common.Address, to common.Address, value *big.Int, input []byte) (uint64, error)
-	SendTransaction(sendArgs SendTxArgs, verifiedAccount *account.SelectedExtKey, lastUsedNonce int64) (hash types.Hash, nonce uint64, err error)
-	SendTransactionWithChainID(chainID uint64, sendArgs SendTxArgs, lastUsedNonce int64, verifiedAccount *account.SelectedExtKey) (hash types.Hash, nonce uint64, err error)
-	ValidateAndBuildTransaction(chainID uint64, sendArgs SendTxArgs, lastUsedNonce int64) (tx *gethtypes.Transaction, nonce uint64, err error)
+	SendTransaction(sendArgs wallettypes.SendTxArgs, verifiedAccount *account.SelectedExtKey, lastUsedNonce int64) (hash types.Hash, nonce uint64, err error)
+	SendTransactionWithChainID(chainID uint64, sendArgs wallettypes.SendTxArgs, lastUsedNonce int64, verifiedAccount *account.SelectedExtKey) (hash types.Hash, nonce uint64, err error)
+	ValidateAndBuildTransaction(chainID uint64, sendArgs wallettypes.SendTxArgs, lastUsedNonce int64) (tx *gethtypes.Transaction, nonce uint64, err error)
 	AddSignatureToTransaction(chainID uint64, tx *gethtypes.Transaction, sig []byte) (*gethtypes.Transaction, error)
 	SendRawTransaction(chainID uint64, rawTx string) error
-	BuildTransactionWithSignature(chainID uint64, args SendTxArgs, sig []byte) (*gethtypes.Transaction, error)
+	BuildTransactionWithSignature(chainID uint64, args wallettypes.SendTxArgs, sig []byte) (*gethtypes.Transaction, error)
 	SendTransactionWithSignature(from common.Address, symbol string, multiTransactionID wallet_common.MultiTransactionIDType, tx *gethtypes.Transaction) (hash types.Hash, err error)
 	StoreAndTrackPendingTx(from common.Address, symbol string, chainID uint64, multiTransactionID wallet_common.MultiTransactionIDType, tx *gethtypes.Transaction) error
 }
@@ -66,14 +71,14 @@ type Transactor struct {
 	sendTxTimeout  time.Duration
 	rpcCallTimeout time.Duration
 	networkID      uint64
-	log            log.Logger
+	logger         *zap.Logger
 }
 
 // NewTransactor returns a new Manager.
 func NewTransactor() *Transactor {
 	return &Transactor{
 		sendTxTimeout: sendTxTimeout,
-		log:           log.New("package", "status-go/transactions.Manager"),
+		logger:        logutils.ZapLogger().Named("transactor"),
 	}
 }
 
@@ -97,29 +102,9 @@ func (t *Transactor) SetRPC(rpcClient *rpc.Client, timeout time.Duration) {
 	t.rpcCallTimeout = timeout
 }
 
-func (t *Transactor) NextNonce(rpcClient rpc.ClientInterface, chainID uint64, from types.Address) (uint64, error) {
+func (t *Transactor) NextNonce(ctx context.Context, rpcClient rpc.ClientInterface, chainID uint64, from types.Address) (uint64, error) {
 	wrapper := newRPCWrapper(rpcClient, chainID)
-	ctx := context.Background()
-	nonce, err := wrapper.PendingNonceAt(ctx, common.Address(from))
-	if err != nil {
-		return 0, err
-	}
-
-	// We need to take into consideration all pending transactions in case of Optimism, cause the network returns always
-	// the nonce of last executed tx + 1 for the next nonce value.
-	if chainID == wallet_common.OptimismMainnet ||
-		chainID == wallet_common.OptimismSepolia ||
-		chainID == wallet_common.OptimismGoerli {
-		if t.pendingTracker != nil {
-			countOfPendingTXs, err := t.pendingTracker.CountPendingTxsFromNonce(wallet_common.ChainID(chainID), common.Address(from), nonce)
-			if err != nil {
-				return 0, err
-			}
-			return nonce + countOfPendingTXs, nil
-		}
-	}
-
-	return nonce, err
+	return wrapper.PendingNonceAt(ctx, common.Address(from))
 }
 
 func (t *Transactor) EstimateGas(network *params.Network, from common.Address, to common.Address, value *big.Int, input []byte) (uint64, error) {
@@ -139,20 +124,24 @@ func (t *Transactor) EstimateGas(network *params.Network, from common.Address, t
 }
 
 // SendTransaction is an implementation of eth_sendTransaction. It queues the tx to the sign queue.
-func (t *Transactor) SendTransaction(sendArgs SendTxArgs, verifiedAccount *account.SelectedExtKey, lastUsedNonce int64) (hash types.Hash, nonce uint64, err error) {
+func (t *Transactor) SendTransaction(sendArgs wallettypes.SendTxArgs, verifiedAccount *account.SelectedExtKey, lastUsedNonce int64) (hash types.Hash, nonce uint64, err error) {
 	hash, nonce, err = t.validateAndPropagate(t.rpcWrapper, verifiedAccount, sendArgs, lastUsedNonce)
 	return
 }
 
-func (t *Transactor) SendTransactionWithChainID(chainID uint64, sendArgs SendTxArgs, lastUsedNonce int64, verifiedAccount *account.SelectedExtKey) (hash types.Hash, nonce uint64, err error) {
+func (t *Transactor) SendTransactionWithChainID(chainID uint64, sendArgs wallettypes.SendTxArgs, lastUsedNonce int64, verifiedAccount *account.SelectedExtKey) (hash types.Hash, nonce uint64, err error) {
 	wrapper := newRPCWrapper(t.rpcWrapper.RPCClient, chainID)
 	hash, nonce, err = t.validateAndPropagate(wrapper, verifiedAccount, sendArgs, lastUsedNonce)
 	return
 }
 
-func (t *Transactor) ValidateAndBuildTransaction(chainID uint64, sendArgs SendTxArgs, lastUsedNonce int64) (tx *gethtypes.Transaction, nonce uint64, err error) {
+func (t *Transactor) ValidateAndBuildTransaction(chainID uint64, sendArgs wallettypes.SendTxArgs, lastUsedNonce int64) (tx *gethtypes.Transaction, nonce uint64, err error) {
 	wrapper := newRPCWrapper(t.rpcWrapper.RPCClient, chainID)
 	tx, err = t.validateAndBuildTransaction(wrapper, sendArgs, lastUsedNonce)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	return tx, tx.Nonce(), err
 }
 
@@ -183,13 +172,22 @@ func (t *Transactor) SendRawTransaction(chainID uint64, rawTx string) error {
 }
 
 func createPendingTransaction(from common.Address, symbol string, chainID uint64, multiTransactionID wallet_common.MultiTransactionIDType, tx *gethtypes.Transaction) (pTx *PendingTransaction) {
+	var toAddress common.Address
+	if tx.To() != nil {
+		toAddress = *tx.To()
+	} else {
+		// when deploying a new contract we don't know the address beforehand,
+		// so we create it from the address the contract was deployed from and the nonce
+		toAddr := crypto.CreateAddress(types.Address(from), tx.Nonce())
+		toAddress = common.Address(toAddr)
+	}
 
 	pTx = &PendingTransaction{
 		Hash:               tx.Hash(),
 		Timestamp:          uint64(time.Now().Unix()),
 		Value:              bigint.BigInt{Int: tx.Value()},
 		From:               from,
-		To:                 *tx.To(),
+		To:                 toAddress,
 		Nonce:              tx.Nonce(),
 		Data:               string(tx.Data()),
 		Type:               WalletTransfer,
@@ -198,8 +196,8 @@ func createPendingTransaction(from common.Address, symbol string, chainID uint64
 		Symbol:             symbol,
 		AutoDelete:         new(bool),
 	}
-	// Transaction downloader will delete pending transaction as soon as it is confirmed
-	*pTx.AutoDelete = false
+	// Stop tracking as soon as the transaction is confirmed
+	*pTx.AutoDelete = true
 	return
 }
 
@@ -239,17 +237,20 @@ func (t *Transactor) SendTransactionWithSignature(from common.Address, symbol st
 // BuildTransactionAndSendWithSignature receive a transaction and a signature, serialize them together
 // It's different from eth_sendRawTransaction because it receives a signature and not a serialized transaction with signature.
 // Since the transactions is already signed, we assume it was validated and used the right nonce.
-func (t *Transactor) BuildTransactionWithSignature(chainID uint64, args SendTxArgs, sig []byte) (*gethtypes.Transaction, error) {
+func (t *Transactor) BuildTransactionWithSignature(chainID uint64, args wallettypes.SendTxArgs, sig []byte) (*gethtypes.Transaction, error) {
 	if !args.Valid() {
-		return nil, ErrInvalidSendTxArgs
+		return nil, wallettypes.ErrInvalidSendTxArgs
 	}
 
 	if len(sig) != ValidSignatureSize {
 		return nil, ErrInvalidSignatureSize
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), t.rpcCallTimeout)
+	defer cancel()
+
 	tx := t.buildTransaction(args)
-	expectedNonce, err := t.NextNonce(t.rpcWrapper.RPCClient, chainID, args.From)
+	expectedNonce, err := t.NextNonce(ctx, t.rpcWrapper.RPCClient, chainID, args.From)
 	if err != nil {
 		return nil, err
 	}
@@ -266,14 +267,17 @@ func (t *Transactor) BuildTransactionWithSignature(chainID uint64, args SendTxAr
 	return txWithSignature, nil
 }
 
-func (t *Transactor) HashTransaction(args SendTxArgs) (validatedArgs SendTxArgs, hash types.Hash, err error) {
+func (t *Transactor) HashTransaction(args wallettypes.SendTxArgs) (validatedArgs wallettypes.SendTxArgs, hash types.Hash, err error) {
 	if !args.Valid() {
-		return validatedArgs, hash, ErrInvalidSendTxArgs
+		return validatedArgs, hash, wallettypes.ErrInvalidSendTxArgs
 	}
 
 	validatedArgs = args
 
-	nonce, err := t.NextNonce(t.rpcWrapper.RPCClient, t.rpcWrapper.chainID, args.From)
+	ctx, cancel := context.WithTimeout(context.Background(), t.rpcCallTimeout)
+	defer cancel()
+
+	nonce, err := t.NextNonce(ctx, t.rpcWrapper.RPCClient, t.rpcWrapper.chainID, args.From)
 	if err != nil {
 		return validatedArgs, hash, err
 	}
@@ -282,8 +286,6 @@ func (t *Transactor) HashTransaction(args SendTxArgs) (validatedArgs SendTxArgs,
 	gasFeeCap := (*big.Int)(args.MaxFeePerGas)
 	gasTipCap := (*big.Int)(args.MaxPriorityFeePerGas)
 	if args.GasPrice == nil && !args.IsDynamicFeeTx() {
-		ctx, cancel := context.WithTimeout(context.Background(), t.rpcCallTimeout)
-		defer cancel()
 		gasPrice, err = t.rpcWrapper.SuggestGasPrice(ctx)
 		if err != nil {
 			return validatedArgs, hash, err
@@ -295,9 +297,6 @@ func (t *Transactor) HashTransaction(args SendTxArgs) (validatedArgs SendTxArgs,
 
 	var gas uint64
 	if args.Gas == nil {
-		ctx, cancel := context.WithTimeout(context.Background(), t.rpcCallTimeout)
-		defer cancel()
-
 		var (
 			gethTo    common.Address
 			gethToPtr *common.Address
@@ -349,22 +348,25 @@ func (t *Transactor) HashTransaction(args SendTxArgs) (validatedArgs SendTxArgs,
 }
 
 // make sure that only account which created the tx can complete it
-func (t *Transactor) validateAccount(args SendTxArgs, selectedAccount *account.SelectedExtKey) error {
+func (t *Transactor) validateAccount(args wallettypes.SendTxArgs, selectedAccount *account.SelectedExtKey) error {
 	if selectedAccount == nil {
 		return account.ErrNoAccountSelected
 	}
 
 	if !bytes.Equal(args.From.Bytes(), selectedAccount.Address.Bytes()) {
-		return ErrInvalidTxSender
+		return wallettypes.ErrInvalidTxSender
 	}
 
 	return nil
 }
 
-func (t *Transactor) validateAndBuildTransaction(rpcWrapper *rpcWrapper, args SendTxArgs, lastUsedNonce int64) (tx *gethtypes.Transaction, err error) {
+func (t *Transactor) validateAndBuildTransaction(rpcWrapper *rpcWrapper, args wallettypes.SendTxArgs, lastUsedNonce int64) (tx *gethtypes.Transaction, err error) {
 	if !args.Valid() {
-		return tx, ErrInvalidSendTxArgs
+		return tx, wallettypes.ErrInvalidSendTxArgs
 	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), t.rpcCallTimeout)
+	defer cancel()
 
 	var nonce uint64
 	if args.Nonce != nil {
@@ -372,7 +374,7 @@ func (t *Transactor) validateAndBuildTransaction(rpcWrapper *rpcWrapper, args Se
 	} else {
 		// some chains, like arbitrum doesn't count pending txs in the nonce, so we need to calculate it manually
 		if lastUsedNonce < 0 {
-			nonce, err = t.NextNonce(rpcWrapper.RPCClient, rpcWrapper.chainID, args.From)
+			nonce, err = t.NextNonce(ctx, rpcWrapper.RPCClient, rpcWrapper.chainID, args.From)
 			if err != nil {
 				return tx, err
 			}
@@ -380,9 +382,6 @@ func (t *Transactor) validateAndBuildTransaction(rpcWrapper *rpcWrapper, args Se
 			nonce = uint64(lastUsedNonce) + 1
 		}
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), t.rpcCallTimeout)
-	defer cancel()
 
 	gasPrice := (*big.Int)(args.GasPrice)
 	// GasPrice should be estimated only for LegacyTx
@@ -398,8 +397,6 @@ func (t *Transactor) validateAndBuildTransaction(rpcWrapper *rpcWrapper, args Se
 	if args.Gas != nil {
 		gas = uint64(*args.Gas)
 	} else {
-		ctx, cancel = context.WithTimeout(context.Background(), t.rpcCallTimeout)
-		defer cancel()
 
 		var (
 			gethTo    common.Address
@@ -412,7 +409,7 @@ func (t *Transactor) validateAndBuildTransaction(rpcWrapper *rpcWrapper, args Se
 		if args.IsDynamicFeeTx() {
 			gasFeeCap := (*big.Int)(args.MaxFeePerGas)
 			gasTipCap := (*big.Int)(args.MaxPriorityFeePerGas)
-			gas, err = t.rpcWrapper.EstimateGas(ctx, ethereum.CallMsg{
+			gas, err = rpcWrapper.EstimateGas(ctx, ethereum.CallMsg{
 				From:      common.Address(args.From),
 				To:        gethToPtr,
 				GasFeeCap: gasFeeCap,
@@ -421,7 +418,7 @@ func (t *Transactor) validateAndBuildTransaction(rpcWrapper *rpcWrapper, args Se
 				Data:      args.GetInput(),
 			})
 		} else {
-			gas, err = t.rpcWrapper.EstimateGas(ctx, ethereum.CallMsg{
+			gas, err = rpcWrapper.EstimateGas(ctx, ethereum.CallMsg{
 				From:     common.Address(args.From),
 				To:       gethToPtr,
 				GasPrice: gasPrice,
@@ -438,7 +435,12 @@ func (t *Transactor) validateAndBuildTransaction(rpcWrapper *rpcWrapper, args Se
 	return tx, nil
 }
 
-func (t *Transactor) validateAndPropagate(rpcWrapper *rpcWrapper, selectedAccount *account.SelectedExtKey, args SendTxArgs, lastUsedNonce int64) (hash types.Hash, nonce uint64, err error) {
+func (t *Transactor) validateAndPropagate(rpcWrapper *rpcWrapper, selectedAccount *account.SelectedExtKey, args wallettypes.SendTxArgs, lastUsedNonce int64) (hash types.Hash, nonce uint64, err error) {
+	symbol := args.Symbol
+	if args.Version == wallettypes.SendTxArgsVersion1 {
+		symbol = args.FromTokenID
+	}
+
 	if err = t.validateAccount(args, selectedAccount); err != nil {
 		return hash, nonce, err
 	}
@@ -454,11 +456,11 @@ func (t *Transactor) validateAndPropagate(rpcWrapper *rpcWrapper, selectedAccoun
 		return hash, nonce, err
 	}
 
-	hash, err = t.sendTransaction(rpcWrapper, common.Address(args.From), args.Symbol, args.MultiTransactionID, signedTx)
+	hash, err = t.sendTransaction(rpcWrapper, common.Address(args.From), symbol, args.MultiTransactionID, signedTx)
 	return hash, tx.Nonce(), err
 }
 
-func (t *Transactor) buildTransaction(args SendTxArgs) *gethtypes.Transaction {
+func (t *Transactor) buildTransaction(args wallettypes.SendTxArgs) *gethtypes.Transaction {
 	var (
 		nonce    uint64
 		value    *big.Int
@@ -481,7 +483,7 @@ func (t *Transactor) buildTransaction(args SendTxArgs) *gethtypes.Transaction {
 	return t.buildTransactionWithOverrides(nonce, value, gas, gasPrice, args)
 }
 
-func (t *Transactor) buildTransactionWithOverrides(nonce uint64, value *big.Int, gas uint64, gasPrice *big.Int, args SendTxArgs) *gethtypes.Transaction {
+func (t *Transactor) buildTransactionWithOverrides(nonce uint64, value *big.Int, gas uint64, gasPrice *big.Int, args wallettypes.SendTxArgs) *gethtypes.Transaction {
 	var tx *gethtypes.Transaction
 
 	if args.To != nil {
@@ -536,22 +538,22 @@ func (t *Transactor) buildTransactionWithOverrides(nonce uint64, value *big.Int,
 	return tx
 }
 
-func (t *Transactor) logNewTx(args SendTxArgs, gas uint64, gasPrice *big.Int, value *big.Int) {
-	t.log.Info("New transaction",
-		"From", args.From,
-		"To", *args.To,
-		"Gas", gas,
-		"GasPrice", gasPrice,
-		"Value", value,
+func (t *Transactor) logNewTx(args wallettypes.SendTxArgs, gas uint64, gasPrice *big.Int, value *big.Int) {
+	t.logger.Info("New transaction",
+		zap.Stringer("From", args.From),
+		zap.Stringer("To", args.To),
+		zap.Uint64("Gas", gas),
+		zap.Stringer("GasPrice", gasPrice),
+		zap.Stringer("Value", value),
 	)
 }
 
-func (t *Transactor) logNewContract(args SendTxArgs, gas uint64, gasPrice *big.Int, value *big.Int, nonce uint64) {
-	t.log.Info("New contract",
-		"From", args.From,
-		"Gas", gas,
-		"GasPrice", gasPrice,
-		"Value", value,
-		"Contract address", crypto.CreateAddress(args.From, nonce),
+func (t *Transactor) logNewContract(args wallettypes.SendTxArgs, gas uint64, gasPrice *big.Int, value *big.Int, nonce uint64) {
+	t.logger.Info("New contract",
+		zap.Stringer("From", args.From),
+		zap.Uint64("Gas", gas),
+		zap.Stringer("GasPrice", gasPrice),
+		zap.Stringer("Value", value),
+		zap.Stringer("Contract address", crypto.CreateAddress(args.From, nonce)),
 	)
 }

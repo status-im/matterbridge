@@ -15,12 +15,13 @@ import (
 
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
+	messagingtypes "github.com/status-im/status-go/messaging/types"
 	"github.com/status-im/status-go/protocol/common"
-	"github.com/status-im/status-go/protocol/common/shard"
 	"github.com/status-im/status-go/protocol/communities/token"
 	"github.com/status-im/status-go/protocol/encryption"
 	"github.com/status-im/status-go/protocol/protobuf"
 	"github.com/status-im/status-go/services/wallet/bigint"
+	"github.com/status-im/status-go/wakuv2"
 )
 
 type Persistence struct {
@@ -291,6 +292,11 @@ func (p *Persistence) UpdateLastOpenedAt(communityID types.HexBytes, timestamp i
 
 func (p *Persistence) SpectatedCommunities(memberIdentity *ecdsa.PublicKey) ([]*Community, error) {
 	query := communitiesBaseQuery + ` WHERE c.spectated`
+	return p.queryCommunities(memberIdentity, query)
+}
+
+func (p *Persistence) JoinedOrSpectatedCommunities(memberIdentity *ecdsa.PublicKey) ([]*Community, error) {
+	query := communitiesBaseQuery + ` WHERE c.joined OR c.spectated`
 	return p.queryCommunities(memberIdentity, query)
 }
 
@@ -799,6 +805,11 @@ func (p *Persistence) SetRequestToJoinState(pk string, communityID []byte, state
 
 func (p *Persistence) DeletePendingRequestToJoin(id []byte) error {
 	_, err := p.db.Exec(`DELETE FROM communities_requests_to_join WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	_, err = p.db.Exec(`DELETE FROM communities_requests_to_join_revealed_addresses WHERE request_id = ?`, id)
+
 	return err
 }
 
@@ -858,16 +869,6 @@ func (p *Persistence) GetRequestToJoinByPkAndCommunityID(pk string, communityID 
 	return request, nil
 }
 
-func (p *Persistence) GetRequestToJoinIDByPkAndCommunityID(pk string, communityID []byte) ([]byte, error) {
-	var id []byte
-	err := p.db.QueryRow(`SELECT id FROM communities_requests_to_join WHERE community_id = ? AND public_key = ?`, communityID, pk).Scan(&id)
-	if err != nil && err != sql.ErrNoRows {
-		return nil, err
-	}
-
-	return id, nil
-}
-
 func (p *Persistence) GetRequestToJoinByPk(pk string, communityID []byte, state RequestToJoinState) (*RequestToJoin, error) {
 	request := &RequestToJoin{}
 	err := p.db.QueryRow(`SELECT id,public_key,clock,ens_name,customization_color,chat_id,community_id,state, share_future_addresses FROM communities_requests_to_join WHERE public_key = ? AND community_id = ? AND state = ?`, pk, communityID, state).Scan(&request.ID, &request.PublicKey, &request.Clock, &request.ENSName, &request.CustomizationColor, &request.ChatID, &request.CommunityID, &request.State, &request.ShareFutureAddresses)
@@ -888,7 +889,7 @@ func (p *Persistence) SetPrivateKey(id []byte, privKey *ecdsa.PrivateKey) error 
 	return err
 }
 
-func (p *Persistence) SaveWakuMessages(messages []*types.Message) (err error) {
+func (p *Persistence) SaveWakuMessages(messages []*messagingtypes.ReceivedMessage) (err error) {
 	tx, err := p.db.BeginTx(context.Background(), &sql.TxOptions{})
 	if err != nil {
 		return
@@ -924,7 +925,7 @@ func (p *Persistence) SaveWakuMessages(messages []*types.Message) (err error) {
 	return
 }
 
-func (p *Persistence) SaveWakuMessage(message *types.Message) error {
+func (p *Persistence) SaveWakuMessage(message *messagingtypes.ReceivedMessage) error {
 	_, err := p.db.Exec(`INSERT OR REPLACE INTO waku_messages (sig, timestamp, topic, payload, padding, hash, third_party_id) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		message.Sig,
 		message.Timestamp,
@@ -937,7 +938,7 @@ func (p *Persistence) SaveWakuMessage(message *types.Message) error {
 	return err
 }
 
-func wakuMessageTimestampQuery(topics []types.TopicType) string {
+func wakuMessageTimestampQuery(topics []messagingtypes.ContentTopic) string {
 	query := " FROM waku_messages WHERE "
 	for i, topic := range topics {
 		query += `topic = "` + topic.String() + `"`
@@ -948,7 +949,7 @@ func wakuMessageTimestampQuery(topics []types.TopicType) string {
 	return query
 }
 
-func (p *Persistence) GetOldestWakuMessageTimestamp(topics []types.TopicType) (uint64, error) {
+func (p *Persistence) GetOldestWakuMessageTimestamp(topics []messagingtypes.ContentTopic) (uint64, error) {
 	var timestamp sql.NullInt64
 	query := "SELECT MIN(timestamp)"
 	query += wakuMessageTimestampQuery(topics)
@@ -956,7 +957,7 @@ func (p *Persistence) GetOldestWakuMessageTimestamp(topics []types.TopicType) (u
 	return uint64(timestamp.Int64), err
 }
 
-func (p *Persistence) GetLatestWakuMessageTimestamp(topics []types.TopicType) (uint64, error) {
+func (p *Persistence) GetLatestWakuMessageTimestamp(topics []messagingtypes.ContentTopic) (uint64, error) {
 	var timestamp sql.NullInt64
 	query := "SELECT MAX(timestamp)"
 	query += wakuMessageTimestampQuery(topics)
@@ -964,7 +965,7 @@ func (p *Persistence) GetLatestWakuMessageTimestamp(topics []types.TopicType) (u
 	return uint64(timestamp.Int64), err
 }
 
-func (p *Persistence) GetWakuMessagesByFilterTopic(topics []types.TopicType, from uint64, to uint64) ([]types.Message, error) {
+func (p *Persistence) GetWakuMessagesByFilterTopic(topics []messagingtypes.ContentTopic, from uint64, to uint64) ([]messagingtypes.ReceivedMessage, error) {
 
 	query := "SELECT sig, timestamp, topic, payload, padding, hash, third_party_id FROM waku_messages WHERE timestamp >= " + fmt.Sprint(from) + " AND timestamp < " + fmt.Sprint(to) + " AND (" //nolint: gosec
 
@@ -981,17 +982,17 @@ func (p *Persistence) GetWakuMessagesByFilterTopic(topics []types.TopicType, fro
 		return nil, err
 	}
 	defer rows.Close()
-	messages := []types.Message{}
+	messages := []messagingtypes.ReceivedMessage{}
 
 	for rows.Next() {
-		msg := types.Message{}
+		msg := messagingtypes.ReceivedMessage{}
 		var topicStr string
 		var hashStr string
 		err := rows.Scan(&msg.Sig, &msg.Timestamp, &topicStr, &msg.Payload, &msg.Padding, &hashStr, &msg.ThirdPartyID)
 		if err != nil {
 			return nil, err
 		}
-		msg.Topic = types.StringToTopic(topicStr)
+		msg.Topic = messagingtypes.StringToContentTopic(topicStr)
 		msg.Hash = types.Hex2Bytes(hashStr)
 		messages = append(messages, msg)
 	}
@@ -1771,7 +1772,7 @@ func (p *Persistence) AllNonApprovedCommunitiesRequestsToJoin() ([]*RequestToJoi
 	return nonApprovedRequestsToJoin, nil
 }
 
-func (p *Persistence) SaveCommunityShard(communityID types.HexBytes, shard *shard.Shard, clock uint64) error {
+func (p *Persistence) SaveCommunityShard(communityID types.HexBytes, shard *wakuv2.Shard, clock uint64) error {
 	var cluster, index *uint16
 
 	if shard != nil {
@@ -1806,7 +1807,7 @@ func (p *Persistence) SaveCommunityShard(communityID types.HexBytes, shard *shar
 }
 
 // if data will not be found, will return sql.ErrNoRows. Must be handled on the caller side
-func (p *Persistence) GetCommunityShard(communityID types.HexBytes) (*shard.Shard, error) {
+func (p *Persistence) GetCommunityShard(communityID types.HexBytes) (*wakuv2.Shard, error) {
 	var cluster sql.NullInt64
 	var index sql.NullInt64
 	err := p.db.QueryRow(`SELECT shard_cluster, shard_index FROM communities_shards WHERE community_id = ?`,
@@ -1820,7 +1821,7 @@ func (p *Persistence) GetCommunityShard(communityID types.HexBytes) (*shard.Shar
 		return nil, nil
 	}
 
-	return &shard.Shard{
+	return &wakuv2.Shard{
 		Cluster: uint16(cluster.Int64),
 		Index:   uint16(index.Int64),
 	}, nil
@@ -2103,6 +2104,7 @@ func (p *Persistence) GetCommunityRequestsToJoinRevealedAddresses(communityID []
 func (p *Persistence) GetEncryptionKeyRequests(communityID []byte, channelIDs map[string]struct{}) (map[string]*EncryptionKeysRequestRecord, error) {
 	result := map[string]*EncryptionKeysRequestRecord{}
 
+	//nolint:gosec
 	query := "SELECT channel_id, requested_at, requested_count FROM community_encryption_keys_requests WHERE community_id = ? AND channel_id IN (?" + strings.Repeat(",?", len(channelIDs)-1) + ")"
 
 	args := make([]interface{}, 0, len(channelIDs)+1)
@@ -2163,6 +2165,7 @@ func (p *Persistence) UpdateAndPruneEncryptionKeyRequests(communityID types.HexB
 	}
 
 	// Delete entries that do not match the channelIDs list
+	//nolint:gosec
 	deleteQuery := "DELETE FROM community_encryption_keys_requests WHERE community_id = ? AND channel_id NOT IN (?" + strings.Repeat(",?", len(channelIDs)-1) + ")"
 	args := make([]interface{}, 0, len(channelIDs)+1)
 	args = append(args, communityID)

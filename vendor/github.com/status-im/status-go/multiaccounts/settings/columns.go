@@ -227,6 +227,26 @@ var (
 		dBColumnName:   "networks",
 		valueHandler:   JSONBlobHandler,
 	}
+	NewsFeedEnabled = SettingField{
+		reactFieldName: "news-feed-enabled?",
+		dBColumnName:   "news_feed_enabled",
+		valueHandler:   BoolHandler,
+	}
+	NewsFeedLastFetchedTimestamp = SettingField{
+		reactFieldName: "news-feed-last-fetched-timestamp",
+		dBColumnName:   "news_feed_last_fetched_timestamp",
+		valueHandler:   TimeHandler,
+	}
+	NewsNotificationsEnabled = SettingField{
+		reactFieldName: "news-notifications-enabled?",
+		dBColumnName:   "news_notifications_enabled",
+		valueHandler:   BoolHandler,
+	}
+	NewsRSSEnabled = SettingField{
+		reactFieldName: "news-rss-enabled?",
+		dBColumnName:   "news_rss_enabled",
+		valueHandler:   BoolHandler,
+	}
 	NodeConfig = SettingField{
 		reactFieldName: "node-config",
 		dBColumnName:   "node_config",
@@ -324,6 +344,11 @@ var (
 		dBColumnName:   "remote_push_notifications_enabled",
 		valueHandler:   BoolHandler,
 	}
+	MessengerNotificationsEnabled = SettingField{
+		reactFieldName: "messenger-notifications-enabled?",
+		dBColumnName:   "messenger_notifications_enabled",
+		valueHandler:   BoolHandler,
+	}
 	SendPushNotifications = SettingField{
 		reactFieldName: "send-push-notifications?",
 		dBColumnName:   "send_push_notifications",
@@ -390,11 +415,6 @@ var (
 	TestNetworksEnabled = SettingField{
 		reactFieldName: "test-networks-enabled?",
 		dBColumnName:   "test_networks_enabled",
-		valueHandler:   BoolHandler,
-	}
-	IsGoerliEnabled = SettingField{
-		reactFieldName: "is-goerli-enabled?",
-		dBColumnName:   "is_goerli_enabled",
 		valueHandler:   BoolHandler,
 	}
 	TokenGroupByCommunity = SettingField{
@@ -496,11 +516,6 @@ var (
 			protobufType:      protobuf.SyncSetting_URL_UNFURLING_MODE,
 		},
 	}
-	OmitTransfersHistoryScan = SettingField{
-		reactFieldName: "omit-transfers-history-scan",
-		dBColumnName:   "omit_transfers_history_scan",
-		valueHandler:   BoolHandler,
-	}
 	MnemonicWasNotShown = SettingField{
 		reactFieldName: "mnemonic-was-not-shown?",
 		dBColumnName:   "mnemonic_was_not_shown",
@@ -510,6 +525,22 @@ var (
 		reactFieldName: "peer-syncing-enabled?",
 		dBColumnName:   "peer_syncing_enabled",
 		valueHandler:   BoolHandler,
+	}
+	AutoRefreshTokensEnabled = SettingField{
+		reactFieldName: "auto-refresh-tokens-enabled",
+		dBColumnName:   "auto_refresh_tokens_enabled",
+		valueHandler:   BoolHandler,
+		syncProtobufFactory: &SyncProtobufFactory{
+			fromInterface:     autoRefreshTokensEnabledProtobufFactory,
+			fromStruct:        autoRefreshTokensEnabledProtobufFactoryStruct,
+			valueFromProtobuf: BoolFromSyncProtobuf,
+			protobufType:      protobuf.SyncSetting_AUTO_REFRESH_TOKENS_ENABLED,
+		},
+	}
+	LastTokensUpdate = SettingField{
+		reactFieldName: "last-tokens-update",
+		dBColumnName:   "last_tokens_update",
+		valueHandler:   TimeHandler,
 	}
 	SettingFieldRegister = []SettingField{
 		AnonMetricsShouldSend,
@@ -537,7 +568,6 @@ var (
 		GifFavourites,
 		GifRecents,
 		HideHomeTooltip,
-		IsGoerliEnabled,
 		KeycardInstanceUID,
 		KeycardPairedOn,
 		KeycardPairing,
@@ -554,6 +584,11 @@ var (
 		Name,
 		NetworksCurrentNetwork,
 		NetworksNetworks,
+		NewsFeedEnabled,
+		NewsFeedLastFetchedTimestamp,
+		NewsNotificationsEnabled,
+		NewsRSSEnabled,
+		MessengerNotificationsEnabled,
 		NodeConfig,
 		NotificationsEnabled,
 		OpenseaEnabled,
@@ -588,6 +623,8 @@ var (
 		WalletSetUpPassed,
 		WalletVisibleTokens,
 		WebviewAllowPermissionRequests,
+		AutoRefreshTokensEnabled,
+		LastTokensUpdate,
 	}
 )
 

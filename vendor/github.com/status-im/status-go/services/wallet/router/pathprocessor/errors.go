@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"github.com/status-im/status-go/errors"
+
+	pathProcessorCommon "github.com/status-im/status-go/services/wallet/router/pathprocessor/common"
 )
 
 // Abbreviartion `WPP` for the error code stands for `Wallet Path Processor`
@@ -47,6 +49,10 @@ var (
 	ErrPriceTimeout                   = &errors.ErrorResponse{Code: errors.ErrorCode("WPP-037"), Details: "price timeout"}
 	ErrNotEnoughLiquidity             = &errors.ErrorResponse{Code: errors.ErrorCode("WPP-038"), Details: "not enough liquidity"}
 	ErrPriceImpactTooHigh             = &errors.ErrorResponse{Code: errors.ErrorCode("WPP-039"), Details: "price impact too high"}
+	ErrBurnAmountTooHigh              = &errors.ErrorResponse{Code: errors.ErrorCode("WPP-040"), Details: "burn amount too high"}
+	ErrCommunityTokenType             = &errors.ErrorResponse{Code: errors.ErrorCode("WPP-041"), Details: "invalid community token type"}
+	ErrIncorrectSignatureFormat       = &errors.ErrorResponse{Code: errors.ErrorCode("WPP-042"), Details: "incorrect signature length: got %d, want %d"}
+	ErrTransactionNotFound            = &errors.ErrorResponse{Code: errors.ErrorCode("WPP-043"), Details: "transaction not found"}
 )
 
 func createErrorResponse(processorName string, err error) error {
@@ -69,25 +75,25 @@ func createErrorResponse(processorName string, err error) error {
 
 	var customErrResp *errors.ErrorResponse
 	switch processorName {
-	case ProcessorTransferName:
+	case pathProcessorCommon.ProcessorTransferName:
 		customErrResp = ErrTransferCustomError
-	case ProcessorERC721Name:
+	case pathProcessorCommon.ProcessorERC721Name:
 		customErrResp = ErrERC721TransferCustomError
-	case ProcessorERC1155Name:
+	case pathProcessorCommon.ProcessorERC1155Name:
 		customErrResp = ErrERC1155TransferCustomError
-	case ProcessorBridgeHopName:
+	case pathProcessorCommon.ProcessorBridgeHopName:
 		customErrResp = ErrBridgeHopCustomError
-	case ProcessorBridgeCelerName:
+	case pathProcessorCommon.ProcessorBridgeCelerName:
 		customErrResp = ErrBridgeCellerCustomError
-	case ProcessorSwapParaswapName:
+	case pathProcessorCommon.ProcessorSwapParaswapName:
 		customErrResp = ErrSwapParaswapCustomError
-	case ProcessorENSRegisterName:
+	case pathProcessorCommon.ProcessorENSRegisterName:
 		customErrResp = ErrENSRegisterCustomError
-	case ProcessorENSReleaseName:
+	case pathProcessorCommon.ProcessorENSReleaseName:
 		customErrResp = ErrENSReleaseCustomError
-	case ProcessorENSPublicKeyName:
+	case pathProcessorCommon.ProcessorENSPublicKeyName:
 		customErrResp = ErrENSPublicKeyCustomError
-	case ProcessorStickersBuyName:
+	case pathProcessorCommon.ProcessorStickersBuyName:
 		customErrResp = ErrStickersBuyCustomError
 	default:
 		return genericErrResp

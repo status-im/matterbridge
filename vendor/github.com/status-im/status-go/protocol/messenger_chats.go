@@ -6,10 +6,17 @@ import (
 	"strings"
 
 	"github.com/status-im/status-go/deprecation"
+	messagingtypes "github.com/status-im/status-go/messaging/types"
 	"github.com/status-im/status-go/protocol/common"
 	"github.com/status-im/status-go/protocol/protobuf"
 	"github.com/status-im/status-go/protocol/requests"
-	"github.com/status-im/status-go/protocol/transport"
+)
+
+type ChatPreviewFilterType int
+
+const (
+	ChatPreviewFilterTypeCommunity ChatPreviewFilterType = iota
+	ChatPreviewFilterTypeNonCommunity
 )
 
 func (m *Messenger) getOneToOneAndNextClock(contact *Contact) (*Chat, uint64, error) {
@@ -46,10 +53,17 @@ func (m *Messenger) Chats() []*Chat {
 	return chats
 }
 
-func (m *Messenger) ChatsPreview() []*ChatPreview {
+func (m *Messenger) ChatsPreview(filter ChatPreviewFilterType) []*ChatPreview {
 	var chats []*ChatPreview
-
 	m.allChats.Range(func(chatID string, chat *Chat) (shouldContinue bool) {
+		// Skip if chat doesn't match the filter
+		isCommunityChat := chat.ChatType == ChatTypeCommunityChat
+		if filter == ChatPreviewFilterTypeCommunity && !isCommunityChat {
+			return true
+		}
+		if filter == ChatPreviewFilterTypeNonCommunity && isCommunityChat {
+			return true
+		}
 		if chat.Active || chat.Muted {
 			chatPreview := &ChatPreview{
 				ID:                    chat.ID,
@@ -251,7 +265,7 @@ func (m *Messenger) CreateProfileChat(request *requests.CreateProfileChat) (*Mes
 	}
 
 	// Check contact code
-	filter, err := m.transport.JoinPrivate(publicKey)
+	filter, err := m.messaging.JoinPrivateChat(publicKey)
 	if err != nil {
 		return nil, err
 	}
@@ -274,7 +288,7 @@ func (m *Messenger) CreateProfileChat(request *requests.CreateProfileChat) (*Mes
 		}
 	}
 
-	_, err = m.scheduleSyncFilters([]*transport.Filter{filter})
+	_, err = m.scheduleSyncFilters(messagingtypes.ChatFilters{filter})
 	if err != nil {
 		return nil, err
 	}
@@ -367,7 +381,7 @@ func (m *Messenger) deleteChat(chatID string) error {
 	}
 
 	// We clean the cache to be able to receive the messages again later
-	err = m.transport.ClearProcessedMessageIDsCache()
+	err = m.messaging.ClearProcessedMessageIDsCache()
 	if err != nil {
 		return err
 	}
@@ -440,7 +454,7 @@ func (m *Messenger) deactivateChat(chatID string, deactivationClock uint64, shou
 			return nil, err
 		}
 
-		err = m.transport.ClearProcessedMessageIDsCache()
+		err = m.messaging.ClearProcessedMessageIDsCache()
 		if err != nil {
 			return nil, err
 		}
@@ -504,7 +518,7 @@ func (m *Messenger) saveChat(chat *Chat) error {
 	return nil
 }
 
-func (m *Messenger) Join(chat *Chat) ([]*transport.Filter, error) {
+func (m *Messenger) Join(chat *Chat) (messagingtypes.ChatFilters, error) {
 	switch chat.ChatType {
 	case ChatTypeOneToOne:
 		pk, err := chat.PublicKey()
@@ -512,24 +526,24 @@ func (m *Messenger) Join(chat *Chat) ([]*transport.Filter, error) {
 			return nil, err
 		}
 
-		f, err := m.transport.JoinPrivate(pk)
+		f, err := m.messaging.JoinPrivateChat(pk)
 		if err != nil {
 			return nil, err
 		}
 
-		return []*transport.Filter{f}, nil
+		return messagingtypes.ChatFilters{f}, nil
 	case ChatTypePrivateGroupChat:
 		members, err := chat.MembersAsPublicKeys()
 		if err != nil {
 			return nil, err
 		}
-		return m.transport.JoinGroup(members)
+		return m.messaging.JoinGroupChat(members)
 	case ChatTypePublic, ChatTypeProfile, ChatTypeTimeline:
-		f, err := m.transport.JoinPublic(chat.ID)
+		f, err := m.messaging.JoinPublicChat(chat.ID)
 		if err != nil {
 			return nil, err
 		}
-		return []*transport.Filter{f}, nil
+		return messagingtypes.ChatFilters{f}, nil
 	default:
 		return nil, errors.New("chat is neither public nor private")
 	}
@@ -618,7 +632,7 @@ func (m *Messenger) clearHistory(id string) (*MessengerResponse, error) {
 		return nil, ErrChatNotFound
 	}
 
-	clock, _ := chat.NextClockAndTimestamp(m.transport)
+	clock, _ := chat.NextClockAndTimestamp(m.getTimesource())
 
 	err := m.persistence.ClearHistory(chat, clock)
 	if err != nil {
@@ -626,7 +640,7 @@ func (m *Messenger) clearHistory(id string) (*MessengerResponse, error) {
 	}
 
 	if chat.Public() {
-		err = m.transport.ClearProcessedMessageIDsCache()
+		err = m.messaging.ClearProcessedMessageIDsCache()
 		if err != nil {
 			return nil, err
 		}

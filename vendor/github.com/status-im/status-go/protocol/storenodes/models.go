@@ -1,22 +1,24 @@
 package storenodes
 
 import (
+	"github.com/multiformats/go-multiaddr"
+
 	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/protocol/protobuf"
-	"github.com/status-im/status-go/services/mailservers"
+	wakutypes "github.com/status-im/status-go/waku/types"
 )
 
-// Storenode is a struct that represents a storenode, it is very closely related to `mailservers.Mailserver`
+// Storenode is a struct that represents a storenode, it is very closely related to `wakutypes.Mailserver`
 type Storenode struct {
-	CommunityID types.HexBytes `json:"community_id"`
-	StorenodeID string         `json:"storenode_id"`
-	Name        string         `json:"name"`
-	Address     string         `json:"address"`
-	Fleet       string         `json:"fleet"`
-	Version     uint           `json:"version"`
-	Clock       uint64         `json:"-"` // used to sync
-	Removed     bool           `json:"-"`
-	DeletedAt   int64          `json:"-"`
+	CommunityID types.HexBytes      `json:"community_id"`
+	StorenodeID string              `json:"storenode_id"`
+	Name        string              `json:"name"`
+	Address     multiaddr.Multiaddr `json:"address"`
+	Fleet       string              `json:"fleet"`
+	Version     uint                `json:"version"`
+	Clock       uint64              `json:"-"` // used to sync
+	Removed     bool                `json:"-"`
+	DeletedAt   int64               `json:"-"`
 }
 
 type Storenodes []Storenode
@@ -29,7 +31,7 @@ func (m Storenodes) ToProtobuf() []*protobuf.Storenode {
 			CommunityId: n.CommunityID,
 			StorenodeId: n.StorenodeID,
 			Name:        n.Name,
-			Address:     n.Address,
+			Address:     n.Address.String(),
 			Fleet:       n.Fleet,
 			Version:     uint32(n.Version),
 			Removed:     n.Removed,
@@ -42,11 +44,15 @@ func (m Storenodes) ToProtobuf() []*protobuf.Storenode {
 func FromProtobuf(storenodes []*protobuf.Storenode, clock uint64) Storenodes {
 	result := make(Storenodes, 0, len(storenodes))
 	for _, s := range storenodes {
+		sAddress, err := multiaddr.NewMultiaddr(s.Address)
+		if err != nil {
+			continue
+		}
 		result = append(result, Storenode{
 			CommunityID: s.CommunityId,
 			StorenodeID: s.StorenodeId,
 			Name:        s.Name,
-			Address:     s.Address,
+			Address:     sAddress,
 			Fleet:       s.Fleet,
 			Version:     uint(s.Version),
 			Removed:     s.Removed,
@@ -57,13 +63,12 @@ func FromProtobuf(storenodes []*protobuf.Storenode, clock uint64) Storenodes {
 	return result
 }
 
-func toMailserver(m Storenode) mailservers.Mailserver {
-	return mailservers.Mailserver{
-		ID:      m.StorenodeID,
-		Name:    m.Name,
-		Custom:  true,
-		Address: m.Address,
-		Fleet:   m.Fleet,
-		Version: m.Version,
+func toMailserver(m Storenode) wakutypes.Mailserver {
+	return wakutypes.Mailserver{
+		ID:     m.StorenodeID,
+		Name:   m.Name,
+		Custom: true,
+		Addr:   &m.Address,
+		Fleet:  m.Fleet,
 	}
 }

@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/ethereum/go-ethereum/event"
+
 	"github.com/status-im/status-go/account"
+	messagingtypes "github.com/status-im/status-go/messaging/types"
 	"github.com/status-im/status-go/rpc"
 	"github.com/status-im/status-go/server"
 	"github.com/status-im/status-go/services/browsers"
@@ -25,7 +28,6 @@ import (
 	"github.com/status-im/status-go/protocol/protobuf"
 	"github.com/status-im/status-go/protocol/pushnotificationclient"
 	"github.com/status-im/status-go/protocol/pushnotificationserver"
-	"github.com/status-im/status-go/protocol/transport"
 	"github.com/status-im/status-go/protocol/wakusync"
 	"github.com/status-im/status-go/services/mailservers"
 	"github.com/status-im/status-go/services/wallet"
@@ -72,8 +74,7 @@ type MessengerSignalsHandler interface {
 type config struct {
 	// systemMessagesTranslations holds translations for system-messages
 	systemMessagesTranslations *systemMessageTranslationsMap
-	// Config for the envelopes monitor
-	envelopesMonitorConfig *transport.EnvelopesMonitorConfig
+	envelopeEventsConfig       *messagingtypes.EnvelopeEventsConfig
 
 	featureFlags     common.FeatureFlags
 	codeControlFlags common.CodeControlFlags
@@ -120,6 +121,10 @@ type config struct {
 	messageResendMaxCount int
 
 	communityManagerOptions []communities.ManagerOption
+
+	accountsFeed *event.Feed
+
+	onlineChecker func() bool
 }
 
 func messengerDefaultConfig() config {
@@ -309,9 +314,9 @@ func WithAutoMessageDisabled() func(c *config) error {
 	}
 }
 
-func WithEnvelopesMonitorConfig(emc *transport.EnvelopesMonitorConfig) Option {
+func WithEnvelopeEventsConfig(emc *messagingtypes.EnvelopeEventsConfig) Option {
 	return func(c *config) error {
-		c.envelopesMonitorConfig = emc
+		c.envelopeEventsConfig = emc
 		return nil
 	}
 }
@@ -411,6 +416,20 @@ func WithCollectiblesManager(collectiblesManager communities.CollectiblesManager
 func WithAccountManager(accountManager account.Manager) Option {
 	return func(c *config) error {
 		c.accountsManager = accountManager
+		return nil
+	}
+}
+
+func WithAccountsFeed(feed *event.Feed) Option {
+	return func(c *config) error {
+		c.accountsFeed = feed
+		return nil
+	}
+}
+
+func WithNewsFeed() func(c *config) error {
+	return func(c *config) error {
+		c.featureFlags.EnableNewsFeed = true
 		return nil
 	}
 }

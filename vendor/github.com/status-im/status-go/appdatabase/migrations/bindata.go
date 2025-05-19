@@ -118,7 +118,23 @@
 // 1720557751_rename_staging.up.sql (3.258kB)
 // 1720606449_enable_store_confirmation_for_messages_sent.up.sql (191B)
 // 1721215212_create_keycard_and_accounts.up.sql (725B)
+// 1721832718_rename_shard_test.up.sql (3.186kB)
 // 1722415278_remove_incorrectly_added_keycards.up.sql (67B)
+// 1724939813_remove_omit_transfers_history_scan_from_settings.up.sql (62B)
+// 1728661600_drop_upstream_config.up.sql (37B)
+// 1728977282_remove_goerli_from_settings_table.up.sql (51B)
+// 1732000008_witcher_card.up.sql (27B)
+// 1732570426_.up.sql (49B)
+// 1732905829_add_log_namespaces.up.sql (69B)
+// 1733400346_add_rpc_providers.up.sql (1.042kB)
+// 1737662319_add_active_column_to_networks.up.sql (64B)
+// 1738081630_add_is_deactiveable_column_to_networks.up.sql (71B)
+// 1741343404_add_settings_auto_refresh_and_last_refreshed_time.up.sql (297B)
+// 1742299652_add_news_notifications_setting.up.sql (82B)
+// 1742896296_add_messenger_push_notifications_setting.up.sql (165B)
+// 1743690310_add_news_feed_setting.up.sql (72B)
+// 1744737285_add_settings_news_feed_last_fetched_timestamp.up.sql (197B)
+// 1744905192_add_news_rss_setting.up.sql (71B)
 // doc.go (94B)
 
 package migrations
@@ -2547,6 +2563,26 @@ func _1721215212_create_keycard_and_accountsUpSql() (*asset, error) {
 	return a, nil
 }
 
+var __1721832718_rename_shard_testUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\xec\x95\xc9\x8e\xa3\xc8\x16\x86\xf7\xf9\x14\xa9\xdc\x3b\xcb\x4c\xc6\xae\xab\x2b\x75\x18\x30\x18\x33\x98\x79\xd8\xa4\x80\xc0\xcc\x60\x43\x30\x3e\x7d\x2b\xb3\xb3\x55\xd5\xd5\x5d\xaa\xc9\x8b\x5e\xf4\xc6\x72\x08\x38\xe7\xc4\xff\xf1\x11\xd6\x99\x05\x26\xf7\xd8\xc5\x08\x65\x75\xd2\x3d\x1a\x9c\xf9\x78\x29\xe3\x18\x3d\xfe\xff\xf1\xa9\x43\x01\xea\xbb\xe7\x6b\xdb\xc0\xa7\x47\x47\xe0\x74\xee\xb3\x6b\x69\xd0\xc2\xee\x19\xc5\x1d\x7a\xfa\xdf\xc3\xc3\x7b\x9d\xa8\xec\x3b\x14\xb7\x2f\x51\x53\x5f\xb2\xe4\x5e\xd5\xea\x06\xc6\xdd\xc3\x6b\xb1\xd7\x7f\xaf\xf7\xc7\x75\x8b\xda\x38\xfe\xf8\xe1\x03\x90\x55\xd1\xf6\x5d\xd2\xde\x70\xee\x99\x56\x4c\xf1\x2c\x03\x4f\xf4\x0c\x13\xd7\xce\x1b\x20\xba\x9e\x43\x6f\x8e\xd6\xc6\xe6\x45\x83\xb6\x6c\x43\x61\x3d\x9f\x27\x7f\x0b\x9b\x06\xbd\x4d\xf2\xfc\x3e\xd5\x5b\x8b\x3f\x17\x59\xf5\xf4\xf0\xc7\x80\x77\xed\xf7\xba\xbb\xe7\xf7\x9d\xfe\xad\x1f\x50\xd8\x47\x34\x5f\xdf\xba\xc1\xac\x8b\x6c\xea\xf5\x99\xff\xc2\x78\x1a\x83\xa2\xff\xde\x18\x3e\xae\x34\xee\xd4\x73\xec\x0e\x88\x15\x2e\xf0\x49\xab\x5f\xed\x40\xf4\xf0\x3a\xdf\x6c\x83\xe6\x45\xcb\xce\xb1\x65\x92\x44\x77\x5a\x05\xba\x4c\x77\xb2\xb8\xd1\x49\x1e\xc3\x54\x83\x55\xc7\x7a\xb0\x83\x28\x51\xb0\xce\x1c\x57\x27\xba\x6b\x18\x0a\x2e\x02\x7b\xf0\x13\xbf\x10\xac\x75\xbf\x72\x81\x27\x5e\xfd\xa3\x88\x2b\x47\xf1\x1a\x1d\x8d\xda\x9b\xe4\x21\xab\x30\x2c\x14\xf4\xab\xe7\xe8\x45\x54\xab\xa4\x93\x80\x9b\x92\xd9\x59\x88\xef\xd6\x92\x09\x26\xa9\xd2\x07\xc9\x39\xa0\x68\x91\xfb\x88\xd0\x53\x28\xd8\x8b\x54\xef\xe7\x10\xd7\x3e\xad\xab\x12\xed\x6b\xff\x02\x98\x11\x17\x1d\x71\x08\x09\x0d\xc9\x2c\xd7\xfb\xfc\x16\x79\x0e\xb6\xc8\x33\xb5\x40\xfe\xb0\x86\xae\xdc\x47\x82\x38\xf8\xcc\xa7\x75\xe0\xac\x79\x10\x0e\x31\x20\xc5\x39\x22\xd7\x80\x03\x16\x00\x1a\x48\x00\x07\xde\x7e\x32\x57\x29\x3d\x02\xcc\x8a\xe9\xb7\x72\xc0\x31\x44\xab\xa3\x83\x66\x24\x11\x4e\xf6\x4e\x3c\x2e\x6e\x30\x99\xde\x36\x65\x81\xb0\xdf\x76\x49\x3d\xb5\xbb\x62\xab\xe7\x21\xc5\xc7\x06\x0b\x79\x65\x4c\x6a\xff\x92\x10\x76\x11\x1d\x8f\xf9\xe9\x68\x13\x9e\x83\x30\x39\x59\xff\xc3\x1b\xf1\x1e\x3d\x03\xd6\x4b\xaa\x8b\x71\x8e\xc7\x81\xda\xa8\x67\x08\x95\xc8\x6b\xe9\x15\xa5\x40\x7d\xec\x1b\x89\x89\x71\x8e\x23\xc7\x0b\xe7\x15\xc0\x4f\x0f\x0d\x4a\x36\xa7\xa2\xdd\x9e\x30\xea\x2a\x03\x7e\xb6\x66\xb4\xee\x2a\xa1\xf0\x99\x5c\x8a\x4b\xb8\xde\x5b\x4b\x93\x28\xe8\x97\xa3\xc7\xd3\x34\xaa\xf4\x45\xaa\xf5\x32\x22\x7e\x2c\xfa\x80\x3f\xcc\xbe\x20\xf7\x90\xb7\x17\xf8\x6f\x88\xfe\xd7\xbe\x14\xaf\x9c\xa2\x9e\x63\xe9\x71\xa4\x86\x06\x6f\x4f\x11\x76\x9d\xf7\x57\xfa\xd2\x87\x7b\x4b\x58\x6d\x0d\x53\xe0\x7c\xa1\xa1\x8f\x75\x6e\xe7\x52\x58\x72\xf6\xcc\xf2\x45\x0e\xcd\xe3\xce\x86\xb7\xca\xd3\xd4\x7a\x47\x0d\xbd\x26\xac\x04\x54\xf4\x18\xed\x18\xe6\xc2\xf5\x97\x69\xe5\x24\x64\xf5\x57\x4e\x5a\x96\x8e\x98\xfb\x25\xa7\x10\x80\x45\xc9\xa8\xcf\x38\xc1\x5c\x72\xed\x45\x72\x94\x32\xac\xf5\xd9\x73\xc6\x49\x72\xb8\x6f\xeb\xc2\x5a\xb8\x54\x7d\xc6\x0c\x97\x11\x74\x65\xe4\xe1\x76\x0f\x05\x31\x0d\x59\x0e\x79\xc6\xfd\xd4\x99\xf2\x5b\xc2\x6a\x6b\x67\xd6\x0d\x35\x2b\x3d\x8b\xc0\x59\x40\x15\x2f\xae\x52\xb2\x59\x47\x54\x98\x0d\xdd\xe2\xb4\x9b\xe4\x4d\xa1\xfe\x84\x3a\x51\xcf\x81\xc4\x65\x6f\xad\x07\x5f\xcc\xf6\x6a\x39\xa8\x26\x96\x6a\xf2\x77\xee\xb9\xa2\x55\x82\x37\x36\xa5\x4d\x07\xb2\x28\xaa\x66\x17\xaa\x00\xc4\xda\x68\xc0\x97\xb8\x11\x22\xc6\xbd\xd9\x8b\x69\xa1\xd1\x9c\xf7\xe4\x96\xa2\x6e\x28\x84\x5b\x16\xe8\x35\x37\xcd\x37\xe1\x7c\x57\x24\xdf\xd2\xe8\x3b\x91\xdc\x4b\xa9\xbb\x21\xb9\x8b\x52\xa0\x31\x52\x87\x9f\x95\xcd\x66\x1c\xfb\x8e\x23\xf4\x6c\x9b\xba\xfb\xe0\x58\x34\x82\x2f\xcc\xa1\xb5\xdf\x46\xcc\x79\xa0\x06\x62\xbe\x72\x97\x9d\xca\x24\x64\x74\xe9\x4a\x71\xf2\x0f\x40\x29\x77\xeb\x6e\x95\x57\xb2\xda\x27\x92\x35\xef\x27\x92\xbb\xa8\x7b\x45\xdc\xbc\xd8\x5f\xf0\x3b\xe2\x29\x94\xbf\xcd\xef\x90\x4b\x8e\xd2\x4b\x4e\x3a\x84\x15\x6c\x43\x9c\xaa\x25\xe7\x3b\x4e\xa0\x2f\xf8\x79\xce\x2b\x3b\x12\x05\xfc\xae\xf7\x71\x34\x84\x55\x84\xbc\xfb\x9d\x46\xec\x99\x66\x42\xbd\x58\x79\x27\x71\x54\x0f\x07\x99\xf4\x77\x75\x3c\xaf\xf9\x73\x44\x3b\x67\x31\x60\x46\xbe\xb8\x2a\xfa\x5c\x06\x74\xc5\xfc\xa4\x52\xee\x46\x2b\x56\x83\x0d\x1a\x51\x9a\x74\x12\xbc\x90\x96\xdd\x24\x7c\x3a\x68\xed\xed\xe4\x90\xec\xe1\x54\x5e\xb6\x32\xc0\xce\x15\x93\x27\xcd\x28\xad\xa4\x3d\x32\x98\xdd\x5e\xca\xdd\x30\xdc\x26\x17\x12\x3f\x40\x56\xe0\x91\x91\x73\xc3\xe0\x9c\x58\x6c\x1d\xb7\xd3\xed\xae\x48\x7e\x50\xa9\xaf\x21\xb9\x93\x52\xf7\x43\xf2\x55\xa5\x7e\x0f\x00\x00\xff\xff\xbb\xfa\xda\xba\x72\x0c\x00\x00")
+
+func _1721832718_rename_shard_testUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1721832718_rename_shard_testUpSql,
+		"1721832718_rename_shard_test.up.sql",
+	)
+}
+
+func _1721832718_rename_shard_testUpSql() (*asset, error) {
+	bytes, err := _1721832718_rename_shard_testUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1721832718_rename_shard_test.up.sql", size: 3186, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x61, 0x1e, 0xa4, 0xea, 0x4c, 0x1f, 0xca, 0x94, 0x59, 0x39, 0x4b, 0xc4, 0xd6, 0xb2, 0x86, 0x7a, 0xda, 0xf0, 0x39, 0x4f, 0xe2, 0xe6, 0x86, 0x3e, 0x8e, 0x82, 0xcc, 0x4c, 0xab, 0xd0, 0xcb, 0xc7}}
+	return a, nil
+}
+
 var __1722415278_remove_incorrectly_added_keycardsUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x72\x71\xf5\x71\x0d\x71\x55\x48\x2b\xca\xcf\x55\xc8\x4e\xad\x4c\x4e\x2c\x4a\x29\x56\x08\xf7\x70\x0d\x72\x85\x71\xe3\x4b\x33\x53\x14\x3c\x83\x15\xfc\x42\x7d\x7c\x14\xfc\x83\x50\x84\x6d\x15\x94\x94\xac\x01\x01\x00\x00\xff\xff\xc2\xec\x86\x2f\x43\x00\x00\x00")
 
 func _1722415278_remove_incorrectly_added_keycardsUpSqlBytes() ([]byte, error) {
@@ -2564,6 +2600,306 @@ func _1722415278_remove_incorrectly_added_keycardsUpSql() (*asset, error) {
 
 	info := bindataFileInfo{name: "1722415278_remove_incorrectly_added_keycards.up.sql", size: 67, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
 	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x2, 0xb3, 0xe1, 0x2e, 0x61, 0xcb, 0x5, 0xa3, 0x72, 0x86, 0xce, 0xba, 0x21, 0xd4, 0xaa, 0x58, 0x5a, 0xa0, 0xe5, 0x33, 0x61, 0xd5, 0xe, 0x3a, 0xdd, 0xcd, 0xc1, 0x78, 0xbd, 0x79, 0xa1, 0x6a}}
+	return a, nil
+}
+
+var __1724939813_remove_omit_transfers_history_scan_from_settingsUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x72\xf4\x09\x71\x0d\x52\x08\x71\x74\xf2\x71\x55\x28\x4e\x2d\x29\xc9\xcc\x4b\x2f\x56\x70\x09\xf2\x0f\x50\x70\xf6\xf7\x09\xf5\xf5\x53\xc8\xcf\xcd\x2c\x89\x2f\x29\x4a\xcc\x2b\x4e\x4b\x2d\x2a\x8e\xcf\xc8\x2c\x2e\xc9\x2f\xaa\x8c\x2f\x4e\x4e\xcc\xb3\xe6\x02\x04\x00\x00\xff\xff\x7c\x2c\xfc\x27\x3e\x00\x00\x00")
+
+func _1724939813_remove_omit_transfers_history_scan_from_settingsUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1724939813_remove_omit_transfers_history_scan_from_settingsUpSql,
+		"1724939813_remove_omit_transfers_history_scan_from_settings.up.sql",
+	)
+}
+
+func _1724939813_remove_omit_transfers_history_scan_from_settingsUpSql() (*asset, error) {
+	bytes, err := _1724939813_remove_omit_transfers_history_scan_from_settingsUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1724939813_remove_omit_transfers_history_scan_from_settings.up.sql", size: 62, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x30, 0x96, 0x97, 0xae, 0x3b, 0x38, 0xc9, 0x4c, 0xcc, 0xbe, 0x5b, 0x67, 0x6d, 0xc9, 0xd7, 0xbd, 0xbe, 0xf5, 0x2, 0x54, 0x31, 0x38, 0x81, 0xfb, 0x49, 0x76, 0x8b, 0xa0, 0x56, 0xe, 0xb8, 0xbf}}
+	return a, nil
+}
+
+var __1728661600_drop_upstream_configUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x72\x09\xf2\x0f\x50\x08\x71\x74\xf2\x71\x55\xf0\x74\x53\x70\x8d\xf0\x0c\x0e\x09\x56\x28\x2d\x28\x2e\x29\x4a\x4d\xcc\x8d\x4f\xce\xcf\x4b\xcb\x4c\xb7\x06\x04\x00\x00\xff\xff\x62\xe9\xee\x3c\x25\x00\x00\x00")
+
+func _1728661600_drop_upstream_configUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1728661600_drop_upstream_configUpSql,
+		"1728661600_drop_upstream_config.up.sql",
+	)
+}
+
+func _1728661600_drop_upstream_configUpSql() (*asset, error) {
+	bytes, err := _1728661600_drop_upstream_configUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1728661600_drop_upstream_config.up.sql", size: 37, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x1, 0xa9, 0x9b, 0x7b, 0xec, 0xd3, 0xe2, 0xf5, 0xe9, 0x7d, 0x4e, 0xdf, 0xc9, 0xf8, 0xc3, 0xd1, 0x32, 0x90, 0x8a, 0x38, 0xc5, 0xa6, 0x18, 0xf4, 0xb, 0xe, 0x18, 0x3b, 0x7b, 0x77, 0x16, 0x16}}
+	return a, nil
+}
+
+var __1728977282_remove_goerli_from_settings_tableUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x72\xf4\x09\x71\x0d\x52\x08\x71\x74\xf2\x71\x55\x28\x4e\x2d\x29\xc9\xcc\x4b\x2f\x56\x70\x09\xf2\x0f\x50\x70\xf6\xf7\x09\xf5\xf5\x53\xc8\x2c\x8e\x4f\xcf\x4f\x2d\xca\xc9\x8c\x4f\xcd\x4b\x4c\xca\x49\x4d\xb1\x06\x04\x00\x00\xff\xff\x59\x98\x50\xc4\x33\x00\x00\x00")
+
+func _1728977282_remove_goerli_from_settings_tableUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1728977282_remove_goerli_from_settings_tableUpSql,
+		"1728977282_remove_goerli_from_settings_table.up.sql",
+	)
+}
+
+func _1728977282_remove_goerli_from_settings_tableUpSql() (*asset, error) {
+	bytes, err := _1728977282_remove_goerli_from_settings_tableUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1728977282_remove_goerli_from_settings_table.up.sql", size: 51, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0xf0, 0x8b, 0x78, 0x8a, 0xad, 0x88, 0xb4, 0x29, 0xe8, 0xfc, 0xa0, 0xee, 0x99, 0x23, 0x47, 0x1c, 0xf0, 0x20, 0x24, 0xab, 0xe9, 0x45, 0x62, 0x17, 0xce, 0x91, 0x5a, 0x99, 0x78, 0xba, 0xac, 0x44}}
+	return a, nil
+}
+
+var __1732000008_witcher_cardUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x72\x09\xf2\x0f\x50\x08\x71\x74\xf2\x71\x55\x28\x2e\xcf\x2c\x49\xce\x48\x2d\x8a\x4f\x4e\x2c\x4a\x29\xb6\xe6\x02\x04\x00\x00\xff\xff\x9d\x94\x7d\xf1\x1b\x00\x00\x00")
+
+func _1732000008_witcher_cardUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1732000008_witcher_cardUpSql,
+		"1732000008_witcher_card.up.sql",
+	)
+}
+
+func _1732000008_witcher_cardUpSql() (*asset, error) {
+	bytes, err := _1732000008_witcher_cardUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1732000008_witcher_card.up.sql", size: 27, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x45, 0xd6, 0x1d, 0x94, 0xf8, 0x16, 0x73, 0x1d, 0x7a, 0xef, 0xee, 0x23, 0xca, 0x3, 0x12, 0xbf, 0xa7, 0x16, 0x7e, 0xd2, 0x6d, 0x72, 0xd2, 0xa1, 0x7b, 0xee, 0xb0, 0x48, 0x27, 0xde, 0xe2, 0x27}}
+	return a, nil
+}
+
+var __1732570426_UpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x72\xf4\x09\x71\x0d\x52\x08\x71\x74\xf2\x71\x55\xc8\xc9\x4f\x8f\x4f\xce\xcf\x4b\xcb\x4c\x57\x70\x09\xf2\x0f\x50\x70\xf6\xf7\x09\xf5\xf5\x53\xc8\xcd\x4f\xca\xcc\x49\x8d\x2f\xae\x2c\x2e\x49\xcd\xb5\x06\x04\x00\x00\xff\xff\x73\xcc\x37\xa6\x31\x00\x00\x00")
+
+func _1732570426_UpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1732570426_UpSql,
+		"1732570426_.up.sql",
+	)
+}
+
+func _1732570426_UpSql() (*asset, error) {
+	bytes, err := _1732570426_UpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1732570426_.up.sql", size: 49, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x5a, 0xe4, 0xce, 0x40, 0x74, 0x34, 0xaf, 0xdb, 0xf4, 0x41, 0xe3, 0x9b, 0x9f, 0xfd, 0x71, 0x87, 0x34, 0xb, 0xb2, 0x3a, 0x90, 0x1, 0x8f, 0xd, 0xd, 0x37, 0x9d, 0x10, 0xd0, 0x5d, 0x6a, 0x1}}
+	return a, nil
+}
+
+var __1732905829_add_log_namespacesUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x72\xf4\x09\x71\x0d\x52\x08\x71\x74\xf2\x71\x55\xc8\xc9\x4f\x8f\x4f\xce\xcf\x4b\xcb\x4c\x57\x70\x74\x71\x51\x70\xf6\xf7\x09\xf5\xf5\x03\x8b\xe6\x25\xe6\xa6\x16\x17\x24\x26\xa7\x16\x2b\x84\x39\x06\x39\x7b\x38\x06\x29\xb8\xb8\xba\x39\x86\xfa\x84\x28\xa8\xab\x5b\x73\x01\x02\x00\x00\xff\xff\x4b\x75\x41\x1d\x45\x00\x00\x00")
+
+func _1732905829_add_log_namespacesUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1732905829_add_log_namespacesUpSql,
+		"1732905829_add_log_namespaces.up.sql",
+	)
+}
+
+func _1732905829_add_log_namespacesUpSql() (*asset, error) {
+	bytes, err := _1732905829_add_log_namespacesUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1732905829_add_log_namespaces.up.sql", size: 69, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0xa6, 0x6d, 0xf8, 0xf, 0x10, 0x70, 0xbe, 0xd3, 0x31, 0x9f, 0x99, 0xcc, 0xed, 0x92, 0xab, 0x6c, 0x9d, 0x1d, 0xec, 0xe5, 0x23, 0x88, 0x64, 0xc3, 0x28, 0x7d, 0x2, 0xb7, 0xe1, 0xcd, 0xe3, 0x20}}
+	return a, nil
+}
+
+var __1733400346_add_rpc_providersUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x8c\xd2\xcf\x6f\x9b\x30\x14\x07\xf0\x7b\xff\x8a\xef\x2d\x89\x04\xd2\xce\x9b\x34\x89\x50\xa7\x45\xa5\x24\x22\x46\x6b\x4f\x88\xc0\x5b\xb1\x4a\x6c\x66\x4c\xbb\xfe\xf7\x93\x4d\x12\x32\x9a\x56\xcd\xc9\x49\xde\xfb\xbc\x1f\x76\x98\xb2\x80\x33\xf0\x60\x19\x33\x44\x2b\x24\x6b\x0e\xf6\x10\x6d\xf9\x16\xba\x2d\xf3\x56\xab\x17\x51\x91\xee\x30\xbf\x02\x00\x51\x21\x4a\x38\xbb\x61\x29\x36\x69\x74\x1f\xa4\x8f\xb8\x63\x8f\x08\x32\xbe\x8e\x92\x30\x65\xf7\x2c\xe1\x1e\x26\x1f\xdf\x47\x26\xc5\x9f\x9e\x70\xe4\x10\x5d\x63\xde\x29\x6d\x84\x7c\x5a\x38\xb8\xac\x0b\x21\xf3\x33\xde\x36\x92\x64\x71\x8c\xf0\x96\x85\x77\x98\x9f\x02\x7e\xe2\xdb\xc2\x3b\xc1\xa1\xfd\xd9\x72\xbf\x95\x86\xa9\x09\x92\xcc\xab\xd2\xcf\x0e\x95\xc5\x9e\xc0\xd9\x03\x7f\xa7\xc5\x2c\xb9\xe1\xb7\x73\x1b\xb0\x38\x17\x07\x74\x73\x6c\xd3\xfe\xef\xa4\x5e\x37\x9f\x42\xbd\x6e\xa6\xce\xff\x52\x96\xc6\x0e\x22\x59\xec\x1a\xca\x75\xdb\xe5\x8d\xd8\x0b\x43\x1a\xcb\xf5\x3a\x66\x41\x32\xd2\xd7\x6c\x15\x64\x31\xc7\x2a\x88\xb7\xcc\x1b\x20\xe6\xf2\x90\x6e\xb6\x38\xe4\x39\xce\xbc\xb5\xd3\x09\x8f\xd9\xb3\xbe\x23\x3d\x7b\x77\x19\x93\xbe\x2c\xf0\x1d\xb4\xdf\x51\x55\x51\xe5\xb7\x5a\xfd\x7d\xf3\xc6\xef\x95\xd0\x54\x1a\x0f\xd6\x3a\xeb\xbf\xfa\xb8\x69\x9e\x66\x6c\x5a\xd4\xf7\xf1\xab\x26\x53\xd3\x70\x45\xa7\x57\x20\x3a\x14\xa5\x11\x2f\x04\xa5\x21\x95\x71\x15\x8a\xde\xd4\xf9\x67\x73\x49\xe5\xdb\x98\xd9\x64\xd5\x41\x6f\x6a\x92\x46\x94\x85\x11\x4a\x1e\x06\x3b\xc4\x7a\xd8\x15\x9d\x28\x0f\x67\xa3\x9e\x49\xba\xf3\x58\xb0\x51\x4f\x42\xba\x8a\x97\x36\x76\x71\x87\x4b\x4b\xda\xaa\x18\x92\xe7\xb2\x6f\x1a\xbb\x9d\xc5\xc8\xb6\x45\xd7\xbd\x2a\x5d\x7d\x55\xb6\x57\x73\x4c\xb1\x2f\x7a\xac\x71\x49\x77\x83\x0c\x6b\xfa\x6a\xd3\xdc\xa5\x58\xda\x9d\xa6\xf4\xe2\xc7\xd5\xbf\x00\x00\x00\xff\xff\x4c\xcc\xd9\x30\x12\x04\x00\x00")
+
+func _1733400346_add_rpc_providersUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1733400346_add_rpc_providersUpSql,
+		"1733400346_add_rpc_providers.up.sql",
+	)
+}
+
+func _1733400346_add_rpc_providersUpSql() (*asset, error) {
+	bytes, err := _1733400346_add_rpc_providersUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1733400346_add_rpc_providers.up.sql", size: 1042, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x87, 0x32, 0xc7, 0xe1, 0x6a, 0x34, 0xed, 0xaf, 0x4a, 0xee, 0xa5, 0xdd, 0x7a, 0x60, 0x15, 0xf, 0xda, 0xb8, 0xad, 0x2a, 0xec, 0x4c, 0x81, 0xf3, 0x40, 0x12, 0xd4, 0x84, 0x80, 0x41, 0xcd, 0xa1}}
+	return a, nil
+}
+
+var __1737662319_add_active_column_to_networksUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x72\xf4\x09\x71\x0d\x52\x08\x71\x74\xf2\x71\x55\xc8\x4b\x2d\x29\xcf\x2f\xca\x2e\x56\x70\x74\x71\x51\x70\xf6\xf7\x09\xf5\xf5\x53\xc8\x2c\x8e\x4f\x4c\x2e\xc9\x2c\x4b\x55\x70\xf2\xf7\xf7\x71\x75\xf4\x53\x70\x71\x75\x73\x0c\xf5\x09\x51\x28\x29\x2a\x4d\xb5\xe6\x02\x04\x00\x00\xff\xff\xa8\xc3\x80\xbb\x40\x00\x00\x00")
+
+func _1737662319_add_active_column_to_networksUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1737662319_add_active_column_to_networksUpSql,
+		"1737662319_add_active_column_to_networks.up.sql",
+	)
+}
+
+func _1737662319_add_active_column_to_networksUpSql() (*asset, error) {
+	bytes, err := _1737662319_add_active_column_to_networksUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1737662319_add_active_column_to_networks.up.sql", size: 64, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x53, 0xb5, 0x26, 0xee, 0xe4, 0x42, 0x8e, 0xf2, 0x30, 0xa, 0x32, 0xe8, 0xf9, 0x2a, 0xa9, 0x8e, 0x2a, 0xfd, 0xf0, 0x27, 0x70, 0xf6, 0xa3, 0xe, 0x5e, 0xf8, 0x7, 0xcd, 0xf1, 0xb, 0x43, 0xca}}
+	return a, nil
+}
+
+var __1738081630_add_is_deactiveable_column_to_networksUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x72\xf4\x09\x71\x0d\x52\x08\x71\x74\xf2\x71\x55\xc8\x4b\x2d\x29\xcf\x2f\xca\x2e\x56\x70\x74\x71\x51\x70\xf6\xf7\x09\xf5\xf5\x53\xc8\x2c\x8e\x4f\x49\x4d\x4c\x2e\xc9\x2c\x4b\x2c\x49\x4c\xca\x49\x55\x70\xf2\xf7\xf7\x71\x75\xf4\x53\x70\x71\x75\x73\x0c\xf5\x09\x51\x28\x29\x2a\x4d\xb5\xe6\x02\x04\x00\x00\xff\xff\xfb\xf6\x4f\x43\x47\x00\x00\x00")
+
+func _1738081630_add_is_deactiveable_column_to_networksUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1738081630_add_is_deactiveable_column_to_networksUpSql,
+		"1738081630_add_is_deactiveable_column_to_networks.up.sql",
+	)
+}
+
+func _1738081630_add_is_deactiveable_column_to_networksUpSql() (*asset, error) {
+	bytes, err := _1738081630_add_is_deactiveable_column_to_networksUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1738081630_add_is_deactiveable_column_to_networks.up.sql", size: 71, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0xe8, 0xbb, 0x55, 0xbc, 0x77, 0x71, 0xbe, 0x35, 0xab, 0x82, 0x4a, 0x4a, 0x6b, 0x6, 0x7b, 0x2b, 0x9d, 0x7c, 0x52, 0x57, 0xec, 0x9a, 0x7a, 0xd4, 0xd, 0xc0, 0x4d, 0xa3, 0x2, 0xb5, 0xe6, 0x2}}
+	return a, nil
+}
+
+var __1741343404_add_settings_auto_refresh_and_last_refreshed_timeUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x8c\x8f\x3d\x8e\x83\x30\x10\x46\x7b\x9f\x62\x8e\xb0\x5b\x5b\x5b\x98\xf5\xec\x0a\xc9\xd8\x08\xc6\xb5\xe5\xc0\xe4\x47\x20\x13\x61\x53\xe4\xf6\xa9\x12\xa5\x88\x92\x1c\xe0\x7b\xdf\x7b\xca\x10\x76\x40\xaa\x32\x08\x99\x4b\x39\xa5\x43\x06\xa5\x35\xfc\x3a\xe3\x1b\x0b\x71\x2b\x4b\x58\x79\xbf\x72\x3e\x86\xb2\x4c\x9c\x72\xe0\x14\x77\x33\x8f\x50\x39\x67\x50\x59\xd0\xf8\xa7\xbc\x21\xa0\xce\xa3\x14\xef\x88\x73\xcc\xe5\x46\xda\xce\x63\x2c\x0c\x54\x37\xd8\x93\x6a\x5a\x29\x84\x6f\xb5\xa2\x87\x65\x8f\xf4\x52\xe2\x07\xbe\xa5\x78\x7a\x1a\xf2\x25\x0d\x61\x98\x97\x61\xfa\xb4\xa8\xb6\x84\xff\xd8\x81\x75\x04\xd6\x1b\x73\x4f\xfb\x92\xd7\x00\x00\x00\xff\xff\xb9\xa5\x65\x19\x29\x01\x00\x00")
+
+func _1741343404_add_settings_auto_refresh_and_last_refreshed_timeUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1741343404_add_settings_auto_refresh_and_last_refreshed_timeUpSql,
+		"1741343404_add_settings_auto_refresh_and_last_refreshed_time.up.sql",
+	)
+}
+
+func _1741343404_add_settings_auto_refresh_and_last_refreshed_timeUpSql() (*asset, error) {
+	bytes, err := _1741343404_add_settings_auto_refresh_and_last_refreshed_timeUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1741343404_add_settings_auto_refresh_and_last_refreshed_time.up.sql", size: 297, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0xe3, 0xba, 0x14, 0x11, 0xae, 0x86, 0x6c, 0x52, 0x6b, 0x42, 0xa7, 0xed, 0xb3, 0x0, 0xc5, 0x30, 0x8c, 0x93, 0xb0, 0xba, 0xb6, 0x5e, 0xf6, 0xea, 0x69, 0xe, 0xb4, 0x35, 0x0, 0xff, 0x39, 0x7f}}
+	return a, nil
+}
+
+var __1742299652_add_news_notifications_settingUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x04\xc0\x31\x0a\x42\x31\x0c\x06\xe0\xdd\x53\xfc\xf7\x70\xca\xb3\x79\x53\x7c\x05\x6d\xe7\x52\x35\x4a\x40\xd2\x21\x01\xaf\xef\x47\xd2\xf8\x86\x46\x9b\x30\x42\x33\xcd\x3f\x01\x2a\x05\x97\x2a\xfd\x7a\xc0\xf5\x17\xc3\x57\xda\xdb\x9e\x33\x6d\x79\x0c\xf5\xf9\xf8\xea\x0b\x5b\xad\xc2\x74\xa0\xf0\x4e\x5d\x1a\x76\x92\x3b\x9f\x4f\xff\x00\x00\x00\xff\xff\x6f\x66\x52\x71\x52\x00\x00\x00")
+
+func _1742299652_add_news_notifications_settingUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1742299652_add_news_notifications_settingUpSql,
+		"1742299652_add_news_notifications_setting.up.sql",
+	)
+}
+
+func _1742299652_add_news_notifications_settingUpSql() (*asset, error) {
+	bytes, err := _1742299652_add_news_notifications_settingUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1742299652_add_news_notifications_setting.up.sql", size: 82, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x19, 0x68, 0x82, 0x93, 0x72, 0x1f, 0x9c, 0xdb, 0x99, 0x5f, 0x8c, 0xee, 0xc4, 0x4f, 0x8, 0xb, 0xba, 0x63, 0x41, 0xc3, 0x90, 0x91, 0x28, 0x6, 0xfb, 0x76, 0xb2, 0x51, 0x7e, 0xd6, 0x82, 0x5c}}
+	return a, nil
+}
+
+var __1742896296_add_messenger_push_notifications_settingUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x84\xcc\xb1\x0a\xc2\x40\x0c\x06\xe0\xbd\x4f\xf1\xbf\x47\x71\x48\xbd\x74\x8a\x3d\xb1\xb9\xb9\x54\x8d\xe5\x40\x53\x30\xf7\xfe\xb8\x3a\x08\xae\xdf\xf0\x91\x28\x5f\xa0\x34\x08\x23\xac\xb5\xea\x5b\x80\x52\xc2\x31\x4b\x39\x4d\x78\x59\x84\xf9\x66\xef\xc5\xf7\x56\x1f\xf5\xb6\xb6\xba\x7b\x2c\xe6\xeb\xf5\x69\x77\x0c\x39\x0b\xd3\x84\xc4\x23\x15\x51\x8c\x24\x33\xf7\x5d\x57\xce\x89\xf4\xab\x9c\x59\xff\x5e\x07\xfc\xf4\xbe\xfb\x04\x00\x00\xff\xff\xdf\xe0\x32\xe4\xa5\x00\x00\x00")
+
+func _1742896296_add_messenger_push_notifications_settingUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1742896296_add_messenger_push_notifications_settingUpSql,
+		"1742896296_add_messenger_push_notifications_setting.up.sql",
+	)
+}
+
+func _1742896296_add_messenger_push_notifications_settingUpSql() (*asset, error) {
+	bytes, err := _1742896296_add_messenger_push_notifications_settingUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1742896296_add_messenger_push_notifications_setting.up.sql", size: 165, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x2e, 0x70, 0x20, 0x94, 0xc3, 0xb3, 0x82, 0x4b, 0xb5, 0x63, 0xae, 0xfa, 0xfc, 0xaf, 0x8c, 0x72, 0x17, 0xc0, 0xd0, 0x19, 0x65, 0xb5, 0x64, 0xf5, 0xdd, 0x55, 0x38, 0x7e, 0xd0, 0x24, 0xe7, 0x9f}}
+	return a, nil
+}
+
+var __1743690310_add_news_feed_settingUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x04\xc0\x31\x0a\x85\x30\x0c\x06\xe0\xfd\x9d\xe2\xbf\xc7\x9b\x52\x1b\xa7\xd8\x42\x49\xe7\xa2\x34\x8a\x20\x5d\x52\xf0\xfa\x7e\x24\xca\x05\x4a\x41\x18\x6e\x73\xde\xe3\x72\x50\x8c\x58\xb2\xd4\x2d\x61\xd8\xeb\xed\x34\xeb\xcd\xc6\x7e\x3c\xd6\x11\x72\x16\xa6\x84\xc8\x2b\x55\x51\x68\xa9\xfc\xff\x7d\x01\x00\x00\xff\xff\x28\x80\x0a\xf4\x48\x00\x00\x00")
+
+func _1743690310_add_news_feed_settingUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1743690310_add_news_feed_settingUpSql,
+		"1743690310_add_news_feed_setting.up.sql",
+	)
+}
+
+func _1743690310_add_news_feed_settingUpSql() (*asset, error) {
+	bytes, err := _1743690310_add_news_feed_settingUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1743690310_add_news_feed_setting.up.sql", size: 72, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x3a, 0x57, 0xc2, 0xfb, 0xe3, 0x73, 0xee, 0x42, 0x35, 0x1a, 0x1, 0x1c, 0xca, 0xbe, 0x7, 0x2d, 0x48, 0xd5, 0x87, 0xf6, 0xf7, 0x2c, 0xb, 0x35, 0x83, 0x81, 0xd7, 0xd8, 0x3c, 0x8, 0x5e, 0xd1}}
+	return a, nil
+}
+
+var __1744737285_add_settings_news_feed_last_fetched_timestampUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x84\xcc\xc1\x0a\xc2\x30\x0c\x00\xd0\xfb\xbe\x22\xff\x31\x3c\xd4\x2d\xe0\x20\xad\xa3\x4d\xf1\x18\x86\xcb\x74\xe0\x86\x90\x80\xbf\xef\x4d\xbc\xed\x03\xde\x0b\xc4\x98\x81\xc3\x99\x10\x4c\xdd\xd7\xfd\x61\x10\xfa\x1e\xba\x2b\xd5\x98\x60\xd7\x8f\xc9\xa2\x3a\xcb\x6b\x32\x97\x45\xfd\xfe\xd4\x59\x7c\xdd\xd4\x7c\xda\xde\xc0\x43\xc4\xc2\x21\x8e\x6d\x53\xc7\x3e\xf0\x5f\x53\x90\x8f\xfd\x09\xba\x9a\x33\x26\x96\xdf\x04\xb7\x0b\x66\x3c\xa6\x43\x81\x54\x89\xda\xe6\x1b\x00\x00\xff\xff\x11\x7d\x8c\xbf\xc5\x00\x00\x00")
+
+func _1744737285_add_settings_news_feed_last_fetched_timestampUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1744737285_add_settings_news_feed_last_fetched_timestampUpSql,
+		"1744737285_add_settings_news_feed_last_fetched_timestamp.up.sql",
+	)
+}
+
+func _1744737285_add_settings_news_feed_last_fetched_timestampUpSql() (*asset, error) {
+	bytes, err := _1744737285_add_settings_news_feed_last_fetched_timestampUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1744737285_add_settings_news_feed_last_fetched_timestamp.up.sql", size: 197, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0xc1, 0x43, 0xe6, 0xa2, 0x6f, 0xb4, 0xa7, 0x6e, 0xc6, 0xfa, 0xdf, 0x2, 0x90, 0x8e, 0xf, 0x3f, 0xfc, 0xcd, 0xa2, 0x17, 0x34, 0x96, 0xf5, 0xb9, 0x78, 0xe5, 0x3e, 0x5d, 0x60, 0x45, 0x4c, 0xb7}}
+	return a, nil
+}
+
+var __1744905192_add_news_rss_settingUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x04\xc0\x31\x0a\x80\x30\x0c\x05\xd0\xdd\x53\xfc\x7b\x38\xa5\x36\x4e\xb1\x85\x92\xce\x45\x31\x88\x20\x1d\x4c\xc1\xeb\xfb\x48\x94\x0b\x94\x82\x30\xdc\xc6\xb8\xfb\xe5\xa0\x18\xb1\x64\xa9\x5b\x42\xb7\xcf\xdb\xeb\xde\xac\xef\xc7\x63\x27\x42\xce\xc2\x94\x10\x79\xa5\x2a\x0a\x2d\x95\xe7\xe9\x0f\x00\x00\xff\xff\xc2\x9d\x81\xeb\x47\x00\x00\x00")
+
+func _1744905192_add_news_rss_settingUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1744905192_add_news_rss_settingUpSql,
+		"1744905192_add_news_rss_setting.up.sql",
+	)
+}
+
+func _1744905192_add_news_rss_settingUpSql() (*asset, error) {
+	bytes, err := _1744905192_add_news_rss_settingUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1744905192_add_news_rss_setting.up.sql", size: 71, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x7c, 0x65, 0x2a, 0xe, 0x37, 0xf4, 0xf4, 0x0, 0x8c, 0xe, 0xec, 0x80, 0xad, 0xec, 0xb, 0xb7, 0xd4, 0x11, 0xa8, 0x12, 0xb8, 0x20, 0xa4, 0xca, 0x7f, 0xa9, 0x54, 0xf0, 0xb6, 0x0, 0x67, 0x2c}}
 	return a, nil
 }
 
@@ -2796,8 +3132,24 @@ var _bindata = map[string]func() (*asset, error){
 	"1720557751_rename_staging.up.sql":                                         _1720557751_rename_stagingUpSql,
 	"1720606449_enable_store_confirmation_for_messages_sent.up.sql":            _1720606449_enable_store_confirmation_for_messages_sentUpSql,
 	"1721215212_create_keycard_and_accounts.up.sql":                            _1721215212_create_keycard_and_accountsUpSql,
+	"1721832718_rename_shard_test.up.sql":                                      _1721832718_rename_shard_testUpSql,
 	"1722415278_remove_incorrectly_added_keycards.up.sql":                      _1722415278_remove_incorrectly_added_keycardsUpSql,
-	"doc.go": docGo,
+	"1724939813_remove_omit_transfers_history_scan_from_settings.up.sql":       _1724939813_remove_omit_transfers_history_scan_from_settingsUpSql,
+	"1728661600_drop_upstream_config.up.sql":                                   _1728661600_drop_upstream_configUpSql,
+	"1728977282_remove_goerli_from_settings_table.up.sql":                      _1728977282_remove_goerli_from_settings_tableUpSql,
+	"1732000008_witcher_card.up.sql":                                           _1732000008_witcher_cardUpSql,
+	"1732570426_.up.sql":                                                       _1732570426_UpSql,
+	"1732905829_add_log_namespaces.up.sql":                                     _1732905829_add_log_namespacesUpSql,
+	"1733400346_add_rpc_providers.up.sql":                                      _1733400346_add_rpc_providersUpSql,
+	"1737662319_add_active_column_to_networks.up.sql":                          _1737662319_add_active_column_to_networksUpSql,
+	"1738081630_add_is_deactiveable_column_to_networks.up.sql":                 _1738081630_add_is_deactiveable_column_to_networksUpSql,
+	"1741343404_add_settings_auto_refresh_and_last_refreshed_time.up.sql":      _1741343404_add_settings_auto_refresh_and_last_refreshed_timeUpSql,
+	"1742299652_add_news_notifications_setting.up.sql":                         _1742299652_add_news_notifications_settingUpSql,
+	"1742896296_add_messenger_push_notifications_setting.up.sql":               _1742896296_add_messenger_push_notifications_settingUpSql,
+	"1743690310_add_news_feed_setting.up.sql":                                  _1743690310_add_news_feed_settingUpSql,
+	"1744737285_add_settings_news_feed_last_fetched_timestamp.up.sql":          _1744737285_add_settings_news_feed_last_fetched_timestampUpSql,
+	"1744905192_add_news_rss_setting.up.sql":                                   _1744905192_add_news_rss_settingUpSql,
+	"doc.go":                                                                   docGo,
 }
 
 // AssetDebug is true if the assets were built with the debug flag enabled.
@@ -2964,8 +3316,24 @@ var _bintree = &bintree{nil, map[string]*bintree{
 	"1720557751_rename_staging.up.sql":                                         {_1720557751_rename_stagingUpSql, map[string]*bintree{}},
 	"1720606449_enable_store_confirmation_for_messages_sent.up.sql":            {_1720606449_enable_store_confirmation_for_messages_sentUpSql, map[string]*bintree{}},
 	"1721215212_create_keycard_and_accounts.up.sql":                            {_1721215212_create_keycard_and_accountsUpSql, map[string]*bintree{}},
+	"1721832718_rename_shard_test.up.sql":                                      {_1721832718_rename_shard_testUpSql, map[string]*bintree{}},
 	"1722415278_remove_incorrectly_added_keycards.up.sql":                      {_1722415278_remove_incorrectly_added_keycardsUpSql, map[string]*bintree{}},
-	"doc.go": {docGo, map[string]*bintree{}},
+	"1724939813_remove_omit_transfers_history_scan_from_settings.up.sql":       {_1724939813_remove_omit_transfers_history_scan_from_settingsUpSql, map[string]*bintree{}},
+	"1728661600_drop_upstream_config.up.sql":                                   {_1728661600_drop_upstream_configUpSql, map[string]*bintree{}},
+	"1728977282_remove_goerli_from_settings_table.up.sql":                      {_1728977282_remove_goerli_from_settings_tableUpSql, map[string]*bintree{}},
+	"1732000008_witcher_card.up.sql":                                           {_1732000008_witcher_cardUpSql, map[string]*bintree{}},
+	"1732570426_.up.sql":                                                       {_1732570426_UpSql, map[string]*bintree{}},
+	"1732905829_add_log_namespaces.up.sql":                                     {_1732905829_add_log_namespacesUpSql, map[string]*bintree{}},
+	"1733400346_add_rpc_providers.up.sql":                                      {_1733400346_add_rpc_providersUpSql, map[string]*bintree{}},
+	"1737662319_add_active_column_to_networks.up.sql":                          {_1737662319_add_active_column_to_networksUpSql, map[string]*bintree{}},
+	"1738081630_add_is_deactiveable_column_to_networks.up.sql":                 {_1738081630_add_is_deactiveable_column_to_networksUpSql, map[string]*bintree{}},
+	"1741343404_add_settings_auto_refresh_and_last_refreshed_time.up.sql":      {_1741343404_add_settings_auto_refresh_and_last_refreshed_timeUpSql, map[string]*bintree{}},
+	"1742299652_add_news_notifications_setting.up.sql":                         {_1742299652_add_news_notifications_settingUpSql, map[string]*bintree{}},
+	"1742896296_add_messenger_push_notifications_setting.up.sql":               {_1742896296_add_messenger_push_notifications_settingUpSql, map[string]*bintree{}},
+	"1743690310_add_news_feed_setting.up.sql":                                  {_1743690310_add_news_feed_settingUpSql, map[string]*bintree{}},
+	"1744737285_add_settings_news_feed_last_fetched_timestamp.up.sql":          {_1744737285_add_settings_news_feed_last_fetched_timestampUpSql, map[string]*bintree{}},
+	"1744905192_add_news_rss_setting.up.sql":                                   {_1744905192_add_news_rss_settingUpSql, map[string]*bintree{}},
+	"doc.go":                                                                   {docGo, map[string]*bintree{}},
 }}
 
 // RestoreAsset restores an asset under the given directory.

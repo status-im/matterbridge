@@ -1,15 +1,27 @@
 package community
 
+//go:generate mockgen -package=mock_community -source=manager.go -destination=mock/manager.go
+
 import (
 	"database/sql"
 	"encoding/json"
 
+	"go.uber.org/zap"
+
 	"github.com/ethereum/go-ethereum/event"
-	"github.com/ethereum/go-ethereum/log"
+	gocommon "github.com/status-im/status-go/common"
+	"github.com/status-im/status-go/logutils"
 	"github.com/status-im/status-go/server"
 	"github.com/status-im/status-go/services/wallet/thirdparty"
 	"github.com/status-im/status-go/services/wallet/walletevent"
 )
+
+type CommunityManagerInterface interface {
+	FetchCommunityInfo(communityID string) (*thirdparty.CommunityInfo, error)
+	GetCommunityInfo(id string) (*thirdparty.CommunityInfo, *InfoState, error)
+	GetCommunityID(tokenURI string) string
+	FillCollectiblesMetadata(communityID string, cs []*thirdparty.FullCollectibleData) (bool, error)
+}
 
 // These events are used to notify the UI of state changes
 const (
@@ -71,7 +83,7 @@ func (cm *Manager) fetchCommunityInfo(communityID string, fetcher func() (*third
 	if err != nil {
 		dbErr := cm.setCommunityInfo(communityID, nil)
 		if dbErr != nil {
-			log.Error("SetCommunityInfo failed", "communityID", communityID, "err", dbErr)
+			logutils.ZapLogger().Error("SetCommunityInfo failed", zap.String("communityID", gocommon.TruncateWithDot(communityID)), zap.Error(dbErr))
 		}
 		return nil, err
 	}
@@ -87,9 +99,10 @@ func (cm *Manager) FetchCommunityInfo(communityID string) (*thirdparty.Community
 
 func (cm *Manager) FetchCommunityMetadataAsync(communityID string) {
 	go func() {
+		defer gocommon.LogOnPanic()
 		communityInfo, err := cm.FetchCommunityMetadata(communityID)
 		if err != nil {
-			log.Error("FetchCommunityInfo failed", "communityID", communityID, "err", err)
+			logutils.ZapLogger().Error("FetchCommunityInfo failed", zap.String("communityID", gocommon.TruncateWithDot(communityID)), zap.Error(err))
 		}
 		cm.signalUpdatedCommunityMetadata(communityID, communityInfo)
 	}()
@@ -124,7 +137,7 @@ func (cm *Manager) signalUpdatedCommunityMetadata(communityID string, communityI
 
 	payload, err := json.Marshal(data)
 	if err != nil {
-		log.Error("Error marshaling response: %v", err)
+		logutils.ZapLogger().Error("Error marshaling response", zap.Error(err))
 		return
 	}
 

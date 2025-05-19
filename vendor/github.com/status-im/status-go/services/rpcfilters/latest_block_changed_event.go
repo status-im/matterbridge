@@ -5,8 +5,11 @@ import (
 	"sync"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/log"
+	gocommon "github.com/status-im/status-go/common"
+	"github.com/status-im/status-go/logutils"
 )
 
 const (
@@ -78,6 +81,7 @@ func (e *latestBlockChangedEvent) Start() error {
 	e.quit = make(chan struct{})
 
 	go func() {
+		defer gocommon.LogOnPanic()
 		ticker := time.NewTicker(e.tickerPeriod)
 		for {
 			select {
@@ -87,7 +91,7 @@ func (e *latestBlockChangedEvent) Start() error {
 				}
 				latestBlock, err := e.provider.GetLatestBlock()
 				if err != nil {
-					log.Error("error while receiving latest block", "error", err)
+					logutils.ZapLogger().Error("error while receiving latest block", zap.Error(err))
 					continue
 				}
 
