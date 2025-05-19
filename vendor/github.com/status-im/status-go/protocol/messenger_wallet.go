@@ -10,6 +10,7 @@ import (
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/status-im/status-go/account"
+	gocommon "github.com/status-im/status-go/common"
 	"github.com/status-im/status-go/constants"
 	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/multiaccounts/accounts"
@@ -49,7 +50,7 @@ func (m *Messenger) retrieveWalletBalances() error {
 	defer cancel()
 
 	// TODO: publish tokens as a signal
-	_, err = m.walletAPI.FetchOrGetCachedWalletBalances(ctx, ethAccounts)
+	_, err = m.walletAPI.FetchOrGetCachedWalletBalances(ctx, ethAccounts, false)
 	if err != nil {
 		return err
 	}
@@ -65,6 +66,7 @@ func (m *Messenger) watchWalletBalances() {
 		return
 	}
 	go func() {
+		defer gocommon.LogOnPanic()
 		for {
 			select {
 			case <-time.After(checkBalancesInterval):

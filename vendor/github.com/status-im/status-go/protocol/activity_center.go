@@ -40,6 +40,13 @@ const (
 	ActivityCenterNotificationTypeFirstCommunityTokenReceived
 	ActivityCenterNotificationTypeCommunityBanned
 	ActivityCenterNotificationTypeCommunityUnbanned
+	ActivityCenterNotificationTypeNewInstallationReceived
+	ActivityCenterNotificationTypeNewInstallationCreated
+	ActivityCenterNotificationTypeBackupSyncingFetching
+	ActivityCenterNotificationTypeBackupSyncingSuccess
+	ActivityCenterNotificationTypeBackupSyncingPartialFailure
+	ActivityCenterNotificationTypeBackupSyncingFailure
+	ActivityCenterNotificationTypeNews
 )
 
 type ActivityCenterMembershipStatus int
@@ -86,7 +93,14 @@ type ActivityCenterNotification struct {
 	CommunityID               string                         `json:"communityId"`
 	MembershipStatus          ActivityCenterMembershipStatus `json:"membershipStatus"`
 	Name                      string                         `json:"name"`
+	NewsTitle                 string                         `json:"newsTitle"`
+	NewsDescription           string                         `json:"newsDescription"`
+	NewsContent               string                         `json:"newsContent"`
+	NewsImageURL              string                         `json:"newsImageUrl"`
+	NewsLink                  string                         `json:"newsLink"`
+	NewsLinkLabel             string                         `json:"newsLinkLabel"`
 	Author                    string                         `json:"author"`
+	InstallationID            string                         `json:"installationId"`
 	Type                      ActivityCenterType             `json:"type"`
 	LastMessage               *common.Message                `json:"lastMessage"`
 	Message                   *common.Message                `json:"message"`

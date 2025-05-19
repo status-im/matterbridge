@@ -9,6 +9,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	gocommon "github.com/status-im/status-go/common"
 	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/protocol/communities"
 )
@@ -28,6 +29,7 @@ func (m *Messenger) startCuratedCommunitiesUpdateLoop() {
 	}
 
 	go func() {
+		defer gocommon.LogOnPanic()
 		// Initialize interval to 0 for immediate execution
 		var interval time.Duration = 0
 
@@ -91,7 +93,7 @@ func (m *Messenger) getCuratedCommunitiesFromContract() (*communities.CuratedCom
 
 	chainID := uint64(10) // Optimism Mainnet
 	if testNetworksEnabled {
-		chainID = 420 // Optimism Goerli
+		chainID = 11155420 // Optimism Sepolia
 	}
 
 	directory, err := m.contractMaker.NewDirectory(chainID)
@@ -141,6 +143,7 @@ func (m *Messenger) fetchCuratedCommunities(curatedCommunities *communities.Cura
 	}
 
 	go func() {
+		defer gocommon.LogOnPanic()
 		_ = m.fetchCommunities(unknownCommunities)
 	}()
 

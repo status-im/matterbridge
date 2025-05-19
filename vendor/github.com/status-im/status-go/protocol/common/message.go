@@ -221,6 +221,9 @@ type Message struct {
 	ContactVerificationState ContactVerificationState `json:"contactVerificationState,omitempty"`
 
 	DiscordMessage *protobuf.DiscordMessage `json:"discordMessage,omitempty"`
+
+	// When a message is pinned, the pubkey of the user that pinned it is stored here
+	PinnedBy string `json:"pinnedBy,omitempty"`
 }
 
 func (m *Message) MarshalJSON() ([]byte, error) {
@@ -283,6 +286,8 @@ func (m *Message) MarshalJSON() ([]byte, error) {
 		ContactVerificationState ContactVerificationState         `json:"contactVerificationState,omitempty"`
 		DiscordMessage           *protobuf.DiscordMessage         `json:"discordMessage,omitempty"`
 		BridgeMessage            *protobuf.BridgeMessage          `json:"bridgeMessage,omitempty"`
+		PaymentRequests          []*protobuf.PaymentRequest       `json:"paymentRequests,omitempty"`
+		PinnedBy                 string                           `json:"pinnedBy,omitempty"`
 	}
 	item := MessageStructType{
 		ID:                       m.ID,
@@ -325,6 +330,8 @@ func (m *Message) MarshalJSON() ([]byte, error) {
 		DeletedForMe:             m.DeletedForMe,
 		ContactRequestState:      m.ContactRequestState,
 		ContactVerificationState: m.ContactVerificationState,
+		PaymentRequests:          m.PaymentRequests,
+		PinnedBy:                 m.PinnedBy,
 	}
 
 	if sticker := m.GetSticker(); sticker != nil {
@@ -370,21 +377,22 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 	type Alias Message
 	aux := struct {
 		*Alias
-		ResponseTo       string                           `json:"responseTo"`
-		EnsName          string                           `json:"ensName"`
-		DisplayName      string                           `json:"displayName"`
-		ChatID           string                           `json:"chatId"`
-		Sticker          *protobuf.StickerMessage         `json:"sticker"`
-		AudioDurationMs  uint64                           `json:"audioDurationMs"`
-		ParsedText       json.RawMessage                  `json:"parsedText"`
-		ContentType      protobuf.ChatMessage_ContentType `json:"contentType"`
-		AlbumID          string                           `json:"albumId"`
-		ImageWidth       uint32                           `json:"imageWidth"`
-		ImageHeight      uint32                           `json:"imageHeight"`
-		AlbumImagesCount uint32                           `json:"albumImagesCount"`
-		From             string                           `json:"from"`
-		Deleted          bool                             `json:"deleted,omitempty"`
-		DeletedForMe     bool                             `json:"deletedForMe,omitempty"`
+		ResponseTo         string                           `json:"responseTo"`
+		EnsName            string                           `json:"ensName"`
+		DisplayName        string                           `json:"displayName"`
+		ChatID             string                           `json:"chatId"`
+		Sticker            *protobuf.StickerMessage         `json:"sticker"`
+		AudioDurationMs    uint64                           `json:"audioDurationMs"`
+		ParsedText         json.RawMessage                  `json:"parsedText"`
+		ContentType        protobuf.ChatMessage_ContentType `json:"contentType"`
+		AlbumID            string                           `json:"albumId"`
+		ImageWidth         uint32                           `json:"imageWidth"`
+		ImageHeight        uint32                           `json:"imageHeight"`
+		AlbumImagesCount   uint32                           `json:"albumImagesCount"`
+		From               string                           `json:"from"`
+		PaymentRequestList []*protobuf.PaymentRequest       `json:"paymentRequests"`
+		Deleted            bool                             `json:"deleted,omitempty"`
+		DeletedForMe       bool                             `json:"deletedForMe,omitempty"`
 	}{
 		Alias: (*Alias)(m),
 	}
@@ -410,6 +418,7 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 		}
 	}
 
+	m.PaymentRequests = aux.PaymentRequestList
 	m.ResponseTo = aux.ResponseTo
 	m.EnsName = aux.EnsName
 	m.DisplayName = aux.DisplayName

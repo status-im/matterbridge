@@ -12,6 +12,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	"github.com/waku-org/go-waku/logging"
+	"github.com/waku-org/go-waku/waku/v2/utils"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 )
@@ -23,7 +24,7 @@ const maxAllowedPingFailures = 2
 // the peers if they don't reply back
 const sleepDetectionIntervalFactor = 3
 
-const maxPeersToPing = 10
+const maxPeersToPingPerProtocol = 10
 
 const maxAllowedSubsequentPingFailures = 2
 
@@ -40,6 +41,7 @@ func disconnectAllPeers(host host.Host, logger *zap.Logger) {
 // This is necessary because TCP connections are automatically closed due to inactivity,
 // and doing a ping will avoid this (with a small bandwidth cost)
 func (w *WakuNode) startKeepAlive(ctx context.Context, randomPeersPingDuration time.Duration, allPeersPingDuration time.Duration) {
+	defer utils.LogOnPanic()
 	defer w.wg.Done()
 
 	if !w.opts.enableRelay {
@@ -72,13 +74,15 @@ func (w *WakuNode) startKeepAlive(ctx context.Context, randomPeersPingDuration t
 
 		select {
 		case <-allPeersTickerC:
-			relayPeersSet := make(map[peer.ID]struct{})
-			for _, t := range w.Relay().Topics() {
-				for _, p := range w.Relay().PubSub().ListPeers(t) {
-					relayPeersSet[p] = struct{}{}
+			if w.opts.enableRelay {
+				relayPeersSet := make(map[peer.ID]struct{})
+				for _, t := range w.Relay().Topics() {
+					for _, p := range w.Relay().PubSub().ListPeers(t) {
+						relayPeersSet[p] = struct{}{}
+					}
 				}
+				peersToPing = append(peersToPing, maps.Keys(relayPeersSet)...)
 			}
-			peersToPing = maps.Keys(relayPeersSet)
 
 		case <-randomPeersTickerC:
 			difference := w.timesource.Now().UnixNano() - lastTimeExecuted.UnixNano()
@@ -94,36 +98,46 @@ func (w *WakuNode) startKeepAlive(ctx context.Context, randomPeersPingDuration t
 				continue
 			}
 
-			// Priorize mesh peers
-			meshPeersSet := make(map[peer.ID]struct{})
-			for _, t := range w.Relay().Topics() {
-				for _, p := range w.Relay().PubSub().MeshPeers(t) {
-					meshPeersSet[p] = struct{}{}
-				}
-			}
-			peersToPing = append(peersToPing, maps.Keys(meshPeersSet)...)
-
-			// Ping also some random relay peers
-			if maxPeersToPing-len(peersToPing) > 0 {
-				relayPeersSet := make(map[peer.ID]struct{})
+			if w.opts.enableRelay {
+				// Priorize mesh peers
+				meshPeersSet := make(map[peer.ID]struct{})
 				for _, t := range w.Relay().Topics() {
-					for _, p := range w.Relay().PubSub().ListPeers(t) {
-						if _, ok := meshPeersSet[p]; !ok {
-							relayPeersSet[p] = struct{}{}
-						}
+					for _, p := range w.Relay().PubSub().MeshPeers(t) {
+						meshPeersSet[p] = struct{}{}
 					}
 				}
+				peersToPing = append(peersToPing, maps.Keys(meshPeersSet)...)
 
-				relayPeers := maps.Keys(relayPeersSet)
-				rand.Shuffle(len(relayPeers), func(i, j int) { relayPeers[i], relayPeers[j] = relayPeers[j], relayPeers[i] })
+				// Ping also some random relay peers
+				if maxPeersToPingPerProtocol-len(peersToPing) > 0 {
+					relayPeersSet := make(map[peer.ID]struct{})
+					for _, t := range w.Relay().Topics() {
+						for _, p := range w.Relay().PubSub().ListPeers(t) {
+							if _, ok := meshPeersSet[p]; !ok {
+								relayPeersSet[p] = struct{}{}
+							}
+						}
+					}
 
-				peerLen := maxPeersToPing - len(peersToPing)
-				if peerLen > len(relayPeers) {
-					peerLen = len(relayPeers)
+					relayPeers := maps.Keys(relayPeersSet)
+					rand.Shuffle(len(relayPeers), func(i, j int) { relayPeers[i], relayPeers[j] = relayPeers[j], relayPeers[i] })
+
+					peerLen := maxPeersToPingPerProtocol - len(peersToPing)
+					if peerLen > len(relayPeers) {
+						peerLen = len(relayPeers)
+					}
+					peersToPing = append(peersToPing, relayPeers[0:peerLen]...)
 				}
-				peersToPing = append(peersToPing, relayPeers[0:peerLen]...)
 			}
 
+			if w.opts.enableFilterLightNode {
+				// We also ping all filter nodes
+				filterPeersSet := make(map[peer.ID]struct{})
+				for _, s := range w.FilterLightnode().Subscriptions() {
+					filterPeersSet[s.PeerID] = struct{}{}
+				}
+				peersToPing = append(peersToPing, maps.Keys(filterPeersSet)...)
+			}
 		case <-ctx.Done():
 			w.log.Info("stopping ping protocol")
 			return
@@ -156,6 +170,7 @@ func (w *WakuNode) startKeepAlive(ctx context.Context, randomPeersPingDuration t
 }
 
 func (w *WakuNode) pingPeer(ctx context.Context, wg *sync.WaitGroup, peerID peer.ID, resultChan chan bool) {
+	defer utils.LogOnPanic()
 	defer wg.Done()
 
 	logger := w.log.With(logging.HostID("peer", peerID))

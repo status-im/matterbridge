@@ -2,7 +2,6 @@ package pathprocessor
 
 import (
 	"context"
-	"fmt"
 	"math/big"
 	"strings"
 
@@ -18,7 +17,11 @@ import (
 	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/params"
 	"github.com/status-im/status-go/rpc"
-	"github.com/status-im/status-go/services/wallet/token"
+	"github.com/status-im/status-go/services/utils"
+	walletCommon "github.com/status-im/status-go/services/wallet/common"
+	pathProcessorCommon "github.com/status-im/status-go/services/wallet/router/pathprocessor/common"
+	tokenTypes "github.com/status-im/status-go/services/wallet/token/types"
+	"github.com/status-im/status-go/services/wallet/wallettypes"
 	"github.com/status-im/status-go/transactions"
 )
 
@@ -28,7 +31,7 @@ const (
 )
 
 type ERC721TxArgs struct {
-	transactions.SendTxArgs
+	wallettypes.SendTxArgs
 	TokenID   *hexutil.Big   `json:"tokenId"`
 	Recipient common.Address `json:"recipient"`
 }
@@ -43,11 +46,11 @@ func NewERC721Processor(rpcClient *rpc.Client, transactor transactions.Transacto
 }
 
 func createERC721ErrorResponse(err error) error {
-	return createErrorResponse(ProcessorERC721Name, err)
+	return createErrorResponse(pathProcessorCommon.ProcessorERC721Name, err)
 }
 
 func (s *ERC721Processor) Name() string {
-	return ProcessorERC721Name
+	return pathProcessorCommon.ProcessorERC721Name
 }
 
 func (s *ERC721Processor) AvailableFor(params ProcessorInputParams) (bool, error) {
@@ -55,7 +58,7 @@ func (s *ERC721Processor) AvailableFor(params ProcessorInputParams) (bool, error
 }
 
 func (s *ERC721Processor) CalculateFees(params ProcessorInputParams) (*big.Int, *big.Int, error) {
-	return ZeroBigIntValue, ZeroBigIntValue, nil
+	return walletCommon.ZeroBigIntValue(), walletCommon.ZeroBigIntValue(), nil
 }
 
 func (s *ERC721Processor) packTxInputDataInternally(params ProcessorInputParams, functionName string) ([]byte, error) {
@@ -64,9 +67,9 @@ func (s *ERC721Processor) packTxInputDataInternally(params ProcessorInputParams,
 		return []byte{}, createERC721ErrorResponse(err)
 	}
 
-	id, success := big.NewInt(0).SetString(params.FromToken.Symbol, 0)
-	if !success {
-		return []byte{}, createERC721ErrorResponse(fmt.Errorf("failed to convert %s to big.Int", params.FromToken.Symbol))
+	id, err := walletCommon.GetTokenIdFromSymbol(params.FromToken.Symbol)
+	if err != nil {
+		return []byte{}, createERC721ErrorResponse(err)
 	}
 
 	return abi.Pack(functionName,
@@ -108,11 +111,11 @@ func (s *ERC721Processor) PackTxInputData(params ProcessorInputParams) ([]byte, 
 	return s.packTxInputDataInternally(params, functionNameTransferFrom)
 }
 
-func (s *ERC721Processor) EstimateGas(params ProcessorInputParams) (uint64, error) {
+func (s *ERC721Processor) EstimateGas(params ProcessorInputParams, input []byte) (uint64, error) {
 	if params.TestsMode {
 		if params.TestEstimationMap != nil {
 			if val, ok := params.TestEstimationMap[s.Name()]; ok {
-				return val, nil
+				return val.Value, val.Err
 			}
 		}
 		return 0, ErrNoEstimationFound
@@ -124,11 +127,6 @@ func (s *ERC721Processor) EstimateGas(params ProcessorInputParams) (uint64, erro
 	}
 
 	value := new(big.Int)
-
-	input, err := s.PackTxInputData(params)
-	if err != nil {
-		return 0, createERC721ErrorResponse(err)
-	}
 
 	msg := ethereum.CallMsg{
 		From:  params.FromAddr,
@@ -142,10 +140,11 @@ func (s *ERC721Processor) EstimateGas(params ProcessorInputParams) (uint64, erro
 		return 0, createERC721ErrorResponse(err)
 	}
 
-	increasedEstimation := float64(estimation) * IncreaseEstimatedGasFactor
+	increasedEstimation := float64(estimation) * pathProcessorCommon.IncreaseEstimatedGasFactor
 	return uint64(increasedEstimation), nil
 }
 
+// TODO: remove this struct once mobile switches to the new approach
 func (s *ERC721Processor) sendOrBuild(sendArgs *MultipathProcessorTxArgs, signerFn bind.SignerFn, lastUsedNonce int64) (tx *ethTypes.Transaction, err error) {
 	from := common.Address(sendArgs.ERC721TransferTx.From)
 
@@ -156,8 +155,9 @@ func (s *ERC721Processor) sendOrBuild(sendArgs *MultipathProcessorTxArgs, signer
 		},
 		FromAddr: from,
 		ToAddr:   sendArgs.ERC721TransferTx.Recipient,
-		FromToken: &token.Token{
-			Symbol: sendArgs.ERC721TransferTx.TokenID.String(),
+		FromToken: &tokenTypes.Token{
+			Symbol:  sendArgs.ERC721TransferTx.TokenID.String(),
+			Address: common.Address(*sendArgs.ERC721TransferTx.To),
 		},
 	}
 	err = s.checkIfFunctionExists(inputParams, functionNameSafeTransferFrom)
@@ -177,7 +177,7 @@ func (s *ERC721Processor) sendOrBuild(sendArgs *MultipathProcessorTxArgs, signer
 
 	var nonce uint64
 	if lastUsedNonce < 0 {
-		nonce, err = s.transactor.NextNonce(s.rpcClient, sendArgs.ChainID, sendArgs.ERC721TransferTx.From)
+		nonce, err = s.transactor.NextNonce(context.Background(), s.rpcClient, sendArgs.ChainID, sendArgs.ERC721TransferTx.From)
 		if err != nil {
 			return tx, createERC721ErrorResponse(err)
 		}
@@ -208,7 +208,7 @@ func (s *ERC721Processor) sendOrBuild(sendArgs *MultipathProcessorTxArgs, signer
 }
 
 func (s *ERC721Processor) Send(sendArgs *MultipathProcessorTxArgs, lastUsedNonce int64, verifiedAccount *account.SelectedExtKey) (hash types.Hash, usedNonce uint64, err error) {
-	tx, err := s.sendOrBuild(sendArgs, getSigner(sendArgs.ChainID, sendArgs.ERC721TransferTx.From, verifiedAccount), lastUsedNonce)
+	tx, err := s.sendOrBuild(sendArgs, utils.GetSigner(sendArgs.ChainID, sendArgs.ERC721TransferTx.From, verifiedAccount.AccountKey.PrivateKey), lastUsedNonce)
 	if err != nil {
 		return hash, 0, createERC721ErrorResponse(err)
 	}
@@ -218,6 +218,10 @@ func (s *ERC721Processor) Send(sendArgs *MultipathProcessorTxArgs, lastUsedNonce
 func (s *ERC721Processor) BuildTransaction(sendArgs *MultipathProcessorTxArgs, lastUsedNonce int64) (*ethTypes.Transaction, uint64, error) {
 	tx, err := s.sendOrBuild(sendArgs, nil, lastUsedNonce)
 	return tx, tx.Nonce(), err
+}
+
+func (s *ERC721Processor) BuildTransactionV2(sendArgs *wallettypes.SendTxArgs, lastUsedNonce int64) (*ethTypes.Transaction, uint64, error) {
+	return s.transactor.ValidateAndBuildTransaction(sendArgs.FromChainID, *sendArgs, lastUsedNonce)
 }
 
 func (s *ERC721Processor) CalculateAmountOut(params ProcessorInputParams) (*big.Int, error) {

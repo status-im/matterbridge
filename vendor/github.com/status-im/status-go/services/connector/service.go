@@ -3,13 +3,12 @@ package connector
 import (
 	"database/sql"
 
-	"github.com/ethereum/go-ethereum/p2p"
-
 	gethrpc "github.com/ethereum/go-ethereum/rpc"
-	"github.com/status-im/status-go/services/connector/commands"
+	"github.com/status-im/status-go/rpc"
+	"github.com/status-im/status-go/rpc/network"
 )
 
-func NewService(db *sql.DB, rpc commands.RPCClientInterface, nm commands.NetworkManagerInterface) *Service {
+func NewService(db *sql.DB, rpc rpc.ClientInterface, nm *network.Manager) *Service {
 	return &Service{
 		db:  db,
 		rpc: rpc,
@@ -19,8 +18,8 @@ func NewService(db *sql.DB, rpc commands.RPCClientInterface, nm commands.Network
 
 type Service struct {
 	db  *sql.DB
-	rpc commands.RPCClientInterface
-	nm  commands.NetworkManagerInterface
+	rpc rpc.ClientInterface
+	nm  *network.Manager
 }
 
 func (s *Service) Start() error {
@@ -39,8 +38,4 @@ func (s *Service) APIs() []gethrpc.API {
 			Service:   NewAPI(s),
 		},
 	}
-}
-
-func (s *Service) Protocols() []p2p.Protocol {
-	return nil
 }

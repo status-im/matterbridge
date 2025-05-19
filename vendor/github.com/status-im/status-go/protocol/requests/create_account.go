@@ -33,10 +33,6 @@ type APIConfig struct {
 }
 
 type CreateAccount struct {
-	// Deprecated: BackupDisabledDataDir is the directory where backup is disabled
-	// Use `RootDataDir` instead. Effective BackupDisabledDataDir value will default to RootDataDir + "./".
-	BackupDisabledDataDir string `json:"backupDisabledDataDir"`
-
 	// RootDataDir is an absolute path to the root directory where all data will be stored.
 	RootDataDir   string `json:"rootDataDir"`
 	KdfIterations int    `json:"kdfIterations"`
@@ -47,7 +43,6 @@ type CreateAccount struct {
 	ImagePath          string              `json:"imagePath"`
 	ImageCropRectangle *ImageCropRectangle `json:"imageCropRectangle"`
 	CustomizationColor string              `json:"customizationColor"`
-	Emoji              string              `json:"emoji"`
 
 	WakuV2Nameserver                             *string `json:"wakuV2Nameserver"`
 	WakuV2LightClient                            bool    `json:"wakuV2LightClient"`
@@ -71,10 +66,13 @@ type CreateAccount struct {
 	// If you want to use non-default network, use NetworkID.
 	CurrentNetwork       string           `json:"currentNetwork"`
 	NetworkID            *uint64          `json:"networkId"`
-	TestOverrideNetworks []params.Network `json:"-"` // This is used for testing purposes only
+	TestOverrideNetworks []params.Network `json:"networksOverride"` // This is used for testing purposes only
 
 	TestNetworksEnabled bool `json:"testNetworksEnabled"`
 
+	AutoRefreshTokensEnabled bool `json:"autoRefreshTokensEnabled"`
+
+	WalletConfig
 	WalletSecretsConfig
 
 	TorrentConfigEnabled *bool
@@ -84,11 +82,19 @@ type CreateAccount struct {
 
 	APIConfig *APIConfig `json:"apiConfig"`
 
-	KeycardInstanceUID     string  `json:"keycardInstanceUID"`
-	KeycardPairingDataFile *string `json:"keycardPairingDataFile"`
-	StatusProxyEnabled     bool    `json:"statusProxyEnabled"`
-}
+	KeycardInstanceUID string `json:"keycardInstanceUID"`
 
+	// on mobile there is no KeycardPairingDataFile, so for now KeycardPairingKey will be used
+	// for recovering account
+	KeycardPairingKey      string  `json:"keycardPairingKey"`
+	KeycardPairingDataFile *string `json:"keycardPairingDataFile"`
+}
+type WalletConfig struct {
+	TokensListsAutoRefreshInterval      int `json:"tokensListsAutoRefreshInterval"`      // in seconds
+	TokensListsAutoRefreshCheckInterval int `json:"tokensListsAutoRefreshCheckInterval"` // in seconds
+	MarketDataFullDataRefreshInterval   int `json:"marketDataFullDataRefreshInterval"`   // in seconds
+	MarketDataPriceRefreshInterval      int `json:"marketDataPriceRefreshInterval"`      // in seconds
+}
 type WalletSecretsConfig struct {
 	PoktToken            string `json:"poktToken"`
 	InfuraToken          string `json:"infuraToken"`
@@ -98,23 +104,28 @@ type WalletSecretsConfig struct {
 	RaribleTestnetAPIKey string `json:"raribleTestnetApiKey"`
 
 	AlchemyEthereumMainnetToken string `json:"alchemyEthereumMainnetToken"`
-	AlchemyEthereumGoerliToken  string `json:"alchemyEthereumGoerliToken"`
 	AlchemyEthereumSepoliaToken string `json:"alchemyEthereumSepoliaToken"`
 	AlchemyArbitrumMainnetToken string `json:"alchemyArbitrumMainnetToken"`
-	AlchemyArbitrumGoerliToken  string `json:"alchemyArbitrumGoerliToken"`
 	AlchemyArbitrumSepoliaToken string `json:"alchemyArbitrumSepoliaToken"`
 	AlchemyOptimismMainnetToken string `json:"alchemyOptimismMainnetToken"`
-	AlchemyOptimismGoerliToken  string `json:"alchemyOptimismGoerliToken"`
 	AlchemyOptimismSepoliaToken string `json:"alchemyOptimismSepoliaToken"`
+	AlchemyBaseMainnetToken     string `json:"alchemyBaseMainnetToken"`
+	AlchemyBaseSepoliaToken     string `json:"alchemyBaseSepoliaToken"`
 
-	StatusProxyStageName          string `json:"statusProxyStageName"`
-	StatusProxyMarketUser         string `json:"statusProxyMarketUser"`
-	StatusProxyMarketPassword     string `json:"statusProxyMarketPassword"`
+	StatusProxyStageName      string `json:"statusProxyStageName"`
+	StatusProxyMarketUser     string `json:"statusProxyMarketUser"`
+	StatusProxyMarketPassword string `json:"statusProxyMarketPassword"`
+
+	MarketDataProxyUrl      string `json:"marketDataProxyUrl"`
+	MarketDataProxyUser     string `json:"marketDataProxyUser"`
+	MarketDataProxyPassword string `json:"marketDataProxyPassword"`
+	// FIXME: remove when EthRpcProxy* is integrated
 	StatusProxyBlockchainUser     string `json:"statusProxyBlockchainUser"`
 	StatusProxyBlockchainPassword string `json:"statusProxyBlockchainPassword"`
 
-	// Testing
-	GanacheURL string `json:"ganacheURL"`
+	EthRpcProxyUrl      string `json:"ethRpcProxyUrl"`
+	EthRpcProxyUser     string `json:"ethRpcProxyUser"`
+	EthRpcProxyPassword string `json:"ethRpcProxyPassword"`
 }
 
 func (c *CreateAccount) Validate(validation *CreateAccountValidation) error {
@@ -128,22 +139,16 @@ func (c *CreateAccount) Validate(validation *CreateAccountValidation) error {
 		return errors.Wrap(ErrCreateAccountInvalidDisplayName, err.Error())
 	}
 
-	if len(c.Password) == 0 {
+	if len(c.Password) == 0 && !validation.AllowEmptyPassword {
 		return ErrCreateAccountInvalidPassword
 	}
 
-	if len(c.CustomizationColor) == 0 {
+	if len(c.CustomizationColor) == 0 && !validation.AllowEmptyCustomizationColor {
 		return ErrCreateAccountInvalidCustomizationColor
 	}
 
 	if len(c.RootDataDir) == 0 {
-		if c.BackupDisabledDataDir == "" {
-			return ErrCreateAccountInvalidRootDataDir
-		}
-		// NOTE: Fallback to old BackupDisabledDataDir field.
-		// Remove this when both desktop and mobile use the new `RootDataDir` field.
-		// Return error if `RootDataDir` is empty.
-		c.RootDataDir = c.BackupDisabledDataDir
+		return ErrCreateAccountInvalidRootDataDir
 	}
 
 	return nil
@@ -151,5 +156,7 @@ func (c *CreateAccount) Validate(validation *CreateAccountValidation) error {
 
 // NOTE: Reasoning for this struct here: https://github.com/status-im/status-go/pull/4980#discussion_r1539219099
 type CreateAccountValidation struct {
-	AllowEmptyDisplayName bool
+	AllowEmptyDisplayName        bool
+	AllowEmptyPassword           bool
+	AllowEmptyCustomizationColor bool
 }

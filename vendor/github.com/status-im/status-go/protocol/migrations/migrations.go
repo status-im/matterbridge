@@ -3,6 +3,8 @@
 // 000001_init.down.db.sql (65B)
 // 000001_init.up.db.sql (2.719kB)
 // 000002_add_last_ens_clock_value.up.sql (77B)
+// 1561059284_add_waku_keys.down.sql (22B)
+// 1561059284_add_waku_keys.up.sql (109B)
 // 1586358095_add_replace.up.sql (224B)
 // 1588665364_add_image_data.up.sql (186B)
 // 1589365189_add_pow_target.up.sql (66B)
@@ -26,6 +28,8 @@
 // 1612870480_add_datasync_id.up.sql (111B)
 // 1614152139_add_communities_request_to_join.up.sql (831B)
 // 1615374373_add_confirmations.up.sql (227B)
+// 1616691080_add_wakuV2_keys.down.sql (24B)
+// 1616691080_add_wakuV2_keys.up.sql (111B)
 // 1617694931_add_notification_center.up.sql (572B)
 // 1618923660_create_pin_messages.up.sql (265B)
 // 1619094007_add_joined_chat_field.up.sql (101B)
@@ -45,6 +49,7 @@
 // 1628280060_create-usermessages-index.sql (80B)
 // 1632303896_modify_contacts_table.up.sql (1.574kB)
 // 1633349838_add_emoji_column_in_chats.up.sql (52B)
+// 1634723014_add_wakuV2_keys.up.sql (125B)
 // 1634831235_add_highlight_column_in_chats.up.sql (62B)
 // 1634896007_add_last_updated_locally_and_removed.up.sql (131B)
 // 1635840039_add_clock_read_at_column_in_chats.up.sql (245B)
@@ -143,6 +148,10 @@
 // 1719906191_add_community_token_version.up.sql (65B)
 // 1720636181_add_community_encryption_keys_requests.up.sql (236B)
 // 1721222369_add_shared_addresses.up.sql (98B)
+// 1721919311_add_installation_id_activity_center.up.sql (87B)
+// 1731902422_payment_requests.up.sql (59B)
+// 1733428521_pinned_messages_add_on_delete_clause.up.sql (635B)
+// 1744392170_add_news_fields_activity_center.up.sql (514B)
 // README.md (554B)
 // doc.go (870B)
 
@@ -269,6 +278,46 @@ func _000002_add_last_ens_clock_valueUpSql() (*asset, error) {
 
 	info := bindataFileInfo{name: "000002_add_last_ens_clock_value.up.sql", size: 77, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
 	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x4d, 0x3, 0x8f, 0xd5, 0x85, 0x83, 0x47, 0xbe, 0xf9, 0x82, 0x7e, 0x81, 0xa4, 0xbd, 0xaa, 0xd5, 0x98, 0x18, 0x5, 0x2d, 0x82, 0x42, 0x3b, 0x3, 0x50, 0xc3, 0x1e, 0x84, 0x35, 0xf, 0xb6, 0x2b}}
+	return a, nil
+}
+
+var __1561059284_add_waku_keysDownSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x72\x09\xf2\x0f\x50\x08\x71\x74\xf2\x71\x55\x28\x4f\xcc\x2e\x8d\xcf\x4e\xad\x2c\xb6\xe6\x02\x04\x00\x00\xff\xff\x4f\x00\xe6\x8e\x16\x00\x00\x00")
+
+func _1561059284_add_waku_keysDownSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1561059284_add_waku_keysDownSql,
+		"1561059284_add_waku_keys.down.sql",
+	)
+}
+
+func _1561059284_add_waku_keysDownSql() (*asset, error) {
+	bytes, err := _1561059284_add_waku_keysDownSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1561059284_add_waku_keys.down.sql", size: 22, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0xe5, 0x2a, 0x7e, 0x9, 0xa3, 0xdd, 0xc6, 0x3, 0xfa, 0xaa, 0x98, 0xa0, 0x26, 0x5e, 0x67, 0x43, 0xe6, 0x20, 0xfd, 0x10, 0xfd, 0x60, 0x89, 0x17, 0x13, 0x87, 0x1b, 0x44, 0x36, 0x79, 0xb6, 0x60}}
+	return a, nil
+}
+
+var __1561059284_add_waku_keysUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x04\xc0\xb1\x0a\xc2\x40\x0c\x06\xe0\xfd\x9e\xe2\x1f\x15\x7c\x03\xa7\xbb\x33\x6a\x30\x26\x12\x52\x6a\xa7\x52\xb4\xa0\xdc\xa8\x22\x7d\xfb\x7e\xd5\x29\x07\x21\x72\x11\xc2\x7f\x6a\xbf\xb1\xcd\xcb\x07\x9b\x04\x3c\x5e\xd3\x77\x7c\x3f\x11\x74\x0f\xdc\x9c\xaf\xd9\x07\x5c\x68\x80\x29\xaa\xe9\x51\xb8\x06\xf8\xa4\xe6\xb4\x4b\x40\x9b\x17\x14\xb1\x02\xb5\x80\x76\x22\x69\x8b\x9e\xe3\x6c\x5d\xc0\xad\xe7\xc3\x3e\xad\x01\x00\x00\xff\xff\xbc\x45\x31\x54\x6d\x00\x00\x00")
+
+func _1561059284_add_waku_keysUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1561059284_add_waku_keysUpSql,
+		"1561059284_add_waku_keys.up.sql",
+	)
+}
+
+func _1561059284_add_waku_keysUpSql() (*asset, error) {
+	bytes, err := _1561059284_add_waku_keysUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1561059284_add_waku_keys.up.sql", size: 109, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0xa9, 0x5c, 0x8, 0x32, 0xef, 0x12, 0x88, 0x21, 0xd, 0x7a, 0x42, 0x4d, 0xe7, 0x2d, 0x6c, 0x99, 0xb6, 0x1, 0xf1, 0xba, 0x2c, 0x40, 0x8d, 0xa9, 0x4b, 0xe6, 0xc4, 0x21, 0xec, 0x47, 0x6b, 0xf7}}
 	return a, nil
 }
 
@@ -732,6 +781,46 @@ func _1615374373_add_confirmationsUpSql() (*asset, error) {
 	return a, nil
 }
 
+var __1616691080_add_wakuv2_keysDownSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x72\x09\xf2\x0f\x50\x08\x71\x74\xf2\x71\x55\x28\x4f\xcc\x2e\x2d\x33\x8a\xcf\x4e\xad\x2c\xb6\xe6\x02\x04\x00\x00\xff\xff\x27\xed\xf4\x49\x18\x00\x00\x00")
+
+func _1616691080_add_wakuv2_keysDownSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1616691080_add_wakuv2_keysDownSql,
+		"1616691080_add_wakuV2_keys.down.sql",
+	)
+}
+
+func _1616691080_add_wakuv2_keysDownSql() (*asset, error) {
+	bytes, err := _1616691080_add_wakuv2_keysDownSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1616691080_add_wakuV2_keys.down.sql", size: 24, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x42, 0xb6, 0x23, 0x70, 0xb8, 0x63, 0x18, 0x61, 0xea, 0x35, 0x6e, 0xae, 0xe9, 0x71, 0x89, 0xa, 0xa5, 0x72, 0xa2, 0x64, 0xaa, 0x45, 0x1, 0xf, 0xfc, 0xee, 0x1b, 0xd9, 0xd2, 0x27, 0xf4, 0xe2}}
+	return a, nil
+}
+
+var __1616691080_add_wakuv2_keysUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x04\xc0\x3d\xcb\xc2\x40\x0c\x07\xf0\xfd\x3e\xc5\x7f\x7c\x1e\x70\x72\x75\xba\x3b\xa3\x06\x63\x22\x21\xa5\x76\x2a\x45\x0b\xca\x8d\xbe\xd1\x6f\xef\xaf\x3a\xe5\x20\x44\x2e\x42\xf8\x4e\xed\xfd\x59\x8f\x6d\x5e\x9e\xf8\x4b\xc0\xf5\x3e\xbd\xc6\xc7\x0d\x41\x97\xc0\xd9\xf9\x94\x7d\xc0\x91\x06\x98\xa2\x9a\xee\x84\x6b\x80\xf7\x6a\x4e\xab\x04\xb4\x79\x41\x11\x2b\x50\x0b\x68\x27\x92\xfe\xd1\x73\x1c\xac\x0b\xb8\xf5\xbc\xdd\xa4\x5f\x00\x00\x00\xff\xff\xae\xa2\xa6\xca\x6f\x00\x00\x00")
+
+func _1616691080_add_wakuv2_keysUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1616691080_add_wakuv2_keysUpSql,
+		"1616691080_add_wakuV2_keys.up.sql",
+	)
+}
+
+func _1616691080_add_wakuv2_keysUpSql() (*asset, error) {
+	bytes, err := _1616691080_add_wakuv2_keysUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1616691080_add_wakuV2_keys.up.sql", size: 111, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x10, 0xf0, 0x97, 0x25, 0xfe, 0x96, 0x2c, 0xa8, 0x62, 0x4a, 0x71, 0x75, 0xff, 0x5f, 0x43, 0x1e, 0x71, 0x53, 0xf1, 0xde, 0xf, 0xcf, 0xcd, 0x87, 0x15, 0x61, 0x9d, 0x25, 0x2e, 0xaf, 0x18, 0x99}}
+	return a, nil
+}
+
 var __1617694931_add_notification_centerUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x8c\x90\x41\x6b\x02\x31\x14\x84\xef\xf9\x15\x73\x54\xf0\xd2\xb3\xf4\x10\x37\x11\x97\xc6\x44\x62\xb6\xd6\xd3\x12\xb2\x91\x06\xba\xeb\x62\x42\xc1\x7f\x5f\x52\x71\xb7\xb0\xa5\xf6\xfa\xde\xf7\x66\xe6\x0d\x15\x86\x6b\x18\xba\x12\x1c\xee\xdd\xa6\x08\xca\x18\x0a\x25\xaa\xad\x84\x75\xce\xf7\xc9\x37\x58\x29\x25\x38\x95\x60\x7c\x4d\x2b\x61\x70\xb2\x1f\xd1\x2f\x49\xb5\x63\xd4\xdc\xef\xf6\xdc\x8c\x07\xcf\x78\x5a\x12\x52\x68\x9e\xf7\x37\x75\xeb\x52\xf8\x0c\xe9\x5a\x3b\xdf\x25\x7f\xa9\xbb\x73\x0a\xa7\xe0\x6c\x0a\xe7\x2e\x62\x46\x80\xd0\xe0\x95\xea\x62\x43\x35\xa4\x32\x90\x95\x10\xd8\xe9\x72\x4b\xf5\x11\x2f\xfc\xb8\x20\x40\x0a\xad\x8f\xc9\xb6\x3d\x4a\x69\x06\x2a\x6f\x7e\xca\xd5\xe9\xda\xfb\x09\x91\x63\xd6\xa3\x47\x1e\x5d\xbc\x1d\x9f\x1b\x3c\xef\x5f\xae\xa9\xd8\xf3\x8c\x35\x21\xb6\x21\x46\xff\x1f\x76\xd2\xd9\xef\x28\x99\xe3\x50\x9a\x8d\xaa\x0c\xb4\x3a\x94\x6c\x6c\xab\x94\x8c\xbf\x4d\xda\x6a\xc2\x2d\x41\x3d\xe8\x2b\xf9\x77\xa5\xb3\x21\xf5\x62\x08\x35\x7f\x64\xf3\x5d\xc8\x43\xe5\x4c\xcd\x97\xe4\x2b\x00\x00\xff\xff\x42\x2c\xa0\x0a\x3c\x02\x00\x00")
 
 func _1617694931_add_notification_centerUpSqlBytes() ([]byte, error) {
@@ -1109,6 +1198,26 @@ func _1633349838_add_emoji_column_in_chatsUpSql() (*asset, error) {
 
 	info := bindataFileInfo{name: "1633349838_add_emoji_column_in_chats.up.sql", size: 52, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
 	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0xcb, 0x33, 0xcb, 0x3b, 0xa9, 0x99, 0x77, 0x6a, 0xea, 0xc4, 0x39, 0xd7, 0xa1, 0x49, 0xa7, 0xdf, 0xff, 0x72, 0xda, 0x34, 0x21, 0x67, 0x66, 0xca, 0x65, 0x46, 0x1, 0xa6, 0x4e, 0xf9, 0x38, 0x86}}
+	return a, nil
+}
+
+var __1634723014_add_wakuv2_keysUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x1c\xcc\xbd\x0a\xc2\x40\x0c\x07\xf0\xfd\x9e\xe2\x3f\x2a\x38\xb9\x3a\xf5\xce\x54\x83\x67\x22\x69\x4a\xdb\xa9\x14\x2d\x28\x37\xfa\x45\xdf\x5e\xf0\x05\x7e\xc9\xa8\x72\x82\x57\x31\x13\xb8\x86\xa8\x83\x7a\x6e\xbc\xc1\x77\x2a\xef\xcf\x76\x2c\xf3\xf2\xc4\x2a\x00\xd7\xfb\xf4\x1a\x1f\x37\x38\xf5\x8e\x8b\xf1\xb9\xb2\x01\x27\x1a\xa0\x82\xa4\x52\x67\x4e\x0e\x3e\x88\x1a\x6d\x02\x50\xe6\x05\x31\x6b\xfc\x93\xd2\xe6\x1c\xd6\xe8\xd8\x8f\xda\x3a\x4c\x3b\xde\xef\xc2\x2f\x00\x00\xff\xff\x56\x21\xd6\x90\x7d\x00\x00\x00")
+
+func _1634723014_add_wakuv2_keysUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1634723014_add_wakuv2_keysUpSql,
+		"1634723014_add_wakuV2_keys.up.sql",
+	)
+}
+
+func _1634723014_add_wakuv2_keysUpSql() (*asset, error) {
+	bytes, err := _1634723014_add_wakuv2_keysUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1634723014_add_wakuV2_keys.up.sql", size: 125, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x7e, 0xe1, 0x7a, 0x1e, 0x6, 0xad, 0x1b, 0x37, 0xdb, 0xea, 0x94, 0xaf, 0xe0, 0x7d, 0xc9, 0xd6, 0xda, 0x52, 0x71, 0x8a, 0x44, 0xb3, 0xa6, 0x7b, 0x1e, 0x90, 0xdb, 0x1e, 0x5a, 0xa, 0x40, 0x26}}
 	return a, nil
 }
 
@@ -3072,6 +3181,86 @@ func _1721222369_add_shared_addressesUpSql() (*asset, error) {
 	return a, nil
 }
 
+var __1721919311_add_installation_id_activity_centerUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x1c\xc9\xc1\x0a\x82\x21\x0c\x07\xf0\x57\xf9\xbf\x47\xa7\x95\xeb\xb4\x0c\x62\x42\x37\x11\x33\x18\xc8\x84\x1c\x41\x6f\x1f\x7c\xe7\x1f\x89\xf2\x03\x4a\x67\x61\xb4\x1e\xf6\xb5\xf8\xd5\x3e\x3c\xc6\xa7\xfa\x0a\x7b\x5b\x6f\x61\xcb\x37\x28\x25\x5c\xee\x52\x6e\x19\xe6\x3b\xda\x9c\x07\x54\x7b\x41\xf9\xa9\x48\x7c\xa5\x22\x8a\x5c\x44\x4e\xff\x00\x00\x00\xff\xff\x97\xb0\x87\x0b\x57\x00\x00\x00")
+
+func _1721919311_add_installation_id_activity_centerUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1721919311_add_installation_id_activity_centerUpSql,
+		"1721919311_add_installation_id_activity_center.up.sql",
+	)
+}
+
+func _1721919311_add_installation_id_activity_centerUpSql() (*asset, error) {
+	bytes, err := _1721919311_add_installation_id_activity_centerUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1721919311_add_installation_id_activity_center.up.sql", size: 87, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0xae, 0x66, 0xa3, 0x93, 0xc8, 0x46, 0xc2, 0xf5, 0x16, 0x26, 0x3f, 0x1c, 0x9b, 0x41, 0x66, 0x4d, 0x96, 0x9c, 0xe2, 0xcb, 0xb9, 0x9, 0x87, 0xa8, 0x43, 0x2b, 0xcd, 0x34, 0x83, 0x90, 0x7f, 0x9f}}
+	return a, nil
+}
+
+var __1731902422_payment_requestsUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x72\xf4\x09\x71\x0d\x52\x08\x71\x74\xf2\x71\x55\x28\x2d\x4e\x2d\x8a\xcf\x4d\x2d\x2e\x4e\x4c\x4f\x2d\x56\x70\x74\x71\x51\x70\xf6\xf7\x09\xf5\xf5\x53\x28\x48\xac\xcc\x4d\xcd\x2b\x89\x2f\x4a\x2d\x2c\x4d\x2d\x2e\x29\x56\x70\xf2\xf1\x77\xb2\x06\x04\x00\x00\xff\xff\xcb\x19\xe3\xfa\x3b\x00\x00\x00")
+
+func _1731902422_payment_requestsUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1731902422_payment_requestsUpSql,
+		"1731902422_payment_requests.up.sql",
+	)
+}
+
+func _1731902422_payment_requestsUpSql() (*asset, error) {
+	bytes, err := _1731902422_payment_requestsUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1731902422_payment_requests.up.sql", size: 59, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0xd2, 0x51, 0x5e, 0x29, 0xc2, 0x0, 0x93, 0x5f, 0xab, 0x6a, 0xdd, 0x47, 0xa7, 0xea, 0x64, 0xd1, 0x9e, 0x10, 0xb8, 0x4e, 0x57, 0x2a, 0x23, 0x24, 0xd0, 0x19, 0x23, 0x34, 0xe8, 0x14, 0xa8, 0xeb}}
+	return a, nil
+}
+
+var __1733428521_pinned_messages_add_on_delete_clauseUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x5c\x91\xcd\x6a\xdc\x40\x10\x84\xef\x7e\x8a\x82\x1c\x72\xb1\xa2\x75\x1c\x42\xd6\x37\x63\x2f\xe4\x60\x92\x80\x7d\x37\x2d\x4d\x4b\xd3\x30\x9a\x16\x33\x2d\x29\xfb\xf6\x61\xb4\x7f\xf1\xde\x84\x7a\xea\xab\xae\xea\xaa\xc2\x0b\xd3\xcc\x30\x2f\x19\x83\xf4\x89\x4c\x34\x82\x87\xd1\xf6\x37\x55\x85\xb7\xf2\x7f\xca\xec\x60\x8a\x86\x41\xff\x3d\x32\x05\x39\x87\xdf\xbf\xf0\xbc\x7b\xd9\xbd\xed\xf0\xf4\xf8\xfa\xf4\xf8\xbc\x2b\x03\xf3\x8c\x51\x62\x64\xf7\x3e\x70\xce\xd4\x73\x86\x51\x13\xb8\x40\x7f\xea\xc2\x33\xa7\x5b\x2c\x8c\x4e\xa7\xe8\x60\x9e\x0c\x62\xf0\xe4\x56\x69\x16\xc7\xe0\xae\xe3\xd6\xa0\x1d\xc6\xc4\x33\x47\x93\xd8\x1f\xa1\xb8\x40\x15\x94\x92\xcc\x8c\x86\x3b\x4d\xbc\xca\x2f\x53\xcf\x7b\x50\x3a\xed\x02\xd3\x9b\x63\xe4\xc2\xba\x0a\xed\xb9\xc8\xf5\xe4\x76\x20\x9d\xa7\x5d\xd2\x01\x0d\x17\x5d\x9a\x22\xa8\x27\x89\x05\xf6\x87\x75\x0c\x7c\x48\x90\x28\x5e\x54\x62\x1a\x41\x21\x31\xb9\x3d\x16\x09\x01\xfe\xd0\x34\x63\x49\x1a\x7b\x34\xec\x69\x16\x4d\x28\x85\xbb\x9e\xd1\x52\xe6\x7c\x8b\x66\xb2\xd2\x4c\x4b\xf1\xb3\xa1\x93\xbf\x07\x36\x53\x96\xb0\xbf\x76\x74\xe2\xca\xab\xb2\xd1\x55\x9a\x8f\x8e\xad\xa6\x54\xca\x3c\x79\x9e\x6f\xbb\x50\x46\x2c\xd7\x58\x19\x65\x63\x24\x0e\x4c\x79\xbd\xd4\x2b\x33\x86\xd2\xaa\xc4\x4e\xd7\x82\x1e\xe0\xcd\xc6\xfc\x50\xd7\xbd\x98\x9f\x9a\x2f\xad\x0e\x75\x36\xb2\x29\x57\x72\xfe\xea\xb5\x1e\xa7\x10\xea\xef\x5f\xef\xef\x3e\x39\xc9\xed\x94\xb3\x68\x7c\x4f\x77\xdb\xcd\xb7\xcd\xfd\x8f\xed\x76\xf3\x2f\x00\x00\xff\xff\x8b\xdb\x44\x54\x7b\x02\x00\x00")
+
+func _1733428521_pinned_messages_add_on_delete_clauseUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1733428521_pinned_messages_add_on_delete_clauseUpSql,
+		"1733428521_pinned_messages_add_on_delete_clause.up.sql",
+	)
+}
+
+func _1733428521_pinned_messages_add_on_delete_clauseUpSql() (*asset, error) {
+	bytes, err := _1733428521_pinned_messages_add_on_delete_clauseUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1733428521_pinned_messages_add_on_delete_clause.up.sql", size: 635, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x36, 0xa, 0x34, 0xd0, 0x47, 0x2a, 0x40, 0xa0, 0xeb, 0x8a, 0x45, 0xe5, 0xb9, 0x27, 0x45, 0x22, 0xa8, 0x12, 0x88, 0xdf, 0x7b, 0xbc, 0x45, 0x6c, 0x45, 0x30, 0x75, 0xe6, 0xa7, 0xe8, 0xbd, 0x5d}}
+	return a, nil
+}
+
+var __1744392170_add_news_fields_activity_centerUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\xac\xce\x31\x0a\x42\x31\x0c\x80\xe1\xdd\x53\xe4\x1e\x4e\xd5\x57\xa7\xf8\x04\x69\xc1\xad\xd4\x18\x25\x58\x53\x69\xa3\xe2\xed\xc5\xdd\x49\x3a\xff\xf0\xf1\x3b\x0c\x7e\x0f\xc1\xad\xd0\x43\x26\x93\xa7\xd8\x3b\x11\xab\x71\x4b\x5a\x4d\xce\x42\xd9\xa4\x6a\x07\x37\x4d\xb0\xde\x61\xdc\xce\xa0\xfc\xea\xc9\xc4\x0a\x43\xf0\x87\x00\x93\xdf\xb8\x88\x01\xe6\x88\xb8\x5c\xfc\x4f\x9e\xb8\x53\x93\xfb\x37\x8e\x85\xa9\xaa\xb1\xda\x58\x54\x6e\xf9\xc2\xe9\xd1\xca\x58\xb6\x88\x5e\xc7\x8b\xa9\xe4\x23\xff\x3c\xfd\x04\x00\x00\xff\xff\x08\x49\x3b\xec\x02\x02\x00\x00")
+
+func _1744392170_add_news_fields_activity_centerUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1744392170_add_news_fields_activity_centerUpSql,
+		"1744392170_add_news_fields_activity_center.up.sql",
+	)
+}
+
+func _1744392170_add_news_fields_activity_centerUpSql() (*asset, error) {
+	bytes, err := _1744392170_add_news_fields_activity_centerUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1744392170_add_news_fields_activity_center.up.sql", size: 514, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0xcc, 0xf5, 0x3a, 0x38, 0xb0, 0x49, 0xe8, 0x3d, 0x66, 0x4d, 0x9a, 0xbd, 0xc3, 0x94, 0xa6, 0x60, 0x57, 0x40, 0x81, 0x60, 0x3c, 0x20, 0x51, 0x55, 0x87, 0x20, 0xec, 0xaa, 0x77, 0xcc, 0x6c, 0x47}}
+	return a, nil
+}
+
 var _readmeMd = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x54\x91\xc1\xce\xd3\x30\x10\x84\xef\x7e\x8a\x91\x7a\x01\xa9\x2a\x8f\xc0\x0d\x71\x82\x03\x48\x1c\xc9\x36\x9e\x36\x96\x1c\x6f\xf0\xae\x93\xe6\xed\x91\xa3\xc2\xdf\xff\x66\xed\xd8\x33\xdf\x78\x4f\xa7\x13\xbe\xea\x06\x57\x6c\x35\x39\x31\xa7\x7b\x15\x4f\x5a\xec\x73\x08\xbf\x08\x2d\x79\x7f\x4a\x43\x5b\x86\x17\xfd\x8c\x21\xea\x56\x5e\x47\x90\x4a\x14\x75\x48\xde\x64\x37\x2c\x6a\x96\xae\x99\x48\x05\xf6\x27\x77\x13\xad\x08\xae\x8a\x51\xe7\x25\xf3\xf1\xa9\x9f\xf9\x58\x58\x2c\xad\xbc\xe0\x8b\x56\xf0\x21\x5d\xeb\x4c\x95\xb3\xae\x84\x60\xd4\xdc\xe6\x82\x5d\x1b\x36\x6d\x39\x62\x92\xf5\xb8\x11\xdb\x92\xd3\x28\xce\xe0\x13\xe1\x72\xcd\x3c\x63\xd4\x65\x87\xae\xac\xe8\xc3\x28\x2e\x67\x44\x66\x3a\x21\x25\xa2\x72\xac\x14\x67\xbc\x84\x9f\x53\x32\x8c\x52\x70\x25\x56\xd6\xfd\x8d\x05\x37\xad\x30\x9d\x9f\xa6\x86\x0f\xcd\x58\x7f\xcf\x34\x93\x3b\xed\x90\x9f\xa4\x1f\xcf\x30\x85\x4d\x07\x58\xaf\x7f\x25\xc4\x9d\xf3\x72\x64\x84\xd0\x7f\xf9\x9b\x3a\x2d\x84\xef\x85\x48\x66\x8d\xd8\x88\x9b\x8c\x8c\x98\x5b\xf6\x74\x14\x4e\x33\x0d\xc9\xe0\x93\x38\xda\x12\xc5\x69\xbd\xe4\xf0\x2e\x7a\x78\x07\x1c\xfe\x13\x9f\x91\x29\x31\x95\x7b\x7f\x62\x59\x37\xb4\xe5\x5e\x25\xfe\x33\xee\xd5\x53\x71\xd6\xda\x3a\xd8\xcb\xde\x2e\xf8\xa1\x90\x55\x53\x0c\xc7\xaa\x0d\xe9\x76\x14\x29\x1c\x7b\x68\xdd\x2f\xe1\x6f\x00\x00\x00\xff\xff\x3c\x0a\xc2\xfe\x2a\x02\x00\x00")
 
 func readmeMdBytes() ([]byte, error) {
@@ -3206,6 +3395,8 @@ var _bindata = map[string]func() (*asset, error){
 	"000001_init.down.db.sql":                                                     _000001_initDownDbSql,
 	"000001_init.up.db.sql":                                                       _000001_initUpDbSql,
 	"000002_add_last_ens_clock_value.up.sql":                                      _000002_add_last_ens_clock_valueUpSql,
+	"1561059284_add_waku_keys.down.sql":                                           _1561059284_add_waku_keysDownSql,
+	"1561059284_add_waku_keys.up.sql":                                             _1561059284_add_waku_keysUpSql,
 	"1586358095_add_replace.up.sql":                                               _1586358095_add_replaceUpSql,
 	"1588665364_add_image_data.up.sql":                                            _1588665364_add_image_dataUpSql,
 	"1589365189_add_pow_target.up.sql":                                            _1589365189_add_pow_targetUpSql,
@@ -3229,6 +3420,8 @@ var _bindata = map[string]func() (*asset, error){
 	"1612870480_add_datasync_id.up.sql":                                           _1612870480_add_datasync_idUpSql,
 	"1614152139_add_communities_request_to_join.up.sql":                           _1614152139_add_communities_request_to_joinUpSql,
 	"1615374373_add_confirmations.up.sql":                                         _1615374373_add_confirmationsUpSql,
+	"1616691080_add_wakuV2_keys.down.sql":                                         _1616691080_add_wakuv2_keysDownSql,
+	"1616691080_add_wakuV2_keys.up.sql":                                           _1616691080_add_wakuv2_keysUpSql,
 	"1617694931_add_notification_center.up.sql":                                   _1617694931_add_notification_centerUpSql,
 	"1618923660_create_pin_messages.up.sql":                                       _1618923660_create_pin_messagesUpSql,
 	"1619094007_add_joined_chat_field.up.sql":                                     _1619094007_add_joined_chat_fieldUpSql,
@@ -3248,6 +3441,7 @@ var _bindata = map[string]func() (*asset, error){
 	"1628280060_create-usermessages-index.sql":                                    _1628280060_createUsermessagesIndexSql,
 	"1632303896_modify_contacts_table.up.sql":                                     _1632303896_modify_contacts_tableUpSql,
 	"1633349838_add_emoji_column_in_chats.up.sql":                                 _1633349838_add_emoji_column_in_chatsUpSql,
+	"1634723014_add_wakuV2_keys.up.sql":                                           _1634723014_add_wakuv2_keysUpSql,
 	"1634831235_add_highlight_column_in_chats.up.sql":                             _1634831235_add_highlight_column_in_chatsUpSql,
 	"1634896007_add_last_updated_locally_and_removed.up.sql":                      _1634896007_add_last_updated_locally_and_removedUpSql,
 	"1635840039_add_clock_read_at_column_in_chats.up.sql":                         _1635840039_add_clock_read_at_column_in_chatsUpSql,
@@ -3346,8 +3540,12 @@ var _bindata = map[string]func() (*asset, error){
 	"1719906191_add_community_token_version.up.sql":                               _1719906191_add_community_token_versionUpSql,
 	"1720636181_add_community_encryption_keys_requests.up.sql":                    _1720636181_add_community_encryption_keys_requestsUpSql,
 	"1721222369_add_shared_addresses.up.sql":                                      _1721222369_add_shared_addressesUpSql,
-	"README.md":                                                                   readmeMd,
-	"doc.go":                                                                      docGo,
+	"1721919311_add_installation_id_activity_center.up.sql":                       _1721919311_add_installation_id_activity_centerUpSql,
+	"1731902422_payment_requests.up.sql":                                          _1731902422_payment_requestsUpSql,
+	"1733428521_pinned_messages_add_on_delete_clause.up.sql":                      _1733428521_pinned_messages_add_on_delete_clauseUpSql,
+	"1744392170_add_news_fields_activity_center.up.sql":                           _1744392170_add_news_fields_activity_centerUpSql,
+	"README.md": readmeMd,
+	"doc.go":    docGo,
 }
 
 // AssetDebug is true if the assets were built with the debug flag enabled.
@@ -3399,6 +3597,8 @@ var _bintree = &bintree{nil, map[string]*bintree{
 	"000001_init.down.db.sql":                                                     {_000001_initDownDbSql, map[string]*bintree{}},
 	"000001_init.up.db.sql":                                                       {_000001_initUpDbSql, map[string]*bintree{}},
 	"000002_add_last_ens_clock_value.up.sql":                                      {_000002_add_last_ens_clock_valueUpSql, map[string]*bintree{}},
+	"1561059284_add_waku_keys.down.sql":                                           {_1561059284_add_waku_keysDownSql, map[string]*bintree{}},
+	"1561059284_add_waku_keys.up.sql":                                             {_1561059284_add_waku_keysUpSql, map[string]*bintree{}},
 	"1586358095_add_replace.up.sql":                                               {_1586358095_add_replaceUpSql, map[string]*bintree{}},
 	"1588665364_add_image_data.up.sql":                                            {_1588665364_add_image_dataUpSql, map[string]*bintree{}},
 	"1589365189_add_pow_target.up.sql":                                            {_1589365189_add_pow_targetUpSql, map[string]*bintree{}},
@@ -3422,6 +3622,8 @@ var _bintree = &bintree{nil, map[string]*bintree{
 	"1612870480_add_datasync_id.up.sql":                                           {_1612870480_add_datasync_idUpSql, map[string]*bintree{}},
 	"1614152139_add_communities_request_to_join.up.sql":                           {_1614152139_add_communities_request_to_joinUpSql, map[string]*bintree{}},
 	"1615374373_add_confirmations.up.sql":                                         {_1615374373_add_confirmationsUpSql, map[string]*bintree{}},
+	"1616691080_add_wakuV2_keys.down.sql":                                         {_1616691080_add_wakuv2_keysDownSql, map[string]*bintree{}},
+	"1616691080_add_wakuV2_keys.up.sql":                                           {_1616691080_add_wakuv2_keysUpSql, map[string]*bintree{}},
 	"1617694931_add_notification_center.up.sql":                                   {_1617694931_add_notification_centerUpSql, map[string]*bintree{}},
 	"1618923660_create_pin_messages.up.sql":                                       {_1618923660_create_pin_messagesUpSql, map[string]*bintree{}},
 	"1619094007_add_joined_chat_field.up.sql":                                     {_1619094007_add_joined_chat_fieldUpSql, map[string]*bintree{}},
@@ -3441,6 +3643,7 @@ var _bintree = &bintree{nil, map[string]*bintree{
 	"1628280060_create-usermessages-index.sql":                                    {_1628280060_createUsermessagesIndexSql, map[string]*bintree{}},
 	"1632303896_modify_contacts_table.up.sql":                                     {_1632303896_modify_contacts_tableUpSql, map[string]*bintree{}},
 	"1633349838_add_emoji_column_in_chats.up.sql":                                 {_1633349838_add_emoji_column_in_chatsUpSql, map[string]*bintree{}},
+	"1634723014_add_wakuV2_keys.up.sql":                                           {_1634723014_add_wakuv2_keysUpSql, map[string]*bintree{}},
 	"1634831235_add_highlight_column_in_chats.up.sql":                             {_1634831235_add_highlight_column_in_chatsUpSql, map[string]*bintree{}},
 	"1634896007_add_last_updated_locally_and_removed.up.sql":                      {_1634896007_add_last_updated_locally_and_removedUpSql, map[string]*bintree{}},
 	"1635840039_add_clock_read_at_column_in_chats.up.sql":                         {_1635840039_add_clock_read_at_column_in_chatsUpSql, map[string]*bintree{}},
@@ -3539,8 +3742,12 @@ var _bintree = &bintree{nil, map[string]*bintree{
 	"1719906191_add_community_token_version.up.sql":                               {_1719906191_add_community_token_versionUpSql, map[string]*bintree{}},
 	"1720636181_add_community_encryption_keys_requests.up.sql":                    {_1720636181_add_community_encryption_keys_requestsUpSql, map[string]*bintree{}},
 	"1721222369_add_shared_addresses.up.sql":                                      {_1721222369_add_shared_addressesUpSql, map[string]*bintree{}},
-	"README.md":                                                                   {readmeMd, map[string]*bintree{}},
-	"doc.go":                                                                      {docGo, map[string]*bintree{}},
+	"1721919311_add_installation_id_activity_center.up.sql":                       {_1721919311_add_installation_id_activity_centerUpSql, map[string]*bintree{}},
+	"1731902422_payment_requests.up.sql":                                          {_1731902422_payment_requestsUpSql, map[string]*bintree{}},
+	"1733428521_pinned_messages_add_on_delete_clause.up.sql":                      {_1733428521_pinned_messages_add_on_delete_clauseUpSql, map[string]*bintree{}},
+	"1744392170_add_news_fields_activity_center.up.sql":                           {_1744392170_add_news_fields_activity_centerUpSql, map[string]*bintree{}},
+	"README.md": {readmeMd, map[string]*bintree{}},
+	"doc.go":    {docGo, map[string]*bintree{}},
 }}
 
 // RestoreAsset restores an asset under the given directory.

@@ -2,7 +2,6 @@ package pathprocessor
 
 import (
 	"context"
-	"fmt"
 	"math/big"
 	"strings"
 
@@ -16,11 +15,15 @@ import (
 	"github.com/status-im/status-go/contracts/ierc1155"
 	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/rpc"
+	"github.com/status-im/status-go/services/utils"
+	walletCommon "github.com/status-im/status-go/services/wallet/common"
+	pathProcessorCommon "github.com/status-im/status-go/services/wallet/router/pathprocessor/common"
+	"github.com/status-im/status-go/services/wallet/wallettypes"
 	"github.com/status-im/status-go/transactions"
 )
 
 type ERC1155TxArgs struct {
-	transactions.SendTxArgs
+	wallettypes.SendTxArgs
 	TokenID   *hexutil.Big   `json:"tokenId"`
 	Recipient common.Address `json:"recipient"`
 	Amount    *hexutil.Big   `json:"amount"`
@@ -36,11 +39,11 @@ func NewERC1155Processor(rpcClient *rpc.Client, transactor transactions.Transact
 }
 
 func createERC1155ErrorResponse(err error) error {
-	return createErrorResponse(ProcessorERC1155Name, err)
+	return createErrorResponse(pathProcessorCommon.ProcessorERC1155Name, err)
 }
 
 func (s *ERC1155Processor) Name() string {
-	return ProcessorERC1155Name
+	return pathProcessorCommon.ProcessorERC1155Name
 }
 
 func (s *ERC1155Processor) AvailableFor(params ProcessorInputParams) (bool, error) {
@@ -48,7 +51,7 @@ func (s *ERC1155Processor) AvailableFor(params ProcessorInputParams) (bool, erro
 }
 
 func (s *ERC1155Processor) CalculateFees(params ProcessorInputParams) (*big.Int, *big.Int, error) {
-	return ZeroBigIntValue, ZeroBigIntValue, nil
+	return walletCommon.ZeroBigIntValue(), walletCommon.ZeroBigIntValue(), nil
 }
 
 func (s *ERC1155Processor) PackTxInputData(params ProcessorInputParams) ([]byte, error) {
@@ -57,9 +60,9 @@ func (s *ERC1155Processor) PackTxInputData(params ProcessorInputParams) ([]byte,
 		return []byte{}, createERC1155ErrorResponse(err)
 	}
 
-	id, success := big.NewInt(0).SetString(params.FromToken.Symbol, 0)
-	if !success {
-		return []byte{}, createERC1155ErrorResponse(fmt.Errorf("failed to convert %s to big.Int", params.FromToken.Symbol))
+	id, err := walletCommon.GetTokenIdFromSymbol(params.FromToken.Symbol)
+	if err != nil {
+		return []byte{}, createERC1155ErrorResponse(err)
 	}
 
 	return abi.Pack("safeTransferFrom",
@@ -71,11 +74,11 @@ func (s *ERC1155Processor) PackTxInputData(params ProcessorInputParams) ([]byte,
 	)
 }
 
-func (s *ERC1155Processor) EstimateGas(params ProcessorInputParams) (uint64, error) {
+func (s *ERC1155Processor) EstimateGas(params ProcessorInputParams, input []byte) (uint64, error) {
 	if params.TestsMode {
 		if params.TestEstimationMap != nil {
 			if val, ok := params.TestEstimationMap[s.Name()]; ok {
-				return val, nil
+				return val.Value, val.Err
 			}
 		}
 		return 0, ErrNoEstimationFound
@@ -88,11 +91,6 @@ func (s *ERC1155Processor) EstimateGas(params ProcessorInputParams) (uint64, err
 
 	value := new(big.Int)
 
-	input, err := s.PackTxInputData(params)
-	if err != nil {
-		return 0, createERC1155ErrorResponse(err)
-	}
-
 	msg := ethereum.CallMsg{
 		From:  params.FromAddr,
 		To:    &params.FromToken.Address,
@@ -104,10 +102,11 @@ func (s *ERC1155Processor) EstimateGas(params ProcessorInputParams) (uint64, err
 	if err != nil {
 		return 0, createERC1155ErrorResponse(err)
 	}
-	increasedEstimation := float64(estimation) * IncreaseEstimatedGasFactor
+	increasedEstimation := float64(estimation) * pathProcessorCommon.IncreaseEstimatedGasFactor
 	return uint64(increasedEstimation), nil
 }
 
+// TODO: remove this struct once mobile switches to the new approach
 func (s *ERC1155Processor) sendOrBuild(sendArgs *MultipathProcessorTxArgs, signerFn bind.SignerFn, lastUsedNonce int64) (tx *ethTypes.Transaction, err error) {
 	ethClient, err := s.rpcClient.EthClient(sendArgs.ChainID)
 	if err != nil {
@@ -121,7 +120,7 @@ func (s *ERC1155Processor) sendOrBuild(sendArgs *MultipathProcessorTxArgs, signe
 
 	var nonce uint64
 	if lastUsedNonce < 0 {
-		nonce, err = s.transactor.NextNonce(s.rpcClient, sendArgs.ChainID, sendArgs.ERC1155TransferTx.From)
+		nonce, err = s.transactor.NextNonce(context.Background(), s.rpcClient, sendArgs.ChainID, sendArgs.ERC1155TransferTx.From)
 		if err != nil {
 			return tx, createERC1155ErrorResponse(err)
 		}
@@ -151,7 +150,7 @@ func (s *ERC1155Processor) sendOrBuild(sendArgs *MultipathProcessorTxArgs, signe
 }
 
 func (s *ERC1155Processor) Send(sendArgs *MultipathProcessorTxArgs, lastUsedNonce int64, verifiedAccount *account.SelectedExtKey) (hash types.Hash, usedNonce uint64, err error) {
-	tx, err := s.sendOrBuild(sendArgs, getSigner(sendArgs.ChainID, sendArgs.ERC1155TransferTx.From, verifiedAccount), lastUsedNonce)
+	tx, err := s.sendOrBuild(sendArgs, utils.GetSigner(sendArgs.ChainID, sendArgs.ERC1155TransferTx.From, verifiedAccount.AccountKey.PrivateKey), lastUsedNonce)
 	if err != nil {
 		return hash, 0, createERC1155ErrorResponse(err)
 	}
@@ -161,6 +160,10 @@ func (s *ERC1155Processor) Send(sendArgs *MultipathProcessorTxArgs, lastUsedNonc
 func (s *ERC1155Processor) BuildTransaction(sendArgs *MultipathProcessorTxArgs, lastUsedNonce int64) (*ethTypes.Transaction, uint64, error) {
 	tx, err := s.sendOrBuild(sendArgs, nil, lastUsedNonce)
 	return tx, tx.Nonce(), err
+}
+
+func (s *ERC1155Processor) BuildTransactionV2(sendArgs *wallettypes.SendTxArgs, lastUsedNonce int64) (*ethTypes.Transaction, uint64, error) {
+	return s.transactor.ValidateAndBuildTransaction(sendArgs.FromChainID, *sendArgs, lastUsedNonce)
 }
 
 func (s *ERC1155Processor) CalculateAmountOut(params ProcessorInputParams) (*big.Int, error) {

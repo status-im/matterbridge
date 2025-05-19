@@ -12,7 +12,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/ethereum/go-ethereum/log"
+	"github.com/status-im/status-go/logutils"
 )
 
 var globalMediaCertificate *tls.Certificate = nil
@@ -75,32 +75,36 @@ func GenerateTLSCert(notBefore, notAfter time.Time, IPAddresses []net.IP, DNSNam
 	return &finalCert, certPem, err
 }
 
-func generateMediaTLSCert() error {
+func generateMediaTLSCert() (*tls.Certificate, string, error) {
 	if globalMediaCertificate != nil {
-		return nil
+		return globalMediaCertificate, globalMediaPem, nil
 	}
 
 	now := time.Now()
 	notBefore := now.Add(-365 * 24 * time.Hour * 100)
 	notAfter := now.Add(365 * 24 * time.Hour * 100)
-	log.Debug("generate media cert", "system time", time.Now().String(), "cert notBefore", notBefore.String(), "cert notAfter", notAfter.String())
+	logutils.ZapLogger().Debug("generate media cert",
+		logutils.UnixTimeMs("system time", time.Now()),
+		logutils.UnixTimeMs("cert notBefore", notBefore),
+		logutils.UnixTimeMs("cert notAfter", notAfter),
+	)
 	finalCert, certPem, err := GenerateTLSCert(notBefore, notAfter, []net.IP{}, []string{Localhost})
 	if err != nil {
-		return err
+		return nil, "", err
 	}
 
 	globalMediaCertificate = finalCert
 	globalMediaPem = string(certPem)
-	return nil
+	return finalCert, globalMediaPem, nil
 }
 
 func PublicMediaTLSCert() (string, error) {
-	err := generateMediaTLSCert()
+	_, pem, err := generateMediaTLSCert()
 	if err != nil {
 		return "", err
 	}
 
-	return globalMediaPem, nil
+	return pem, nil
 }
 
 // ToECDSA takes a []byte of D and uses it to create an ecdsa.PublicKey on the elliptic.P256 curve

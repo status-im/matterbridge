@@ -12,11 +12,11 @@ import (
 
 	"github.com/status-im/status-go/protocol/common"
 	"github.com/status-im/status-go/protocol/protobuf"
-	"github.com/status-im/status-go/protocol/transport"
+	"github.com/status-im/status-go/messaging"
 	v1protocol "github.com/status-im/status-go/protocol/v1"
 )
 
-func (m *Messenger) dispatchToHandler(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter, fromArchive bool) error {
+func (m *Messenger) dispatchToHandler(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter, fromArchive bool) error {
 	switch msg.ApplicationLayer.Type {
 	
            case protobuf.ApplicationMetadataMessage_CHAT_MESSAGE:
@@ -265,15 +265,13 @@ func (m *Messenger) dispatchToHandler(messageState *ReceivedMessageState, protoB
            case protobuf.ApplicationMetadataMessage_COMMUNITY_SHARED_ADDRESSES_RESPONSE:
 		return m.handleCommunitySharedAddressesResponseProtobuf(messageState, protoBytes, msg, filter)
         
-	default:
-		m.logger.Info("protobuf type not found", zap.String("type", string(msg.ApplicationLayer.Type)))
-                return errors.New("protobuf type not found")
 	}
-	return nil
+	m.logger.Info("protobuf type not found", zap.String("type", string(msg.ApplicationLayer.Type)))
+	return errors.New("protobuf type not found")
 }
 
 
-func (m *Messenger) handleChatMessageProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter, fromArchive bool) error {
+func (m *Messenger) handleChatMessageProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter, fromArchive bool) error {
 	m.logger.Info("handling ChatMessage")
 	
 
@@ -291,7 +289,7 @@ func (m *Messenger) handleChatMessageProtobuf(messageState *ReceivedMessageState
 }
 
 
-func (m *Messenger) handleContactUpdateProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleContactUpdateProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling ContactUpdate")
 	
 
@@ -309,7 +307,7 @@ func (m *Messenger) handleContactUpdateProtobuf(messageState *ReceivedMessageSta
 }
 
 
-func (m *Messenger) handleMembershipUpdateMessageProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleMembershipUpdateMessageProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling MembershipUpdateMessage")
 	
 
@@ -327,7 +325,7 @@ func (m *Messenger) handleMembershipUpdateMessageProtobuf(messageState *Received
 }
 
 
-func (m *Messenger) handleSyncPairInstallationProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncPairInstallationProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncPairInstallation")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -350,7 +348,7 @@ func (m *Messenger) handleSyncPairInstallationProtobuf(messageState *ReceivedMes
 }
 
 
-func (m *Messenger) handleRequestAddressForTransactionProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleRequestAddressForTransactionProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling RequestAddressForTransaction")
 	
 
@@ -368,7 +366,7 @@ func (m *Messenger) handleRequestAddressForTransactionProtobuf(messageState *Rec
 }
 
 
-func (m *Messenger) handleAcceptRequestAddressForTransactionProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleAcceptRequestAddressForTransactionProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling AcceptRequestAddressForTransaction")
 	
 
@@ -386,7 +384,7 @@ func (m *Messenger) handleAcceptRequestAddressForTransactionProtobuf(messageStat
 }
 
 
-func (m *Messenger) handleDeclineRequestAddressForTransactionProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleDeclineRequestAddressForTransactionProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling DeclineRequestAddressForTransaction")
 	
 
@@ -404,7 +402,7 @@ func (m *Messenger) handleDeclineRequestAddressForTransactionProtobuf(messageSta
 }
 
 
-func (m *Messenger) handleRequestTransactionProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleRequestTransactionProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling RequestTransaction")
 	
 
@@ -422,7 +420,7 @@ func (m *Messenger) handleRequestTransactionProtobuf(messageState *ReceivedMessa
 }
 
 
-func (m *Messenger) handleSendTransactionProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSendTransactionProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SendTransaction")
 	
 
@@ -440,7 +438,7 @@ func (m *Messenger) handleSendTransactionProtobuf(messageState *ReceivedMessageS
 }
 
 
-func (m *Messenger) handleDeclineRequestTransactionProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleDeclineRequestTransactionProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling DeclineRequestTransaction")
 	
 
@@ -458,7 +456,7 @@ func (m *Messenger) handleDeclineRequestTransactionProtobuf(messageState *Receiv
 }
 
 
-func (m *Messenger) handleSyncInstallationContactV2Protobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncInstallationContactV2Protobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncInstallationContactV2")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -481,7 +479,7 @@ func (m *Messenger) handleSyncInstallationContactV2Protobuf(messageState *Receiv
 }
 
 
-func (m *Messenger) handleSyncInstallationAccountProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncInstallationAccountProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncInstallationAccount")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -504,7 +502,7 @@ func (m *Messenger) handleSyncInstallationAccountProtobuf(messageState *Received
 }
 
 
-func (m *Messenger) handleContactCodeAdvertisementProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleContactCodeAdvertisementProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling ContactCodeAdvertisement")
 	
 
@@ -522,7 +520,7 @@ func (m *Messenger) handleContactCodeAdvertisementProtobuf(messageState *Receive
 }
 
 
-func (m *Messenger) handlePushNotificationRegistrationProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handlePushNotificationRegistrationProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling PushNotificationRegistration")
 	
 
@@ -532,7 +530,7 @@ func (m *Messenger) handlePushNotificationRegistrationProtobuf(messageState *Rec
 }
 
 
-func (m *Messenger) handlePushNotificationRegistrationResponseProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handlePushNotificationRegistrationResponseProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling PushNotificationRegistrationResponse")
 	
 
@@ -550,7 +548,7 @@ func (m *Messenger) handlePushNotificationRegistrationResponseProtobuf(messageSt
 }
 
 
-func (m *Messenger) handlePushNotificationQueryProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handlePushNotificationQueryProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling PushNotificationQuery")
 	
 
@@ -568,7 +566,7 @@ func (m *Messenger) handlePushNotificationQueryProtobuf(messageState *ReceivedMe
 }
 
 
-func (m *Messenger) handlePushNotificationQueryResponseProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handlePushNotificationQueryResponseProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling PushNotificationQueryResponse")
 	
 
@@ -586,7 +584,7 @@ func (m *Messenger) handlePushNotificationQueryResponseProtobuf(messageState *Re
 }
 
 
-func (m *Messenger) handlePushNotificationRequestProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handlePushNotificationRequestProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling PushNotificationRequest")
 	
 
@@ -604,7 +602,7 @@ func (m *Messenger) handlePushNotificationRequestProtobuf(messageState *Received
 }
 
 
-func (m *Messenger) handlePushNotificationResponseProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handlePushNotificationResponseProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling PushNotificationResponse")
 	
 
@@ -622,7 +620,7 @@ func (m *Messenger) handlePushNotificationResponseProtobuf(messageState *Receive
 }
 
 
-func (m *Messenger) handleEmojiReactionProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleEmojiReactionProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling EmojiReaction")
 	
 
@@ -640,7 +638,7 @@ func (m *Messenger) handleEmojiReactionProtobuf(messageState *ReceivedMessageSta
 }
 
 
-func (m *Messenger) handleGroupChatInvitationProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleGroupChatInvitationProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling GroupChatInvitation")
 	
 
@@ -658,7 +656,7 @@ func (m *Messenger) handleGroupChatInvitationProtobuf(messageState *ReceivedMess
 }
 
 
-func (m *Messenger) handleChatIdentityProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleChatIdentityProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling ChatIdentity")
 	
 
@@ -676,7 +674,7 @@ func (m *Messenger) handleChatIdentityProtobuf(messageState *ReceivedMessageStat
 }
 
 
-func (m *Messenger) handleCommunityDescriptionProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleCommunityDescriptionProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling CommunityDescription")
 	
 
@@ -694,7 +692,7 @@ func (m *Messenger) handleCommunityDescriptionProtobuf(messageState *ReceivedMes
 }
 
 
-func (m *Messenger) handleCommunityRequestToJoinProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleCommunityRequestToJoinProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling CommunityRequestToJoin")
 	
 
@@ -712,7 +710,7 @@ func (m *Messenger) handleCommunityRequestToJoinProtobuf(messageState *ReceivedM
 }
 
 
-func (m *Messenger) handlePinMessageProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter, fromArchive bool) error {
+func (m *Messenger) handlePinMessageProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter, fromArchive bool) error {
 	m.logger.Info("handling PinMessage")
 	
 
@@ -730,7 +728,7 @@ func (m *Messenger) handlePinMessageProtobuf(messageState *ReceivedMessageState,
 }
 
 
-func (m *Messenger) handleEditMessageProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleEditMessageProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling EditMessage")
 	
 
@@ -748,7 +746,7 @@ func (m *Messenger) handleEditMessageProtobuf(messageState *ReceivedMessageState
 }
 
 
-func (m *Messenger) handleStatusUpdateProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleStatusUpdateProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling StatusUpdate")
 	
 
@@ -766,7 +764,7 @@ func (m *Messenger) handleStatusUpdateProtobuf(messageState *ReceivedMessageStat
 }
 
 
-func (m *Messenger) handleDeleteMessageProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleDeleteMessageProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling DeleteMessage")
 	
 
@@ -784,7 +782,7 @@ func (m *Messenger) handleDeleteMessageProtobuf(messageState *ReceivedMessageSta
 }
 
 
-func (m *Messenger) handleSyncInstallationCommunityProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncInstallationCommunityProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncInstallationCommunity")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -807,7 +805,7 @@ func (m *Messenger) handleSyncInstallationCommunityProtobuf(messageState *Receiv
 }
 
 
-func (m *Messenger) handleAnonymousMetricBatchProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleAnonymousMetricBatchProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling AnonymousMetricBatch")
 	
 
@@ -825,7 +823,7 @@ func (m *Messenger) handleAnonymousMetricBatchProtobuf(messageState *ReceivedMes
 }
 
 
-func (m *Messenger) handleSyncChatRemovedProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncChatRemovedProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncChatRemoved")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -848,7 +846,7 @@ func (m *Messenger) handleSyncChatRemovedProtobuf(messageState *ReceivedMessageS
 }
 
 
-func (m *Messenger) handleSyncChatMessagesReadProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncChatMessagesReadProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncChatMessagesRead")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -871,7 +869,7 @@ func (m *Messenger) handleSyncChatMessagesReadProtobuf(messageState *ReceivedMes
 }
 
 
-func (m *Messenger) handleBackupProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleBackupProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling Backup")
 	
 
@@ -889,7 +887,7 @@ func (m *Messenger) handleBackupProtobuf(messageState *ReceivedMessageState, pro
 }
 
 
-func (m *Messenger) handleSyncActivityCenterReadProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncActivityCenterReadProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncActivityCenterRead")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -912,7 +910,7 @@ func (m *Messenger) handleSyncActivityCenterReadProtobuf(messageState *ReceivedM
 }
 
 
-func (m *Messenger) handleSyncActivityCenterAcceptedProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncActivityCenterAcceptedProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncActivityCenterAccepted")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -935,7 +933,7 @@ func (m *Messenger) handleSyncActivityCenterAcceptedProtobuf(messageState *Recei
 }
 
 
-func (m *Messenger) handleSyncActivityCenterDismissedProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncActivityCenterDismissedProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncActivityCenterDismissed")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -958,7 +956,7 @@ func (m *Messenger) handleSyncActivityCenterDismissedProtobuf(messageState *Rece
 }
 
 
-func (m *Messenger) handleSyncBookmarkProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncBookmarkProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncBookmark")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -981,7 +979,7 @@ func (m *Messenger) handleSyncBookmarkProtobuf(messageState *ReceivedMessageStat
 }
 
 
-func (m *Messenger) handleSyncClearHistoryProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncClearHistoryProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncClearHistory")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -1004,7 +1002,7 @@ func (m *Messenger) handleSyncClearHistoryProtobuf(messageState *ReceivedMessage
 }
 
 
-func (m *Messenger) handleSyncSettingProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncSettingProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncSetting")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -1027,7 +1025,7 @@ func (m *Messenger) handleSyncSettingProtobuf(messageState *ReceivedMessageState
 }
 
 
-func (m *Messenger) handleCommunityMessageArchiveMagnetlinkProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleCommunityMessageArchiveMagnetlinkProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling CommunityMessageArchiveMagnetlink")
 	
 
@@ -1045,7 +1043,7 @@ func (m *Messenger) handleCommunityMessageArchiveMagnetlinkProtobuf(messageState
 }
 
 
-func (m *Messenger) handleSyncProfilePicturesProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncProfilePicturesProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncProfilePictures")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -1068,7 +1066,7 @@ func (m *Messenger) handleSyncProfilePicturesProtobuf(messageState *ReceivedMess
 }
 
 
-func (m *Messenger) handleSyncAccountProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncAccountProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncAccount")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -1091,7 +1089,7 @@ func (m *Messenger) handleSyncAccountProtobuf(messageState *ReceivedMessageState
 }
 
 
-func (m *Messenger) handleAcceptContactRequestProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleAcceptContactRequestProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling AcceptContactRequest")
 	
 
@@ -1109,7 +1107,7 @@ func (m *Messenger) handleAcceptContactRequestProtobuf(messageState *ReceivedMes
 }
 
 
-func (m *Messenger) handleRetractContactRequestProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleRetractContactRequestProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling RetractContactRequest")
 	
 
@@ -1127,7 +1125,7 @@ func (m *Messenger) handleRetractContactRequestProtobuf(messageState *ReceivedMe
 }
 
 
-func (m *Messenger) handleCommunityRequestToJoinResponseProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleCommunityRequestToJoinResponseProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling CommunityRequestToJoinResponse")
 	
 
@@ -1145,7 +1143,7 @@ func (m *Messenger) handleCommunityRequestToJoinResponseProtobuf(messageState *R
 }
 
 
-func (m *Messenger) handleSyncCommunitySettingsProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncCommunitySettingsProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncCommunitySettings")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -1168,7 +1166,7 @@ func (m *Messenger) handleSyncCommunitySettingsProtobuf(messageState *ReceivedMe
 }
 
 
-func (m *Messenger) handleRequestContactVerificationProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleRequestContactVerificationProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling RequestContactVerification")
 	
 
@@ -1186,7 +1184,7 @@ func (m *Messenger) handleRequestContactVerificationProtobuf(messageState *Recei
 }
 
 
-func (m *Messenger) handleAcceptContactVerificationProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleAcceptContactVerificationProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling AcceptContactVerification")
 	
 
@@ -1204,7 +1202,7 @@ func (m *Messenger) handleAcceptContactVerificationProtobuf(messageState *Receiv
 }
 
 
-func (m *Messenger) handleDeclineContactVerificationProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleDeclineContactVerificationProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling DeclineContactVerification")
 	
 
@@ -1222,7 +1220,7 @@ func (m *Messenger) handleDeclineContactVerificationProtobuf(messageState *Recei
 }
 
 
-func (m *Messenger) handleSyncTrustedUserProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncTrustedUserProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncTrustedUser")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -1245,7 +1243,7 @@ func (m *Messenger) handleSyncTrustedUserProtobuf(messageState *ReceivedMessageS
 }
 
 
-func (m *Messenger) handleSyncVerificationRequestProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncVerificationRequestProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncVerificationRequest")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -1268,7 +1266,7 @@ func (m *Messenger) handleSyncVerificationRequestProtobuf(messageState *Received
 }
 
 
-func (m *Messenger) handleSyncContactRequestDecisionProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncContactRequestDecisionProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncContactRequestDecision")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -1291,7 +1289,7 @@ func (m *Messenger) handleSyncContactRequestDecisionProtobuf(messageState *Recei
 }
 
 
-func (m *Messenger) handleCommunityRequestToLeaveProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleCommunityRequestToLeaveProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling CommunityRequestToLeave")
 	
 
@@ -1309,7 +1307,7 @@ func (m *Messenger) handleCommunityRequestToLeaveProtobuf(messageState *Received
 }
 
 
-func (m *Messenger) handleSyncDeleteForMeMessageProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncDeleteForMeMessageProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncDeleteForMeMessage")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -1332,7 +1330,7 @@ func (m *Messenger) handleSyncDeleteForMeMessageProtobuf(messageState *ReceivedM
 }
 
 
-func (m *Messenger) handleSyncSavedAddressProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncSavedAddressProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncSavedAddress")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -1355,7 +1353,7 @@ func (m *Messenger) handleSyncSavedAddressProtobuf(messageState *ReceivedMessage
 }
 
 
-func (m *Messenger) handleCommunityCancelRequestToJoinProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleCommunityCancelRequestToJoinProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling CommunityCancelRequestToJoin")
 	
 
@@ -1373,7 +1371,7 @@ func (m *Messenger) handleCommunityCancelRequestToJoinProtobuf(messageState *Rec
 }
 
 
-func (m *Messenger) handleCancelContactVerificationProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleCancelContactVerificationProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling CancelContactVerification")
 	
 
@@ -1391,7 +1389,7 @@ func (m *Messenger) handleCancelContactVerificationProtobuf(messageState *Receiv
 }
 
 
-func (m *Messenger) handleSyncKeypairProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncKeypairProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncKeypair")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -1414,7 +1412,7 @@ func (m *Messenger) handleSyncKeypairProtobuf(messageState *ReceivedMessageState
 }
 
 
-func (m *Messenger) handleSyncEnsUsernameDetailProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncEnsUsernameDetailProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncEnsUsernameDetail")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -1437,7 +1435,7 @@ func (m *Messenger) handleSyncEnsUsernameDetailProtobuf(messageState *ReceivedMe
 }
 
 
-func (m *Messenger) handleCommunityEventsMessageProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleCommunityEventsMessageProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling CommunityEventsMessage")
 	
 
@@ -1455,7 +1453,7 @@ func (m *Messenger) handleCommunityEventsMessageProtobuf(messageState *ReceivedM
 }
 
 
-func (m *Messenger) handleCommunityEditSharedAddressesProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleCommunityEditSharedAddressesProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling CommunityEditSharedAddresses")
 	
 
@@ -1473,7 +1471,7 @@ func (m *Messenger) handleCommunityEditSharedAddressesProtobuf(messageState *Rec
 }
 
 
-func (m *Messenger) handleSyncAccountCustomizationColorProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncAccountCustomizationColorProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncAccountCustomizationColor")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -1496,7 +1494,7 @@ func (m *Messenger) handleSyncAccountCustomizationColorProtobuf(messageState *Re
 }
 
 
-func (m *Messenger) handleSyncAccountsPositionsProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncAccountsPositionsProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncAccountsPositions")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -1519,7 +1517,7 @@ func (m *Messenger) handleSyncAccountsPositionsProtobuf(messageState *ReceivedMe
 }
 
 
-func (m *Messenger) handleCommunityPrivilegedUserSyncMessageProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleCommunityPrivilegedUserSyncMessageProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling CommunityPrivilegedUserSyncMessage")
 	
 
@@ -1537,7 +1535,7 @@ func (m *Messenger) handleCommunityPrivilegedUserSyncMessageProtobuf(messageStat
 }
 
 
-func (m *Messenger) handleCommunityShardKeyProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleCommunityShardKeyProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling CommunityShardKey")
 	
 
@@ -1555,7 +1553,7 @@ func (m *Messenger) handleCommunityShardKeyProtobuf(messageState *ReceivedMessag
 }
 
 
-func (m *Messenger) handleSyncChatProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncChatProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncChat")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -1578,7 +1576,7 @@ func (m *Messenger) handleSyncChatProtobuf(messageState *ReceivedMessageState, p
 }
 
 
-func (m *Messenger) handleSyncActivityCenterDeletedProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncActivityCenterDeletedProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncActivityCenterDeleted")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -1601,7 +1599,7 @@ func (m *Messenger) handleSyncActivityCenterDeletedProtobuf(messageState *Receiv
 }
 
 
-func (m *Messenger) handleSyncActivityCenterUnreadProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncActivityCenterUnreadProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncActivityCenterUnread")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -1624,7 +1622,7 @@ func (m *Messenger) handleSyncActivityCenterUnreadProtobuf(messageState *Receive
 }
 
 
-func (m *Messenger) handleSyncActivityCenterCommunityRequestDecisionProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncActivityCenterCommunityRequestDecisionProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncActivityCenterCommunityRequestDecision")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -1647,7 +1645,7 @@ func (m *Messenger) handleSyncActivityCenterCommunityRequestDecisionProtobuf(mes
 }
 
 
-func (m *Messenger) handleSyncTokenPreferencesProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncTokenPreferencesProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncTokenPreferences")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -1670,7 +1668,7 @@ func (m *Messenger) handleSyncTokenPreferencesProtobuf(messageState *ReceivedMes
 }
 
 
-func (m *Messenger) handleCommunityPublicShardInfoProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleCommunityPublicShardInfoProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling CommunityPublicShardInfo")
 	
 
@@ -1688,7 +1686,7 @@ func (m *Messenger) handleCommunityPublicShardInfoProtobuf(messageState *Receive
 }
 
 
-func (m *Messenger) handleSyncCollectiblePreferencesProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncCollectiblePreferencesProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncCollectiblePreferences")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -1711,7 +1709,7 @@ func (m *Messenger) handleSyncCollectiblePreferencesProtobuf(messageState *Recei
 }
 
 
-func (m *Messenger) handleCommunityUserKickedProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleCommunityUserKickedProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling CommunityUserKicked")
 	
 
@@ -1729,7 +1727,7 @@ func (m *Messenger) handleCommunityUserKickedProtobuf(messageState *ReceivedMess
 }
 
 
-func (m *Messenger) handleSyncProfileShowcasePreferencesProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleSyncProfileShowcasePreferencesProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling SyncProfileShowcasePreferences")
 	
 	if !common.IsPubKeyEqual(messageState.CurrentMessageState.PublicKey, &m.identity.PublicKey) {
@@ -1752,7 +1750,7 @@ func (m *Messenger) handleSyncProfileShowcasePreferencesProtobuf(messageState *R
 }
 
 
-func (m *Messenger) handleCommunityPublicStorenodesInfoProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleCommunityPublicStorenodesInfoProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling CommunityPublicStorenodesInfo")
 	
 
@@ -1770,7 +1768,7 @@ func (m *Messenger) handleCommunityPublicStorenodesInfoProtobuf(messageState *Re
 }
 
 
-func (m *Messenger) handleCommunityReevaluatePermissionsRequestProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleCommunityReevaluatePermissionsRequestProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling CommunityReevaluatePermissionsRequest")
 	
 
@@ -1788,7 +1786,7 @@ func (m *Messenger) handleCommunityReevaluatePermissionsRequestProtobuf(messageS
 }
 
 
-func (m *Messenger) handleDeleteCommunityMemberMessagesProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleDeleteCommunityMemberMessagesProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling DeleteCommunityMemberMessages")
 	
 
@@ -1806,7 +1804,7 @@ func (m *Messenger) handleDeleteCommunityMemberMessagesProtobuf(messageState *Re
 }
 
 
-func (m *Messenger) handleCommunityUpdateGrantProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleCommunityUpdateGrantProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling CommunityUpdateGrant")
 	
 
@@ -1824,7 +1822,7 @@ func (m *Messenger) handleCommunityUpdateGrantProtobuf(messageState *ReceivedMes
 }
 
 
-func (m *Messenger) handleCommunityEncryptionKeysRequestProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleCommunityEncryptionKeysRequestProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling CommunityEncryptionKeysRequest")
 	
 
@@ -1842,7 +1840,7 @@ func (m *Messenger) handleCommunityEncryptionKeysRequestProtobuf(messageState *R
 }
 
 
-func (m *Messenger) handleCommunityTokenActionProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleCommunityTokenActionProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling CommunityTokenAction")
 	
 
@@ -1860,7 +1858,7 @@ func (m *Messenger) handleCommunityTokenActionProtobuf(messageState *ReceivedMes
 }
 
 
-func (m *Messenger) handleCommunitySharedAddressesRequestProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleCommunitySharedAddressesRequestProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling CommunitySharedAddressesRequest")
 	
 
@@ -1878,7 +1876,7 @@ func (m *Messenger) handleCommunitySharedAddressesRequestProtobuf(messageState *
 }
 
 
-func (m *Messenger) handleCommunitySharedAddressesResponseProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter transport.Filter) error {
+func (m *Messenger) handleCommunitySharedAddressesResponseProtobuf(messageState *ReceivedMessageState, protoBytes []byte, msg *v1protocol.StatusMessage, filter messaging.ChatFilter) error {
 	m.logger.Info("handling CommunitySharedAddressesResponse")
 	
 

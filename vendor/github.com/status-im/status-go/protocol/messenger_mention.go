@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 
 	"go.uber.org/zap"
 
+	gocommon "github.com/status-im/status-go/common"
 	"github.com/status-im/status-go/logutils"
 
 	"github.com/status-im/status-go/api/multiformat"
@@ -30,6 +32,8 @@ const (
 	charCodeBlock  = "`"
 
 	intUnknown = -1
+
+	suggestionsLimit = 10
 )
 
 var (
@@ -165,6 +169,10 @@ type ChatMentionContext struct {
 	MentionState       *MentionState
 	PreviousText       string // user input text before the last change
 	NewText            string
+
+	CallID       uint64
+	mu           *sync.Mutex
+	LatestCallID uint64
 }
 
 func NewChatMentionContext(chatID string) *ChatMentionContext {
@@ -172,6 +180,7 @@ func NewChatMentionContext(chatID string) *ChatMentionContext {
 		ChatID:             chatID,
 		MentionSuggestions: make(map[string]*MentionableUser),
 		MentionState:       new(MentionState),
+		mu:                 new(sync.Mutex),
 	}
 }
 
@@ -213,7 +222,7 @@ func (m *MentionManager) getMentionableUser(chatID string, pk string) (*Mentiona
 	}
 	user, ok := mentionableUsers[pk]
 	if !ok {
-		return nil, fmt.Errorf("user not found when getting mentionable user, pk: %s", pk)
+		return nil, fmt.Errorf("user not found when getting mentionable user, pk: %s", gocommon.TruncateWithDot(pk))
 	}
 	return user, nil
 }
@@ -222,7 +231,7 @@ func (m *MentionManager) getMentionableUsers(chatID string) (map[string]*Mention
 	mentionableUsers := make(map[string]*MentionableUser)
 	chat, _ := m.allChats.Load(chatID)
 	if chat == nil {
-		return nil, fmt.Errorf("chat not found when getting mentionable users, chatID: %s", chatID)
+		return nil, fmt.Errorf("chat not found when getting mentionable users, chatID: %s", gocommon.TruncateWithDot(chatID))
 	}
 
 	var publicKeys []string
@@ -282,7 +291,7 @@ func (m *MentionManager) addMentionableUser(mentionableUsers map[string]*Mention
 func (m *MentionManager) ReplaceWithPublicKey(chatID, text string) (string, error) {
 	chat, _ := m.allChats.Load(chatID)
 	if chat == nil {
-		return "", fmt.Errorf("chat not found when check mentions, chatID: %s", chatID)
+		return "", fmt.Errorf("chat not found when check mentions, chatID: %s", gocommon.TruncateWithDot(chatID))
 	}
 	mentionableUsers, err := m.mentionableUserGetter.getMentionableUsers(chatID)
 	if err != nil {
@@ -293,11 +302,27 @@ func (m *MentionManager) ReplaceWithPublicKey(chatID, text string) (string, erro
 	return newText, nil
 }
 
-func (m *MentionManager) OnChangeText(chatID, fullText string) (*ChatMentionContext, error) {
+func withCallID(ctx *ChatMentionContext, callID uint64) *ChatMentionContext {
+	result := *ctx
+	result.CallID = callID
+	return &result
+}
+
+func (m *MentionManager) OnChangeText(chatID, fullText string, callID uint64) (*ChatMentionContext, error) {
 	ctx := m.getChatMentionContext(chatID)
+	if callID > 0 {
+		ctx.mu.Lock()
+		if callID <= ctx.LatestCallID {
+			ctx.mu.Unlock()
+			return withCallID(ctx, callID), fmt.Errorf("callID is less than or equal to latestCallID, callID: %d, maxCallID: %d", callID, ctx.LatestCallID)
+		}
+		ctx.LatestCallID = callID
+		ctx.mu.Unlock()
+	}
+
 	diff := diffText(ctx.PreviousText, fullText)
 	if diff == nil {
-		return ctx, nil
+		return withCallID(ctx, callID), nil
 	}
 	ctx.PreviousText = fullText
 	if ctx.MentionState == nil {
@@ -311,11 +336,12 @@ func (m *MentionManager) OnChangeText(chatID, fullText string) (*ChatMentionCont
 
 	atIndexes, err := calculateAtIndexEntries(ctx.MentionState)
 	if err != nil {
-		return ctx, err
+		return withCallID(ctx, callID), err
 	}
 	ctx.MentionState.AtIdxs = atIndexes
 	m.logger.Debug("OnChangeText", zap.String("chatID", chatID), zap.Any("state", ctx.MentionState))
-	return m.calculateSuggestions(chatID, fullText)
+	ctx, err = m.calculateSuggestions(chatID, fullText)
+	return withCallID(ctx, callID), err
 }
 
 func (m *MentionManager) calculateSuggestions(chatID, fullText string) (*ChatMentionContext, error) {
@@ -361,7 +387,7 @@ func (m *MentionManager) calculateSuggestionsWithMentionableUsers(chatID string,
 	case textOperationReplace:
 		end = state.Start + len([]rune(state.NewText))
 	default:
-		m.logger.Error("calculateSuggestionsWithMentionableUsers: unknown textOperation", zap.String("chatID", chatID), zap.String("fullText", fullText), zap.Any("state", state))
+		m.logger.Error("calculateSuggestionsWithMentionableUsers: unknown textOperation", zap.String("chatID", gocommon.TruncateWithDot(chatID)), zap.Any("state", state))
 	}
 
 	atSignIdx := lastIndexOfAtSign(fullText, end)
@@ -370,7 +396,7 @@ func (m *MentionManager) calculateSuggestionsWithMentionableUsers(chatID string,
 		searchedText := strings.ToLower(subs(fullText, atSignIdx+1, end))
 		m.logger.Debug("calculateSuggestionsWithMentionableUsers", zap.Int("atSignIdx", atSignIdx), zap.String("searchedText", searchedText), zap.String("fullText", fullText), zap.Any("state", state), zap.Int("end", end))
 		if end-atSignIdx <= 100 {
-			suggestions = getUserSuggestions(mentionableUsers, searchedText, -1)
+			suggestions = getUserSuggestions(mentionableUsers, searchedText, suggestionsLimit)
 		}
 	}
 
@@ -401,7 +427,7 @@ func (m *MentionManager) SelectMention(chatID, text, primaryName, publicKey stri
 
 	ctx.NewText = string(tr[:atSignIdx+1]) + primaryName + space + string(tr[mentionEnd:])
 
-	ctx, err := m.OnChangeText(chatID, ctx.NewText)
+	_, err := m.OnChangeText(chatID, ctx.NewText, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -729,7 +755,7 @@ func matchMention(text string, users map[string]*MentionableUser, mentionKeyIdx 
 			searchedText = string(tt[:lastChar])
 		}
 
-		userSuggestions := getUserSuggestions(users, searchedText, -1)
+		userSuggestions := getUserSuggestions(users, searchedText, suggestionsLimit)
 		userSuggestionsCnt := len(userSuggestions)
 		switch {
 		case userSuggestionsCnt == 0:

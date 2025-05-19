@@ -205,10 +205,9 @@ func (store *WakuStore) queryFrom(ctx context.Context, historyRequest *pb.Histor
 
 	stream, err := store.h.NewStream(ctx, selectedPeer, StoreID_v20beta4)
 	if err != nil {
-		logger.Error("creating stream to peer", zap.Error(err))
 		store.metrics.RecordError(dialFailure)
-		if ps, ok := store.h.Peerstore().(peerstore.WakuPeerstore); ok {
-			ps.AddConnFailure(peer.AddrInfo{ID: selectedPeer})
+		if store.pm != nil {
+			store.pm.HandleDialError(err, selectedPeer)
 		}
 		return nil, err
 	}
@@ -311,7 +310,7 @@ func (store *WakuStore) Query(ctx context.Context, query Query, opts ...HistoryR
 
 		//Add Peer to peerstore.
 		if store.pm != nil && params.peerAddr != nil {
-			pData, err := store.pm.AddPeer(params.peerAddr, peerstore.Static, pubsubTopics, StoreID_v20beta4)
+			pData, err := store.pm.AddPeer([]multiaddr.Multiaddr{params.peerAddr}, peerstore.Static, pubsubTopics, StoreID_v20beta4)
 			if err != nil {
 				return nil, err
 			}

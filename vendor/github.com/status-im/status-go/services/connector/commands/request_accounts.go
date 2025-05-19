@@ -1,6 +1,8 @@
 package commands
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 
 	"github.com/status-im/status-go/multiaccounts/accounts"
@@ -16,7 +18,7 @@ var (
 
 type RequestAccountsCommand struct {
 	ClientHandler ClientSideHandlerInterface
-	AccountsCommand
+	Db            *sql.DB
 }
 
 type RawAccountsResponse struct {
@@ -25,7 +27,7 @@ type RawAccountsResponse struct {
 	Result  []accounts.Account `json:"result"`
 }
 
-func (c *RequestAccountsCommand) Execute(request RPCRequest) (interface{}, error) {
+func (c *RequestAccountsCommand) Execute(ctx context.Context, request RPCRequest) (interface{}, error) {
 	err := request.Validate()
 	if err != nil {
 		return "", err
@@ -60,7 +62,7 @@ func (c *RequestAccountsCommand) Execute(request RPCRequest) (interface{}, error
 		if err != nil {
 			return "", err
 		}
-		signal.SendConnectorDAppPermissionGranted(connectorDApp)
+		signal.SendConnectorDAppPermissionGranted(connectorDApp, account, []uint64{chainID})
 	}
 
 	return FormatAccountAddressToResponse(dApp.SharedAccount), nil

@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sync"
 
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
+	libp2pPeerstore "github.com/libp2p/go-libp2p/core/peerstore"
 	libp2pProtocol "github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/libp2p/go-msgio/pbio"
 	"github.com/waku-org/go-waku/logging"
@@ -19,6 +21,7 @@ import (
 	"github.com/waku-org/go-waku/waku/v2/protocol/store/pb"
 	"github.com/waku-org/go-waku/waku/v2/timesource"
 	"go.uber.org/zap"
+	"golang.org/x/time/rate"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -49,8 +52,8 @@ type StoreError struct {
 }
 
 // NewStoreError creates a new instance of StoreError
-func NewStoreError(code int, message string) StoreError {
-	return StoreError{
+func NewStoreError(code int, message string) *StoreError {
+	return &StoreError{
 		Code:    code,
 		Message: message,
 	}
@@ -69,14 +72,20 @@ type WakuStore struct {
 	timesource timesource.Timesource
 	log        *zap.Logger
 	pm         *peermanager.PeerManager
+
+	defaultRatelimit rate.Limit
+	rateLimiters     map[peer.ID]*rate.Limiter
+	rateLimitersMux  sync.Mutex
 }
 
 // NewWakuStore is used to instantiate a StoreV3 client
-func NewWakuStore(pm *peermanager.PeerManager, timesource timesource.Timesource, log *zap.Logger) *WakuStore {
+func NewWakuStore(pm *peermanager.PeerManager, timesource timesource.Timesource, log *zap.Logger, defaultRatelimit rate.Limit) *WakuStore {
 	s := new(WakuStore)
 	s.log = log.Named("store-client")
 	s.timesource = timesource
 	s.pm = pm
+	s.defaultRatelimit = defaultRatelimit
+	s.rateLimiters = make(map[peer.ID]*rate.Limiter)
 
 	if pm != nil {
 		pm.RegisterWakuProtocol(StoreQueryID_v300, StoreENRField)
@@ -93,7 +102,7 @@ func (s *WakuStore) SetHost(h host.Host) {
 // Request is used to send a store query. This function requires understanding how to prepare a store query
 // and most of the time you can use `Query`, `QueryByHash` and `Exists` instead, as they provide
 // a simpler API
-func (s *WakuStore) Request(ctx context.Context, criteria Criteria, opts ...RequestOption) (*Result, error) {
+func (s *WakuStore) Request(ctx context.Context, criteria Criteria, opts ...RequestOption) (Result, error) {
 	params := new(Parameters)
 
 	optList := DefaultOptions()
@@ -171,12 +180,45 @@ func (s *WakuStore) Request(ctx context.Context, criteria Criteria, opts ...Requ
 		return nil, err
 	}
 
-	response, err := s.queryFrom(ctx, storeRequest, params.selectedPeer)
+	response, err := s.queryFrom(ctx, storeRequest, params)
 	if err != nil {
 		return nil, err
 	}
 
-	result := &Result{
+	result := &resultImpl{
+		store:         s,
+		messages:      response.Messages,
+		storeRequest:  storeRequest,
+		storeResponse: response,
+		peerID:        params.selectedPeer,
+		cursor:        response.PaginationCursor,
+	}
+
+	return result, nil
+}
+
+func (s *WakuStore) RequestRaw(ctx context.Context, peerInfo peer.AddrInfo, storeRequest *pb.StoreQueryRequest) (Result, error) {
+	err := storeRequest.Validate()
+	if err != nil {
+		return nil, err
+	}
+
+	var params Parameters
+	params.peerAddr = peerInfo.Addrs
+	params.selectedPeer = peerInfo.ID
+	if len(params.peerAddr) == 0 || params.selectedPeer == "" {
+		return nil, ErrMustSelectPeer
+	}
+
+	//Add Peer to peerstore.
+	s.h.Peerstore().AddAddrs(peerInfo.ID, peerInfo.Addrs, libp2pPeerstore.AddressTTL)
+
+	response, err := s.queryFrom(ctx, storeRequest, &params)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &resultImpl{
 		store:         s,
 		messages:      response.Messages,
 		storeRequest:  storeRequest,
@@ -189,12 +231,12 @@ func (s *WakuStore) Request(ctx context.Context, criteria Criteria, opts ...Requ
 }
 
 // Query retrieves all the messages that match a criteria. Use the options to indicate whether to return the message themselves or not.
-func (s *WakuStore) Query(ctx context.Context, criteria FilterCriteria, opts ...RequestOption) (*Result, error) {
+func (s *WakuStore) Query(ctx context.Context, criteria FilterCriteria, opts ...RequestOption) (Result, error) {
 	return s.Request(ctx, criteria, opts...)
 }
 
 // Query retrieves all the messages with specific message hashes
-func (s *WakuStore) QueryByHash(ctx context.Context, messageHashes []wpb.MessageHash, opts ...RequestOption) (*Result, error) {
+func (s *WakuStore) QueryByHash(ctx context.Context, messageHashes []wpb.MessageHash, opts ...RequestOption) (Result, error) {
 	return s.Request(ctx, MessageHashCriteria{messageHashes}, opts...)
 }
 
@@ -208,31 +250,42 @@ func (s *WakuStore) Exists(ctx context.Context, messageHash wpb.MessageHash, opt
 		return false, err
 	}
 
-	return len(result.messages) != 0, nil
+	return len(result.Messages()) != 0, nil
 }
 
-func (s *WakuStore) next(ctx context.Context, r *Result) (*Result, error) {
+func (s *WakuStore) next(ctx context.Context, r Result, opts ...RequestOption) (*resultImpl, error) {
 	if r.IsComplete() {
-		return &Result{
+		return &resultImpl{
 			store:         s,
 			messages:      nil,
 			cursor:        nil,
-			storeRequest:  r.storeRequest,
-			storeResponse: r.storeResponse,
+			storeRequest:  r.Query(),
+			storeResponse: r.Response(),
 			peerID:        r.PeerID(),
 		}, nil
 	}
 
-	storeRequest := proto.Clone(r.storeRequest).(*pb.StoreQueryRequest)
+	params := new(Parameters)
+	params.selectedPeer = r.PeerID()
+	optList := DefaultOptions()
+	optList = append(optList, opts...)
+	for _, opt := range optList {
+		err := opt(params)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	storeRequest := proto.Clone(r.Query()).(*pb.StoreQueryRequest)
 	storeRequest.RequestId = hex.EncodeToString(protocol.GenerateRequestID())
 	storeRequest.PaginationCursor = r.Cursor()
 
-	response, err := s.queryFrom(ctx, storeRequest, r.PeerID())
+	response, err := s.queryFrom(ctx, storeRequest, params)
 	if err != nil {
 		return nil, err
 	}
 
-	result := &Result{
+	result := &resultImpl{
 		store:         s,
 		messages:      response.Messages,
 		storeRequest:  storeRequest,
@@ -245,16 +298,29 @@ func (s *WakuStore) next(ctx context.Context, r *Result) (*Result, error) {
 
 }
 
-func (s *WakuStore) queryFrom(ctx context.Context, storeRequest *pb.StoreQueryRequest, selectedPeer peer.ID) (*pb.StoreQueryResponse, error) {
-	logger := s.log.With(logging.HostID("peer", selectedPeer), zap.String("requestId", hex.EncodeToString([]byte(storeRequest.RequestId))))
+func (s *WakuStore) queryFrom(ctx context.Context, storeRequest *pb.StoreQueryRequest, params *Parameters) (*pb.StoreQueryResponse, error) {
+	logger := s.log.With(logging.HostID("peer", params.selectedPeer), zap.String("requestId", storeRequest.RequestId))
 
 	logger.Debug("sending store request")
 
-	stream, err := s.h.NewStream(ctx, selectedPeer, StoreQueryID_v300)
+	if !params.skipRatelimit {
+		s.rateLimitersMux.Lock()
+		rateLimiter, ok := s.rateLimiters[params.selectedPeer]
+		if !ok {
+			rateLimiter = rate.NewLimiter(s.defaultRatelimit, 1)
+			s.rateLimiters[params.selectedPeer] = rateLimiter
+		}
+		s.rateLimitersMux.Unlock()
+		err := rateLimiter.Wait(ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	stream, err := s.h.NewStream(ctx, params.selectedPeer, StoreQueryID_v300)
 	if err != nil {
-		logger.Error("creating stream to peer", zap.Error(err))
-		if ps, ok := s.h.Peerstore().(peerstore.WakuPeerstore); ok {
-			ps.AddConnFailure(peer.AddrInfo{ID: selectedPeer})
+		if s.pm != nil {
+			s.pm.HandleDialError(err, params.selectedPeer)
 		}
 		return nil, err
 	}
@@ -289,7 +355,7 @@ func (s *WakuStore) queryFrom(ctx context.Context, storeRequest *pb.StoreQueryRe
 
 	if storeResponse.GetStatusCode() != ok {
 		err := NewStoreError(int(storeResponse.GetStatusCode()), storeResponse.GetStatusDesc())
-		return nil, &err
+		return nil, err
 	}
 	return storeResponse, nil
 }

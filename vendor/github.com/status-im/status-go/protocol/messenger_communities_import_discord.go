@@ -13,15 +13,16 @@ import (
 	"github.com/meirf/gopart"
 	"go.uber.org/zap"
 
+	gocommon "github.com/status-im/status-go/common"
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/images"
+	"github.com/status-im/status-go/messaging"
 	"github.com/status-im/status-go/protocol/common"
 	"github.com/status-im/status-go/protocol/communities"
 	"github.com/status-im/status-go/protocol/discord"
 	"github.com/status-im/status-go/protocol/protobuf"
 	"github.com/status-im/status-go/protocol/requests"
-	"github.com/status-im/status-go/protocol/transport"
 	v1protocol "github.com/status-im/status-go/protocol/v1"
 )
 
@@ -125,6 +126,7 @@ func (m *Messenger) ExtractDiscordChannelsAndCategories(filesToImport []string) 
 
 func (m *Messenger) RequestExtractDiscordChannelsAndCategories(filesToImport []string) {
 	go func() {
+		defer gocommon.LogOnPanic()
 		response, errors := m.ExtractDiscordChannelsAndCategories(filesToImport)
 		m.config.messengerSignalsHandler.DiscordCategoriesAndChannelsExtracted(
 			response.DiscordCategories,
@@ -412,6 +414,7 @@ func (m *Messenger) startPublishImportProgressInterval(c chan *discord.ImportPro
 	var currentProgress *discord.ImportProgress
 
 	go func() {
+		defer gocommon.LogOnPanic()
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 
@@ -451,6 +454,7 @@ func (m *Messenger) startPublishImportChannelProgressInterval(c chan *discord.Im
 	var currentProgress *discord.ImportProgress
 
 	go func() {
+		defer gocommon.LogOnPanic()
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 
@@ -507,6 +511,7 @@ func createCommunityChannelForImport(request *requests.ImportDiscordChannel) *pr
 
 func (m *Messenger) RequestImportDiscordChannel(request *requests.ImportDiscordChannel) {
 	go func() {
+		defer gocommon.LogOnPanic()
 		totalImportChunkCount := len(request.FilesToImport)
 
 		progressUpdates := make(chan *discord.ImportProgress)
@@ -789,6 +794,7 @@ func (m *Messenger) RequestImportDiscordChannel(request *requests.ImportDiscordC
 			for id, author := range authorProfilesToSave {
 				wg.Add(1)
 				go func(id string, author *protobuf.DiscordMessageAuthor) {
+					defer gocommon.LogOnPanic()
 					defer wg.Done()
 
 					m.logger.Debug(fmt.Sprintf("downloading asset %d/%d", assetCounter.Value()+1, totalAssetsCount))
@@ -842,6 +848,7 @@ func (m *Messenger) RequestImportDiscordChannel(request *requests.ImportDiscordC
 				attachments := messageAttachmentsToDownload[idxRange.Low:idxRange.High]
 				wg.Add(1)
 				go func(attachments []*protobuf.DiscordMessageAttachment) {
+					defer gocommon.LogOnPanic()
 					defer wg.Done()
 					for ii, attachment := range attachments {
 
@@ -924,7 +931,7 @@ func (m *Messenger) RequestImportDiscordChannel(request *requests.ImportDiscordC
 				importProgress.UpdateTaskProgress(discord.DownloadAssetsTask, progressValue)
 			}
 
-			_, err := m.transport.JoinPublic(newChat.ID)
+			_, err := m.messaging.JoinPublicChat(newChat.ID)
 			if err != nil {
 				m.logger.Error("failed to load filter for chat", zap.Error(err))
 				continue
@@ -1018,7 +1025,7 @@ func (m *Messenger) RequestImportDiscordChannel(request *requests.ImportDiscordC
 
 func (m *Messenger) RequestImportDiscordCommunity(request *requests.ImportDiscordCommunity) {
 	go func() {
-
+		defer gocommon.LogOnPanic()
 		totalImportChunkCount := len(request.FilesToImport)
 
 		progressUpdates := make(chan *discord.ImportProgress)
@@ -1561,6 +1568,7 @@ func (m *Messenger) RequestImportDiscordCommunity(request *requests.ImportDiscor
 			for id, author := range authorProfilesToSave {
 				wg.Add(1)
 				go func(id string, author *protobuf.DiscordMessageAuthor) {
+					defer gocommon.LogOnPanic()
 					defer wg.Done()
 
 					m.logger.Debug(fmt.Sprintf("downloading asset %d/%d", assetCounter.Value()+1, totalAssetsCount))
@@ -1612,6 +1620,7 @@ func (m *Messenger) RequestImportDiscordCommunity(request *requests.ImportDiscor
 				attachments := messageAttachmentsToDownload[idxRange.Low:idxRange.High]
 				wg.Add(1)
 				go func(attachments []*protobuf.DiscordMessageAttachment) {
+					defer gocommon.LogOnPanic()
 					defer wg.Done()
 					for ii, attachment := range attachments {
 
@@ -1694,7 +1703,7 @@ func (m *Messenger) RequestImportDiscordCommunity(request *requests.ImportDiscor
 				importProgress.UpdateTaskProgress(discord.DownloadAssetsTask, progressValue)
 			}
 
-			_, err := m.transport.JoinPublic(processedChannelIds[channel.Channel.ID])
+			_, err := m.messaging.JoinPublicChat(processedChannelIds[channel.Channel.ID])
 			if err != nil {
 				m.logger.Error("failed to load filter for chat", zap.Error(err))
 				continue
@@ -1785,7 +1794,7 @@ func (m *Messenger) RequestImportDiscordCommunity(request *requests.ImportDiscor
 		}
 
 		// Init the community filter so we can receive messages on the community
-		_, err = m.InitCommunityFilters([]transport.CommunityFilterToInitialize{{
+		_, err = m.InitCommunityFilters(messaging.CommunitiesToInitialize{{
 			Shard:   discordCommunity.Shard(),
 			PrivKey: discordCommunity.PrivateKey(),
 		}})
@@ -1806,7 +1815,7 @@ func (m *Messenger) RequestImportDiscordCommunity(request *requests.ImportDiscor
 			return
 		}
 
-		_, err = m.transport.InitPublicFilters(m.DefaultFilters(discordCommunity))
+		_, err = m.messaging.InitPublicChats(m.DefaultFilters(discordCommunity))
 		if err != nil {
 			m.cleanUpImport(communityID)
 			importProgress.AddTaskError(discord.InitCommunityTask, discord.Error(err.Error()))
@@ -1825,7 +1834,7 @@ func (m *Messenger) RequestImportDiscordCommunity(request *requests.ImportDiscor
 			return
 		}
 
-		filters := m.transport.Filters()
+		filters := m.messaging.ChatFilters()
 		_, err = m.scheduleSyncFilters(filters)
 		if err != nil {
 			m.cleanUpImport(communityID)

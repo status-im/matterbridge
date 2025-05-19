@@ -10,6 +10,7 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/multiformats/go-multiaddr"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/suite"
 	"github.com/waku-org/go-waku/tests"
@@ -22,6 +23,7 @@ import (
 	"github.com/waku-org/go-waku/waku/v2/timesource"
 	"github.com/waku-org/go-waku/waku/v2/utils"
 	"go.uber.org/zap"
+	"golang.org/x/time/rate"
 )
 
 type LightNodeData struct {
@@ -47,7 +49,7 @@ type FilterTestSuite struct {
 	ctx              context.Context
 	ctxCancel        context.CancelFunc
 	wg               *sync.WaitGroup
-	contentFilter    protocol.ContentFilter
+	ContentFilter    protocol.ContentFilter
 	subDetails       []*subscription.SubscriptionDetails
 
 	Log *zap.Logger
@@ -63,7 +65,7 @@ type WakuMsg struct {
 }
 
 func (s *FilterTestSuite) SetupTest() {
-	log := utils.Logger() //.Named("filterv2-test")
+	log := utils.Logger()
 	s.Log = log
 
 	s.Log.Info("SetupTest()")
@@ -101,7 +103,7 @@ func (s *FilterTestSuite) TearDownTest() {
 
 func (s *FilterTestSuite) ConnectToFullNode(h1 *WakuFilterLightNode, h2 *WakuFilterFullNode) {
 	mAddr := tests.GetAddr(h2.h)
-	_, err := h1.pm.AddPeer(mAddr, wps.Static, []string{s.TestTopic}, FilterSubscribeID_v20beta1)
+	_, err := h1.pm.AddPeer([]multiaddr.Multiaddr{mAddr}, wps.Static, []string{s.TestTopic}, FilterSubscribeID_v20beta1)
 	s.Log.Info("add peer", zap.Stringer("mAddr", mAddr))
 	s.Require().NoError(err)
 }
@@ -133,7 +135,7 @@ func (s *FilterTestSuite) GetWakuFilterFullNode(topic string, withRegisterAll bo
 
 	nodeData := s.GetWakuRelay(topic)
 
-	node2Filter := NewWakuFilterFullNode(timesource.NewDefaultClock(), prometheus.DefaultRegisterer, s.Log)
+	node2Filter := NewWakuFilterFullNode(timesource.NewDefaultClock(), prometheus.DefaultRegisterer, s.Log, WithFullNodeRateLimiter(rate.Inf, 0))
 	node2Filter.SetHost(nodeData.FullNodeHost)
 
 	var sub *relay.Subscription
@@ -166,7 +168,7 @@ func (s *FilterTestSuite) GetWakuFilterLightNode() LightNodeData {
 	b := relay.NewBroadcaster(10)
 	s.Require().NoError(b.Start(context.Background()))
 	pm := peermanager.NewPeerManager(5, 5, nil, nil, true, s.Log)
-	filterPush := NewWakuFilterLightNode(b, pm, timesource.NewDefaultClock(), onlinechecker.NewDefaultOnlineChecker(true), prometheus.DefaultRegisterer, s.Log)
+	filterPush := NewWakuFilterLightNode(b, pm, timesource.NewDefaultClock(), onlinechecker.NewDefaultOnlineChecker(true), prometheus.DefaultRegisterer, s.Log, WithLightNodeRateLimiter(rate.Inf, 0))
 	filterPush.SetHost(host)
 	pm.SetHost(host)
 	return LightNodeData{filterPush, host}
@@ -192,7 +194,7 @@ func (s *FilterTestSuite) waitForMsgFromChan(msg *WakuMsg, ch chan *protocol.Env
 		defer s.wg.Done()
 		select {
 		case env := <-ch:
-			for _, topic := range s.contentFilter.ContentTopicsList() {
+			for _, topic := range s.ContentFilter.ContentTopicsList() {
 				if topic == env.Message().GetContentTopic() {
 					msgFound = true
 				}
@@ -308,8 +310,8 @@ func (s *FilterTestSuite) subscribe(pubsubTopic string, contentTopic string, pee
 	for _, sub := range s.subDetails {
 		if sub.ContentFilter.PubsubTopic == pubsubTopic {
 			sub.Add(contentTopic)
-			s.contentFilter = sub.ContentFilter
-			subDetails, err := s.LightNode.Subscribe(s.ctx, s.contentFilter, WithPeer(peer))
+			s.ContentFilter = sub.ContentFilter
+			subDetails, err := s.LightNode.Subscribe(s.ctx, s.ContentFilter, WithPeer(peer))
 			s.subDetails = subDetails
 			s.Require().NoError(err)
 			return
@@ -317,7 +319,7 @@ func (s *FilterTestSuite) subscribe(pubsubTopic string, contentTopic string, pee
 	}
 
 	s.subDetails = s.getSub(pubsubTopic, contentTopic, peer)
-	s.contentFilter = s.subDetails[0].ContentFilter
+	s.ContentFilter = s.subDetails[0].ContentFilter
 }
 
 func (s *FilterTestSuite) unsubscribe(pubsubTopic string, contentTopic string, peer peer.ID) []*subscription.SubscriptionDetails {
@@ -331,7 +333,7 @@ func (s *FilterTestSuite) unsubscribe(pubsubTopic string, contentTopic string, p
 			} else {
 				sub.Remove(contentTopic)
 			}
-			s.contentFilter = sub.ContentFilter
+			s.ContentFilter = sub.ContentFilter
 		}
 	}
 

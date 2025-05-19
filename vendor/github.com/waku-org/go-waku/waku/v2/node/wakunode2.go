@@ -193,7 +193,6 @@ func New(opts ...WakuNodeOption) (*WakuNode, error) {
 	w.wakuFlag = enr.NewWakuEnrBitfield(w.opts.enableLightPush, w.opts.enableFilterFullNode, w.opts.enableStore, w.opts.enableRelay)
 	w.circuitRelayNodes = make(chan peer.AddrInfo)
 	w.metrics = newMetrics(params.prometheusReg)
-
 	w.metrics.RecordVersion(Version, GitCommit)
 
 	// Setup peerstore wrapper
@@ -214,6 +213,7 @@ func New(opts ...WakuNodeOption) (*WakuNode, error) {
 		func(ctx context.Context, numPeers int) <-chan peer.AddrInfo {
 			r := make(chan peer.AddrInfo)
 			go func() {
+				defer utils.LogOnPanic()
 				defer close(r)
 				for ; numPeers != 0; numPeers-- {
 					select {
@@ -292,7 +292,7 @@ func New(opts ...WakuNodeOption) (*WakuNode, error) {
 	w.filterLightNode = filter.NewWakuFilterLightNode(w.bcaster, w.peermanager, w.timesource, w.opts.onlineChecker, w.opts.prometheusReg, w.log)
 	w.lightPush = lightpush.NewWakuLightPush(w.Relay(), w.peermanager, w.opts.prometheusReg, w.log, w.opts.lightpushOpts...)
 
-	w.store = store.NewWakuStore(w.peermanager, w.timesource, w.log)
+	w.store = store.NewWakuStore(w.peermanager, w.timesource, w.log, w.opts.storeRateLimit)
 
 	if params.storeFactory != nil {
 		w.storeFactory = params.storeFactory
@@ -308,6 +308,7 @@ func New(opts ...WakuNodeOption) (*WakuNode, error) {
 }
 
 func (w *WakuNode) watchMultiaddressChanges(ctx context.Context) {
+	defer utils.LogOnPanic()
 	defer w.wg.Done()
 
 	addrsSet := utils.MultiAddrSet(w.ListenAddresses()...)
@@ -378,11 +379,6 @@ func (w *WakuNode) Start(ctx context.Context) error {
 		return err
 	}
 
-	if w.opts.keepAliveRandomPeersInterval > time.Duration(0) || w.opts.keepAliveAllPeersInterval > time.Duration(0) {
-		w.wg.Add(1)
-		go w.startKeepAlive(ctx, w.opts.keepAliveRandomPeersInterval, w.opts.keepAliveAllPeersInterval)
-	}
-
 	w.metadata.SetHost(host)
 	err = w.metadata.Start(ctx)
 	if err != nil {
@@ -421,9 +417,9 @@ func (w *WakuNode) Start(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		w.peermanager.Start(ctx)
 		w.registerAndMonitorReachability(ctx)
 	}
+	w.peermanager.Start(ctx)
 
 	w.legacyStore = w.storeFactory(w)
 	w.legacyStore.SetHost(host)
@@ -468,14 +464,23 @@ func (w *WakuNode) Start(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		//TODO: setting this up temporarily to improve connectivity success for lightNode in status.
-		//This will have to be removed or changed with community sharding will be implemented.
-		if w.opts.shards != nil {
-			err = w.SetRelayShards(*w.opts.shards)
-			if err != nil {
-				return err
-			}
+	}
+
+	//TODO: setting this up temporarily to improve connectivity success for lightNode
+	//      in status. Also, when executing go-waku service-node as a lightclient
+	//      (using --pubsub-topic and --relay=false)
+	//      This will have to be removed or changed with community sharding will be
+	//      implemented.
+	if w.opts.shards != nil {
+		err = w.SetRelayShards(*w.opts.shards)
+		if err != nil {
+			return err
 		}
+	}
+
+	if w.opts.keepAliveRandomPeersInterval > time.Duration(0) || w.opts.keepAliveAllPeersInterval > time.Duration(0) {
+		w.wg.Add(1)
+		go w.startKeepAlive(ctx, w.opts.keepAliveRandomPeersInterval, w.opts.keepAliveAllPeersInterval)
 	}
 
 	w.peerExchange.SetHost(host)
@@ -550,6 +555,7 @@ func (w *WakuNode) ID() string {
 }
 
 func (w *WakuNode) watchENRChanges(ctx context.Context) {
+	defer utils.LogOnPanic()
 	defer w.wg.Done()
 
 	var prevNodeVal string
@@ -697,8 +703,8 @@ func (w *WakuNode) startStore(ctx context.Context, sub *relay.Subscription) erro
 
 // AddPeer is used to add a peer and the protocols it support to the node peerstore
 // TODO: Need to update this for autosharding, to only take contentTopics and optional pubSubTopics or provide an alternate API only for contentTopics.
-func (w *WakuNode) AddPeer(address ma.Multiaddr, origin wps.Origin, pubSubTopics []string, protocols ...protocol.ID) (peer.ID, error) {
-	pData, err := w.peermanager.AddPeer(address, origin, pubSubTopics, protocols...)
+func (w *WakuNode) AddPeer(addresses []ma.Multiaddr, origin wps.Origin, pubSubTopics []string, protocols ...protocol.ID) (peer.ID, error) {
+	pData, err := w.peermanager.AddPeer(addresses, origin, pubSubTopics, protocols...)
 	if err != nil {
 		return "", err
 	}
@@ -752,7 +758,9 @@ func (w *WakuNode) DialPeerWithInfo(ctx context.Context, peerInfo peer.AddrInfo)
 func (w *WakuNode) connect(ctx context.Context, info peer.AddrInfo) error {
 	err := w.host.Connect(ctx, info)
 	if err != nil {
-		w.host.Peerstore().(wps.WakuPeerstore).AddConnFailure(info)
+		if w.peermanager != nil {
+			w.peermanager.HandleDialError(err, info.ID)
+		}
 		return err
 	}
 
@@ -770,7 +778,7 @@ func (w *WakuNode) connect(ctx context.Context, info peer.AddrInfo) error {
 		}
 	}
 
-	w.host.Peerstore().(wps.WakuPeerstore).ResetConnFailures(info)
+	w.host.Peerstore().(wps.WakuPeerstore).ResetConnFailures(info.ID)
 
 	w.metrics.RecordDial()
 
@@ -797,6 +805,17 @@ func (w *WakuNode) ClosePeerByAddress(address string) error {
 	}
 
 	return w.ClosePeerById(info.ID)
+}
+
+func (w *WakuNode) DisconnectAllPeers() {
+	w.host.Network().StopNotify(w.connectionNotif)
+	for _, peerID := range w.host.Network().Peers() {
+		err := w.ClosePeerById(peerID)
+		if err != nil {
+			w.log.Info("failed to close peer", zap.Stringer("peer", peerID), zap.Error(err))
+		}
+	}
+	w.host.Network().Notify(w.connectionNotif)
 }
 
 // ClosePeerById is used to close a connection to a peer
@@ -874,6 +893,7 @@ func (w *WakuNode) PeersByContentTopic(contentTopic string) peer.IDSlice {
 }
 
 func (w *WakuNode) findRelayNodes(ctx context.Context) {
+	defer utils.LogOnPanic()
 	defer w.wg.Done()
 
 	// Feed peers more often right after the bootstrap, then backoff

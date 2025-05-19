@@ -6,6 +6,7 @@ import (
 
 	"go.uber.org/zap"
 
+	gocommon "github.com/status-im/status-go/common"
 	"github.com/status-im/status-go/multiaccounts/errors"
 	"github.com/status-im/status-go/multiaccounts/settings"
 	"github.com/status-im/status-go/protocol/common"
@@ -34,7 +35,7 @@ func (m *Messenger) prepareSyncSettingsMessages(currentClock uint64, prepareForB
 			// Pull clock from the db
 			clock, err := m.settings.GetSettingLastSynced(sf)
 			if err != nil {
-				logger.Error("m.settings.GetSettingLastSynced", zap.Error(err), zap.Any("SettingField", sf))
+				logger.Error("m.settings.GetSettingLastSynced", zap.Error(err), zap.String("SettingField", sf.GetDBName()))
 				errors = append(errors, err)
 				return
 			}
@@ -123,6 +124,7 @@ func (m *Messenger) extractAndSaveSyncSetting(syncSetting *protobuf.SyncSetting)
 // startSyncSettingsLoop watches the m.settings.SyncQueue and sends a sync message in response to a settings update
 func (m *Messenger) startSyncSettingsLoop() {
 	go func() {
+		defer gocommon.LogOnPanic()
 		logger := m.logger.Named("SyncSettingsLoop")
 
 		for {
@@ -141,7 +143,7 @@ func (m *Messenger) startSyncSettingsLoop() {
 					}
 					rm, _, err := s.SyncProtobufFactory().FromInterface()(s.Value, clock, chat.ID)
 					if err != nil {
-						logger.Error("SyncProtobufFactory().FromInterface", zap.Error(err), zap.Any("SyncSettingField", s))
+						logger.Error("SyncProtobufFactory().FromInterface", zap.Error(err), zap.String("SyncSettingField", s.GetDBName()))
 						break
 					}
 
@@ -163,6 +165,7 @@ func (m *Messenger) startSyncSettingsLoop() {
 func (m *Messenger) startSettingsChangesLoop() {
 	channel := m.settings.SubscribeToChanges()
 	go func() {
+		defer gocommon.LogOnPanic()
 		for {
 			select {
 			case s := <-channel:

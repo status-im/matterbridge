@@ -5,9 +5,11 @@ import (
 	"math/big"
 	"sync"
 
+	"go.uber.org/zap"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/event"
-	"github.com/ethereum/go-ethereum/log"
+	"github.com/status-im/status-go/logutils"
 	"github.com/status-im/status-go/multiaccounts/accounts"
 	"github.com/status-im/status-go/rpc/chain"
 	"github.com/status-im/status-go/services/wallet/async"
@@ -19,7 +21,7 @@ import (
 )
 
 func NewSequentialFetchStrategy(db *Database, blockDAO *BlockDAO, blockRangesSeqDAO *BlockRangeSequentialDAO, accountsDB *accounts.Database, feed *event.Feed,
-	transactionManager *TransactionManager, pendingTxManager *transactions.PendingTxTracker,
+	pendingTxManager *transactions.PendingTxTracker,
 	tokenManager *token.Manager,
 	chainClients map[uint64]chain.ClientInterface,
 	accounts []common.Address,
@@ -29,45 +31,43 @@ func NewSequentialFetchStrategy(db *Database, blockDAO *BlockDAO, blockRangesSeq
 ) *SequentialFetchStrategy {
 
 	return &SequentialFetchStrategy{
-		db:                 db,
-		blockDAO:           blockDAO,
-		blockRangesSeqDAO:  blockRangesSeqDAO,
-		accountsDB:         accountsDB,
-		feed:               feed,
-		transactionManager: transactionManager,
-		pendingTxManager:   pendingTxManager,
-		tokenManager:       tokenManager,
-		chainClients:       chainClients,
-		accounts:           accounts,
-		balanceCacher:      balanceCacher,
-		omitHistory:        omitHistory,
-		blockChainState:    blockChainState,
+		db:                db,
+		blockDAO:          blockDAO,
+		blockRangesSeqDAO: blockRangesSeqDAO,
+		accountsDB:        accountsDB,
+		feed:              feed,
+		pendingTxManager:  pendingTxManager,
+		tokenManager:      tokenManager,
+		chainClients:      chainClients,
+		accounts:          accounts,
+		balanceCacher:     balanceCacher,
+		omitHistory:       omitHistory,
+		blockChainState:   blockChainState,
 	}
 }
 
 type SequentialFetchStrategy struct {
-	db                 *Database
-	blockDAO           *BlockDAO
-	blockRangesSeqDAO  *BlockRangeSequentialDAO
-	accountsDB         *accounts.Database
-	feed               *event.Feed
-	mu                 sync.Mutex
-	group              *async.Group
-	transactionManager *TransactionManager
-	pendingTxManager   *transactions.PendingTxTracker
-	tokenManager       *token.Manager
-	chainClients       map[uint64]chain.ClientInterface
-	accounts           []common.Address
-	balanceCacher      balance.Cacher
-	omitHistory        bool
-	blockChainState    *blockchainstate.BlockChainState
+	db                *Database
+	blockDAO          *BlockDAO
+	blockRangesSeqDAO *BlockRangeSequentialDAO
+	accountsDB        *accounts.Database
+	feed              *event.Feed
+	mu                sync.Mutex
+	group             *async.Group
+	pendingTxManager  *transactions.PendingTxTracker
+	tokenManager      *token.Manager
+	chainClients      map[uint64]chain.ClientInterface
+	accounts          []common.Address
+	balanceCacher     balance.Cacher
+	omitHistory       bool
+	blockChainState   *blockchainstate.BlockChainState
 }
 
 func (s *SequentialFetchStrategy) newCommand(chainClient chain.ClientInterface,
 	accounts []common.Address) async.Commander {
 
 	return newLoadBlocksAndTransfersCommand(accounts, s.db, s.accountsDB, s.blockDAO, s.blockRangesSeqDAO, chainClient, s.feed,
-		s.transactionManager, s.pendingTxManager, s.tokenManager, s.balanceCacher, s.omitHistory, s.blockChainState)
+		s.pendingTxManager, s.tokenManager, s.balanceCacher, s.omitHistory, s.blockChainState)
 }
 
 func (s *SequentialFetchStrategy) start() error {
@@ -113,12 +113,15 @@ func (s *SequentialFetchStrategy) kind() FetchStrategyType {
 func (s *SequentialFetchStrategy) getTransfersByAddress(ctx context.Context, chainID uint64, address common.Address, toBlock *big.Int,
 	limit int64) ([]Transfer, error) {
 
-	log.Debug("[WalletAPI:: GetTransfersByAddress] get transfers for an address", "address", address,
-		"chainID", chainID, "toBlock", toBlock, "limit", limit)
+	logutils.ZapLogger().Debug("[WalletAPI:: GetTransfersByAddress] get transfers for an address",
+		zap.Stringer("address", address),
+		zap.Uint64("chainID", chainID),
+		zap.Stringer("toBlock", toBlock),
+		zap.Int64("limit", limit))
 
 	rst, err := s.db.GetTransfersByAddress(chainID, address, toBlock, limit)
 	if err != nil {
-		log.Error("[WalletAPI:: GetTransfersByAddress] can't fetch transfers", "err", err)
+		logutils.ZapLogger().Error("[WalletAPI:: GetTransfersByAddress] can't fetch transfers", zap.Error(err))
 		return nil, err
 	}
 

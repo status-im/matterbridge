@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/multiformats/go-multiaddr"
+
 	"github.com/status-im/status-go/eth-node/types"
 )
 
@@ -56,7 +58,7 @@ func (d *Database) syncSave(communityID types.HexBytes, snode []Storenode, clock
 	for _, n := range snode {
 		// defensively validate the communityID
 		if len(n.CommunityID) == 0 || !bytes.Equal(communityID, n.CommunityID) {
-			err = fmt.Errorf("communityID mismatch %v != %v", communityID, n.CommunityID)
+			err = fmt.Errorf("communityID mismatch")
 			return err
 		}
 		dbN := find(n, dbNodes)
@@ -135,7 +137,7 @@ func (d *Database) upsert(n Storenode, tx *sql.Tx) error {
 		n.CommunityID,
 		n.StorenodeID,
 		n.Name,
-		n.Address,
+		n.Address.String(),
 		n.Fleet,
 		n.Version,
 		n.Clock,
@@ -162,11 +164,12 @@ func toStorenodes(rows *sql.Rows) ([]Storenode, error) {
 
 	for rows.Next() {
 		var m Storenode
+		var addr string
 		if err := rows.Scan(
 			&m.CommunityID,
 			&m.StorenodeID,
 			&m.Name,
-			&m.Address,
+			&addr,
 			&m.Fleet,
 			&m.Version,
 			&m.Clock,
@@ -175,6 +178,12 @@ func toStorenodes(rows *sql.Rows) ([]Storenode, error) {
 		); err != nil {
 			return nil, err
 		}
+
+		maddr, err := multiaddr.NewMultiaddr(addr)
+		if err != nil {
+			return nil, err
+		}
+		m.Address = maddr
 		result = append(result, m)
 	}
 

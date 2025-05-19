@@ -1,8 +1,11 @@
 package settings
 
+//go:generate mockgen -package=mock_settings -source=database_settings_manager.go -destination=mock/database_settings_manager.go
+
 import (
 	"database/sql"
 	"encoding/json"
+	"time"
 
 	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/params"
@@ -36,7 +39,6 @@ type DatabaseSettingsManager interface {
 	GetEIP1581Address() (rst types.Address, err error)
 	GetMasterAddress() (rst types.Address, err error)
 	GetTestNetworksEnabled() (result bool, err error)
-	GetIsGoerliEnabled() (result bool, err error)
 	GetTokenGroupByCommunity() (result bool, err error)
 	GetCollectibleGroupByCommunity() (result bool, err error)
 	GetCollectibleGroupByCollection() (result bool, err error)
@@ -79,4 +81,10 @@ type DatabaseSettingsManager interface {
 	SubscribeToChanges() chan *SyncSettingField
 	MnemonicWasShown() error
 	GetPeerSyncingEnabled() (result bool, err error)
+	AutoRefreshTokensEnabled() (result bool, err error)
+	LastTokensUpdate() (result time.Time, err error)
+	NewsFeedLastFetchedTimestamp() (result time.Time, err error)
+	NewsFeedEnabled() (result bool, err error)
+	NewsNotificationsEnabled() (result bool, err error)
+	NewsRSSEnabled() (result bool, err error)
 }

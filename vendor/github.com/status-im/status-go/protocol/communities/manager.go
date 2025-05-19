@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,24 +28,26 @@ import (
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/images"
+	"github.com/status-im/status-go/messaging"
 	multiaccountscommon "github.com/status-im/status-go/multiaccounts/common"
 	"github.com/status-im/status-go/params"
 	"github.com/status-im/status-go/protocol/common"
-	"github.com/status-im/status-go/protocol/common/shard"
 	community_token "github.com/status-im/status-go/protocol/communities/token"
 	"github.com/status-im/status-go/protocol/encryption"
 	"github.com/status-im/status-go/protocol/ens"
 	"github.com/status-im/status-go/protocol/protobuf"
 	"github.com/status-im/status-go/protocol/requests"
-	"github.com/status-im/status-go/protocol/transport"
 	"github.com/status-im/status-go/rpc/network"
 	"github.com/status-im/status-go/server"
 	"github.com/status-im/status-go/services/wallet/bigint"
 	walletcommon "github.com/status-im/status-go/services/wallet/common"
 	"github.com/status-im/status-go/services/wallet/thirdparty"
 	"github.com/status-im/status-go/services/wallet/token"
+	tokenTypes "github.com/status-im/status-go/services/wallet/token/types"
 	"github.com/status-im/status-go/signal"
-	"github.com/status-im/status-go/transactions"
+
+	wakutypes "github.com/status-im/status-go/waku/types"
+	"github.com/status-im/status-go/wakuv2"
 )
 
 type Publisher interface {
@@ -96,7 +99,7 @@ type Manager struct {
 	tokenManager             TokenManager
 	collectiblesManager      CollectiblesManager
 	logger                   *zap.Logger
-	transport                *transport.Transport
+	messaging                *messaging.API
 	timesource               common.TimeSource
 	quit                     chan struct{}
 	walletConfig             *params.WalletConfig
@@ -109,6 +112,7 @@ type Manager struct {
 	keyDistributor           KeyDistributor
 	communityLock            *CommunityLock
 	mediaServer              server.MediaServerInterface
+	communityImageVersions   map[string]uint32
 }
 
 type CommunityLock struct {
@@ -168,8 +172,8 @@ type HistoryArchiveDownloadTaskInfo struct {
 }
 
 type ArchiveFileService interface {
-	CreateHistoryArchiveTorrentFromMessages(communityID types.HexBytes, messages []*types.Message, topics []types.TopicType, startDate time.Time, endDate time.Time, partition time.Duration, encrypt bool) ([]string, error)
-	CreateHistoryArchiveTorrentFromDB(communityID types.HexBytes, topics []types.TopicType, startDate time.Time, endDate time.Time, partition time.Duration, encrypt bool) ([]string, error)
+	CreateHistoryArchiveTorrentFromMessages(communityID types.HexBytes, messages []*wakutypes.Message, topics []wakutypes.TopicType, startDate time.Time, endDate time.Time, partition time.Duration, encrypt bool) ([]string, error)
+	CreateHistoryArchiveTorrentFromDB(communityID types.HexBytes, topics []wakutypes.TopicType, startDate time.Time, endDate time.Time, partition time.Duration, encrypt bool) ([]string, error)
 	SaveMessageArchiveID(communityID types.HexBytes, hash string) error
 	GetMessageArchiveIDsToImport(communityID types.HexBytes) ([]string, error)
 	SetMessageArchiveIDImported(communityID types.HexBytes, hash string, imported bool) error
@@ -186,10 +190,10 @@ type ArchiveService interface {
 	StartTorrentClient() error
 	Stop() error
 	IsReady() bool
-	GetCommunityChatsFilters(communityID types.HexBytes) ([]*transport.Filter, error)
-	GetCommunityChatsTopics(communityID types.HexBytes) ([]types.TopicType, error)
+	GetCommunityChatsFilters(communityID types.HexBytes) (messaging.ChatFilters, error)
+	GetCommunityChatsTopics(communityID types.HexBytes) ([]wakutypes.TopicType, error)
 	GetHistoryArchivePartitionStartTimestamp(communityID types.HexBytes) (uint64, error)
-	CreateAndSeedHistoryArchive(communityID types.HexBytes, topics []types.TopicType, startDate time.Time, endDate time.Time, partition time.Duration, encrypt bool) error
+	CreateAndSeedHistoryArchive(communityID types.HexBytes, topics []wakutypes.TopicType, startDate time.Time, endDate time.Time, partition time.Duration, encrypt bool) error
 	StartHistoryArchiveTasksInterval(community *Community, interval time.Duration)
 	StopHistoryArchiveTasksInterval(communityID types.HexBytes)
 	SeedHistoryArchiveTorrent(communityID types.HexBytes) error
@@ -205,7 +209,7 @@ type ArchiveManagerConfig struct {
 	TorrentConfig *params.TorrentConfig
 	Logger        *zap.Logger
 	Persistence   *Persistence
-	Transport     *transport.Transport
+	Messaging     *messaging.API
 	Identity      *ecdsa.PrivateKey
 	Encryptor     *encryption.Protocol
 	Publisher     Publisher
@@ -248,7 +252,7 @@ type managerOptions struct {
 type TokenManager interface {
 	GetBalancesByChain(ctx context.Context, accounts, tokens []gethcommon.Address, chainIDs []uint64) (BalancesByChain, error)
 	GetCachedBalancesByChain(ctx context.Context, accounts, tokenAddresses []gethcommon.Address, chainIDs []uint64) (BalancesByChain, error)
-	FindOrCreateTokenByAddress(ctx context.Context, chainID uint64, address gethcommon.Address) *token.Token
+	FindOrCreateTokenByAddress(ctx context.Context, chainID uint64, address gethcommon.Address) *tokenTypes.Token
 	GetAllChainIDs() ([]uint64, error)
 }
 
@@ -266,7 +270,6 @@ type AssetContractData struct {
 
 type CommunityTokensServiceInterface interface {
 	GetCollectibleContractData(chainID uint64, contractAddress string) (*CollectibleContractData, error)
-	SetSignerPubKey(ctx context.Context, chainID uint64, contractAddress string, txArgs transactions.SendTxArgs, password string, newSignerPubKey string) (string, error)
 	GetAssetContractData(chainID uint64, contractAddress string) (*AssetContractData, error)
 	SafeGetSignerPubKey(ctx context.Context, chainID uint64, communityID string) (string, error)
 	DeploymentSignatureDigest(chainID uint64, addressFrom string, communityID string) ([]byte, error)
@@ -285,7 +288,7 @@ func NewDefaultTokenManager(tm *token.Manager, nm network.ManagerInterface) *Def
 type BalancesByChain = map[uint64]map[gethcommon.Address]map[gethcommon.Address]*hexutil.Big
 
 func (m *DefaultTokenManager) GetAllChainIDs() ([]uint64, error) {
-	networks, err := m.networkManager.Get(false)
+	networks, err := m.networkManager.GetAll()
 	if err != nil {
 		return nil, err
 	}
@@ -330,7 +333,7 @@ func (m *DefaultTokenManager) GetCachedBalancesByChain(ctx context.Context, acco
 	return resp, nil
 }
 
-func (m *DefaultTokenManager) FindOrCreateTokenByAddress(ctx context.Context, chainID uint64, address gethcommon.Address) *token.Token {
+func (m *DefaultTokenManager) FindOrCreateTokenByAddress(ctx context.Context, chainID uint64, address gethcommon.Address) *tokenTypes.Token {
 	return m.tokenManager.FindOrCreateTokenByAddress(ctx, chainID, address)
 }
 
@@ -390,7 +393,7 @@ func NewManager(
 	logger *zap.Logger,
 	ensverifier *ens.Verifier,
 	ownerVerifier OwnerVerifier,
-	transport *transport.Transport,
+	messaging *messaging.API,
 	timesource common.TimeSource,
 	keyDistributor KeyDistributor,
 	mediaServer server.MediaServerInterface,
@@ -417,17 +420,18 @@ func NewManager(
 	}
 
 	manager := &Manager{
-		logger:         logger,
-		encryptor:      encryptor,
-		identity:       identity,
-		installationID: installationID,
-		ownerVerifier:  ownerVerifier,
-		quit:           make(chan struct{}),
-		transport:      transport,
-		timesource:     timesource,
-		keyDistributor: keyDistributor,
-		communityLock:  NewCommunityLock(logger),
-		mediaServer:    mediaServer,
+		logger:                 logger,
+		encryptor:              encryptor,
+		identity:               identity,
+		installationID:         installationID,
+		ownerVerifier:          ownerVerifier,
+		quit:                   make(chan struct{}),
+		messaging:              messaging,
+		timesource:             timesource,
+		keyDistributor:         keyDistributor,
+		communityLock:          NewCommunityLock(logger),
+		mediaServer:            mediaServer,
+		communityImageVersions: make(map[string]uint32),
 	}
 
 	manager.persistence = &Persistence{
@@ -477,7 +481,31 @@ func NewManager(
 		manager.forceMembersReevaluation = make(map[string]chan struct{}, 10)
 	}
 
+	if mediaServer != nil && !reflect.ValueOf(mediaServer).IsNil() {
+		manager.SetMediaServerProperties()
+	}
+
 	return manager, nil
+}
+
+func (m *Manager) SetMediaServerProperties() {
+	m.mediaServer.SetCommunityImageVersionReader(func(communityID string) uint32 {
+		return m.communityImageVersions[communityID]
+	})
+	m.mediaServer.SetCommunityImageReader(func(communityID string) (map[string]*protobuf.IdentityImage, error) {
+		community, err := m.GetByIDString(communityID)
+		if err != nil {
+			return nil, err
+		}
+		return community.Images(), nil
+	})
+	m.mediaServer.SetCommunityTokensReader(func(communityID string) ([]*protobuf.CommunityTokenMetadata, error) {
+		community, err := m.GetByIDString(communityID)
+		if err != nil {
+			return nil, err
+		}
+		return community.CommunityTokensMetadata(), nil
+	})
 }
 
 type Subscription struct {
@@ -507,6 +535,7 @@ type CommunityResponse struct {
 
 func (m *Manager) SetMediaServer(mediaServer server.MediaServerInterface) {
 	m.mediaServer = mediaServer
+	m.SetMediaServerProperties()
 }
 
 func (m *Manager) Subscribe() chan *Subscription {
@@ -527,6 +556,7 @@ func (m *Manager) Start() error {
 	}
 
 	go func() {
+		defer utils.LogOnPanic()
 		_ = m.fillMissingCommunityTokens()
 	}()
 
@@ -535,6 +565,7 @@ func (m *Manager) Start() error {
 
 func (m *Manager) runENSVerificationLoop() {
 	go func() {
+		defer utils.LogOnPanic()
 		for {
 			select {
 			case <-m.quit:
@@ -615,6 +646,7 @@ func (m *Manager) CommunitiesToValidate() (map[string][]communityToValidate, err
 func (m *Manager) runOwnerVerificationLoop() {
 	m.logger.Info("starting owner verification loop")
 	go func() {
+		defer utils.LogOnPanic()
 		for {
 			select {
 			case <-m.quit:
@@ -645,7 +677,7 @@ func (m *Manager) runOwnerVerificationLoop() {
 func (m *Manager) ValidateCommunityByID(communityID types.HexBytes) (*CommunityResponse, error) {
 	communitiesToValidate, err := m.persistence.getCommunityToValidateByID(communityID)
 	if err != nil {
-		m.logger.Error("failed to validate community by ID", zap.String("id", communityID.String()), zap.Error(err))
+		m.logger.Error("failed to validate community by ID", zap.String("id", utils.TruncateWithDot(communityID.String())), zap.Error(err))
 		return nil, err
 	}
 	return m.validateCommunity(communitiesToValidate)
@@ -737,8 +769,8 @@ func (m *Manager) All() ([]*Community, error) {
 }
 
 type CommunityShard struct {
-	CommunityID string       `json:"communityID"`
-	Shard       *shard.Shard `json:"shard"`
+	CommunityID string        `json:"communityID"`
+	Shard       *wakuv2.Shard `json:"shard"`
 }
 
 type CuratedCommunities struct {
@@ -788,6 +820,10 @@ func (m *Manager) Joined() ([]*Community, error) {
 
 func (m *Manager) Spectated() ([]*Community, error) {
 	return m.persistence.SpectatedCommunities(&m.identity.PublicKey)
+}
+
+func (m *Manager) JoinedOrSpectated() ([]*Community, error) {
+	return m.persistence.JoinedOrSpectatedCommunities(&m.identity.PublicKey)
 }
 
 func (m *Manager) CommunityUpdateLastOpenedAt(communityID types.HexBytes, timestamp int64) (*Community, error) {
@@ -1351,7 +1387,7 @@ func (m *Manager) StartMembersReevaluationLoop(communityID types.HexBytes, reeva
 }
 
 func (m *Manager) reevaluateMembersLoop(communityID types.HexBytes, reevaluateOnStart bool) {
-
+	defer utils.LogOnPanic()
 	if _, exists := m.membersReevaluationTasks.Load(communityID.String()); exists {
 		return
 	}
@@ -1546,7 +1582,7 @@ func (m *Manager) DeleteCommunity(id types.HexBytes) error {
 	return m.persistence.DeleteCommunitySettings(id)
 }
 
-func (m *Manager) updateShard(community *Community, shard *shard.Shard, clock uint64) error {
+func (m *Manager) updateShard(community *Community, shard *wakuv2.Shard, clock uint64) error {
 	community.config.Shard = shard
 	if shard == nil {
 		return m.persistence.DeleteCommunityShard(community.ID())
@@ -1555,7 +1591,7 @@ func (m *Manager) updateShard(community *Community, shard *shard.Shard, clock ui
 	return m.persistence.SaveCommunityShard(community.ID(), shard, clock)
 }
 
-func (m *Manager) UpdateShard(community *Community, shard *shard.Shard, clock uint64) error {
+func (m *Manager) UpdateShard(community *Community, shard *wakuv2.Shard, clock uint64) error {
 	m.communityLock.Lock(community.ID())
 	defer m.communityLock.Unlock(community.ID())
 
@@ -1563,7 +1599,7 @@ func (m *Manager) UpdateShard(community *Community, shard *shard.Shard, clock ui
 }
 
 // SetShard assigns a shard to a community
-func (m *Manager) SetShard(communityID types.HexBytes, shard *shard.Shard) (*Community, error) {
+func (m *Manager) SetShard(communityID types.HexBytes, shard *wakuv2.Shard) (*Community, error) {
 	m.communityLock.Lock(communityID)
 	defer m.communityLock.Unlock(communityID)
 
@@ -1589,10 +1625,19 @@ func (m *Manager) SetShard(communityID types.HexBytes, shard *shard.Shard) (*Com
 
 func (m *Manager) UpdatePubsubTopicPrivateKey(topic string, privKey *ecdsa.PrivateKey) error {
 	if privKey != nil {
-		return m.transport.StorePubsubTopicKey(topic, privKey)
+		return m.messaging.StorePubsubTopicKey(topic, privKey)
 	}
 
-	return m.transport.RemovePubsubTopicKey(topic)
+	return m.messaging.RemovePubsubTopicKey(topic)
+}
+
+// Managing the version of community images is necessary because image URLs are "constant"
+// For eg: https://Localhost:46739/communityDescriptionImages?communityID=[ID]&name=thumbnail
+// So the clients have no way of knowing that they need to reload the image
+// Having a version number makes it so that the URL changes on image updates
+// eg: https://Localhost:46739/communityDescriptionImages?communityID=[ID]&name=thumbnail&version=1
+func (m *Manager) incrementCommunityImageVersion(communityID string) {
+	m.communityImageVersions[communityID] = m.communityImageVersions[communityID] + 1
 }
 
 // EditCommunity takes a description, updates the community with the description,
@@ -1639,10 +1684,16 @@ func (m *Manager) EditCommunity(request *requests.EditCommunity) (*Community, er
 		return nil, ErrNotAuthorized
 	}
 
+	imageModified := CommunityImagesChanged(newDescription.Identity.Images, community.Images())
+
 	// Edit the community values
 	community.Edit(newDescription)
 	if err != nil {
 		return nil, err
+	}
+
+	if imageModified {
+		m.incrementCommunityImageVersion(community.IDString())
 	}
 
 	if community.IsControlNode() {
@@ -1998,6 +2049,12 @@ func (m *Manager) EditChatFirstMessageTimestamp(communityID types.HexBytes, chat
 	return community, changes, nil
 }
 
+func (m *Manager) UpdateChatFirstMessageTimestamp(community *Community, chatID string, timestamp uint32) (*CommunityChanges, error) {
+	communityID := community.ID().String()
+	chatID = strings.TrimPrefix(chatID, communityID)
+	return community.UpdateChatFirstMessageTimestamp(chatID, timestamp)
+}
+
 func (m *Manager) ReorderCategories(request *requests.ReorderCommunityCategories) (*Community, *CommunityChanges, error) {
 	m.communityLock.Lock(request.CommunityID)
 	defer m.communityLock.Unlock(request.CommunityID)
@@ -2155,11 +2212,11 @@ func (m *Manager) HandleCommunityDescriptionMessage(signer *ecdsa.PublicKey, des
 		if err != nil {
 			return nil, err
 		}
-		var cShard *shard.Shard
+		var cShard *wakuv2.Shard
 		if communityShard == nil {
-			cShard = &shard.Shard{Cluster: shard.MainStatusShardCluster, Index: shard.DefaultShardIndex}
+			cShard = &wakuv2.Shard{Cluster: wakuv2.MainStatusShardCluster, Index: wakuv2.DefaultShardIndex}
 		} else {
-			cShard = shard.FromProtobuff(communityShard)
+			cShard = wakuv2.FromProtobuff(communityShard)
 		}
 		config := Config{
 			CommunityDescription:                processedDescription,
@@ -2229,6 +2286,9 @@ func (m *Manager) NewHashRatchetKeys(keys []*encryption.HashRatchetInfo) error {
 	return m.persistence.InvalidateDecryptedCommunityCacheForKeys(keys)
 }
 
+// NOTE: encrypted_community_description_cache is not a cache for the community description
+// The purpose of this cache is tightly coupled with the hash ratchet,
+// meaning the cache is invalidated whenever we receive a key that was previously missing for that community
 func (m *Manager) preprocessDescription(id types.HexBytes, description *protobuf.CommunityDescription) ([]*CommunityPrivateDataFailedToDecrypt, *protobuf.CommunityDescription, error) {
 	decryptedCommunity, err := m.persistence.GetDecryptedCommunityDescription(id, description.Clock)
 	if err != nil {
@@ -2258,6 +2318,10 @@ func (m *Manager) handleCommunityDescriptionMessageCommon(community *Community, 
 	changes, err := community.UpdateCommunityDescription(description, payload, newControlNode)
 	if err != nil {
 		return nil, err
+	}
+
+	if changes.ImageModified {
+		m.incrementCommunityImageVersion(community.IDString())
 	}
 
 	if err = m.handleCommunityTokensMetadata(community); err != nil {
@@ -2665,9 +2729,11 @@ func (m *Manager) DeletePendingRequestToJoin(request *RequestToJoin) error {
 		return err
 	}
 
-	err = m.saveAndPublish(community)
-	if err != nil {
-		return err
+	if community.IsControlNode() {
+		err = m.saveAndPublish(community)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -3486,6 +3552,17 @@ type CheckAllChannelsPermissionsResponse struct {
 }
 
 func (m *Manager) HandleCommunityRequestToJoinResponse(signer *ecdsa.PublicKey, request *protobuf.CommunityRequestToJoinResponse) (*RequestToJoin, error) {
+	if len(request.CommunityDescriptionProtocolMessage) > 0 {
+		description, err := unmarshalCommunityDescriptionMessage(request.CommunityDescriptionProtocolMessage, signer)
+		if err != nil {
+			return nil, err
+		}
+		_, err = m.HandleCommunityDescriptionMessage(signer, description, request.CommunityDescriptionProtocolMessage, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	m.communityLock.Lock(request.CommunityId)
 	defer m.communityLock.Unlock(request.CommunityId)
 
@@ -3496,56 +3573,11 @@ func (m *Manager) HandleCommunityRequestToJoinResponse(signer *ecdsa.PublicKey, 
 		return nil, err
 	}
 
-	communityDescriptionBytes, err := proto.Marshal(request.Community)
-	if err != nil {
-		return nil, err
-	}
-
-	// We need to wrap `request.Community` in an `ApplicationMetadataMessage`
-	// of type `CommunityDescription` because `UpdateCommunityDescription` expects this.
-	//
-	// This is merely for marsheling/unmarsheling, hence we attaching a `Signature`
-	// is not needed.
-	metadataMessage := &protobuf.ApplicationMetadataMessage{
-		Payload: communityDescriptionBytes,
-		Type:    protobuf.ApplicationMetadataMessage_COMMUNITY_DESCRIPTION,
-	}
-
-	appMetadataMsg, err := proto.Marshal(metadataMessage)
-	if err != nil {
-		return nil, err
-	}
-
-	isControlNodeSigner := common.IsPubKeyEqual(community.ControlNode(), signer)
-	if !isControlNodeSigner {
-		return nil, ErrNotAuthorized
-	}
-
-	_, processedDescription, err := m.preprocessDescription(community.ID(), request.Community)
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = community.UpdateCommunityDescription(processedDescription, appMetadataMsg, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	if err = m.handleCommunityTokensMetadata(community); err != nil {
-		return nil, err
-	}
-
 	if community.Encrypted() && len(request.Grant) > 0 {
 		_, err = m.HandleCommunityGrant(community, request.Grant, request.Clock)
 		if err != nil && err != ErrGrantOlder && err != ErrGrantExpired {
 			m.logger.Error("Error handling a community grant", zap.Error(err))
 		}
-	}
-
-	err = m.persistence.SaveCommunity(community)
-
-	if err != nil {
-		return nil, err
 	}
 
 	if request.Accepted {
@@ -3554,7 +3586,6 @@ func (m *Manager) HandleCommunityRequestToJoinResponse(signer *ecdsa.PublicKey, 
 			return nil, err
 		}
 	} else {
-
 		err = m.persistence.SetRequestToJoinState(pkString, community.ID(), RequestToJoinStateDeclined)
 		if err != nil {
 			return nil, err
@@ -3644,10 +3675,6 @@ func (m *Manager) SpectateCommunity(id types.HexBytes) (*Community, error) {
 
 func (m *Manager) GetMagnetlinkMessageClock(communityID types.HexBytes) (uint64, error) {
 	return m.persistence.GetMagnetlinkMessageClock(communityID)
-}
-
-func (m *Manager) GetRequestToJoinIDByPkAndCommunityID(pk *ecdsa.PublicKey, communityID []byte) ([]byte, error) {
-	return m.persistence.GetRequestToJoinIDByPkAndCommunityID(common.PubkeyToHex(pk), communityID)
 }
 
 func (m *Manager) GetCommunityRequestToJoinClock(pk *ecdsa.PublicKey, communityID string) (uint64, error) {
@@ -3922,7 +3949,7 @@ func (m *Manager) dbRecordBundleToCommunity(r *CommunityRecordBundle) (*Communit
 		community.config.CommunityDescription = description
 
 		if community.config.EventsData != nil {
-			eventsDescription, err := validateAndGetEventsMessageCommunityDescription(community.config.EventsData.EventsBaseCommunityDescription, community.ControlNode())
+			eventsDescription, err := unmarshalCommunityDescriptionMessage(community.config.EventsData.EventsBaseCommunityDescription, community.ControlNode())
 			if err != nil {
 				m.logger.Error("invalid EventsBaseCommunityDescription", zap.Error(err))
 			}
@@ -3931,9 +3958,9 @@ func (m *Manager) dbRecordBundleToCommunity(r *CommunityRecordBundle) (*Communit
 			}
 		}
 
-		if m.transport != nil && m.transport.WakuVersion() == 2 {
+		if m.messaging != nil {
 			topic := community.PubsubTopic()
-			privKey, err := m.transport.RetrievePubsubTopicKey(topic)
+			privKey, err := m.messaging.RetrievePubsubTopicKey(topic)
 			if err != nil {
 				return err
 			}
@@ -3974,11 +4001,11 @@ func (m *Manager) GetByIDString(idString string) (*Community, error) {
 	return m.GetByID(id)
 }
 
-func (m *Manager) GetCommunityShard(communityID types.HexBytes) (*shard.Shard, error) {
+func (m *Manager) GetCommunityShard(communityID types.HexBytes) (*wakuv2.Shard, error) {
 	return m.persistence.GetCommunityShard(communityID)
 }
 
-func (m *Manager) SaveCommunityShard(communityID types.HexBytes, shard *shard.Shard, clock uint64) error {
+func (m *Manager) SaveCommunityShard(communityID types.HexBytes, shard *wakuv2.Shard, clock uint64) error {
 	m.communityLock.Lock(communityID)
 	defer m.communityLock.Unlock(communityID)
 
@@ -4197,6 +4224,39 @@ func (m *Manager) CommunitySettingsExist(id types.HexBytes) (bool, error) {
 	return m.persistence.CommunitySettingsExist(id)
 }
 
+func (m *Manager) EnsureCommunitySettings(org *Community) error {
+	// This is for status-go versions that didn't have `CommunitySettings`
+	// We need to ensure communities that existed before community settings
+	// were introduced will have community settings as well
+	exists, err := m.CommunitySettingsExist(org.ID())
+	if err != nil {
+		return err
+	}
+
+	if !exists {
+		communitySettings := CommunitySettings{
+			CommunityID:                  org.IDString(),
+			HistoryArchiveSupportEnabled: true,
+		}
+		return m.SaveCommunitySettings(communitySettings)
+	}
+
+	// In case we do have settings, but the history archive support is disabled
+	// for this community, we enable it, as this should be the default for all
+	// non-admin communities
+	communitySettings, err := m.GetCommunitySettingsByID(org.ID())
+	if err != nil {
+		return err
+	}
+
+	if !org.IsControlNode() && !communitySettings.HistoryArchiveSupportEnabled {
+		communitySettings.HistoryArchiveSupportEnabled = true
+		return m.UpdateCommunitySettings(*communitySettings)
+	}
+
+	return nil
+}
+
 func (m *Manager) DeleteCommunitySettings(id types.HexBytes) error {
 	return m.persistence.DeleteCommunitySettings(id)
 }
@@ -4222,15 +4282,29 @@ func (m *Manager) GetOwnedCommunitiesChatIDs() (map[string]bool, error) {
 	return chatIDs, nil
 }
 
-func (m *Manager) StoreWakuMessage(message *types.Message) error {
+func (m *Manager) GetOwnedCommunitiesUniversalChatIDs() (map[string]bool, error) {
+	ownedCommunities, err := m.Controlled()
+	if err != nil {
+		return nil, err
+	}
+	chatIDs := make(map[string]bool)
+	for _, c := range ownedCommunities {
+		if c.Joined() {
+			chatIDs[c.UniversalChatID()] = true
+		}
+	}
+	return chatIDs, nil
+}
+
+func (m *Manager) StoreWakuMessage(message *wakutypes.Message) error {
 	return m.persistence.SaveWakuMessage(message)
 }
 
-func (m *Manager) StoreWakuMessages(messages []*types.Message) error {
+func (m *Manager) StoreWakuMessages(messages []*wakutypes.Message) error {
 	return m.persistence.SaveWakuMessages(messages)
 }
 
-func (m *Manager) GetLatestWakuMessageTimestamp(topics []types.TopicType) (uint64, error) {
+func (m *Manager) GetLatestWakuMessageTimestamp(topics []wakutypes.TopicType) (uint64, error) {
 	return m.persistence.GetLatestWakuMessageTimestamp(topics)
 }
 
@@ -4462,6 +4536,10 @@ func (m *Manager) accountsHasPrivilegedPermission(preParsedCommunityPermissionDa
 		return permissionResponse.Satisfied
 	}
 	return false
+}
+
+func (m *Manager) SaveAndPublish(community *Community) error {
+	return m.saveAndPublish(community)
 }
 
 func (m *Manager) saveAndPublish(community *Community) error {
@@ -4836,6 +4914,10 @@ func (m *Manager) handleCommunityEvents(community *Community) error {
 }
 
 func (m *Manager) ShareRequestsToJoinWithPrivilegedMembers(community *Community, privilegedMembers map[protobuf.CommunityMember_Roles][]*ecdsa.PublicKey) error {
+	if len(privilegedMembers) == 0 {
+		return nil
+	}
+
 	requestsToJoin, err := m.GetCommunityRequestsToJoinWithRevealedAddresses(community.ID())
 	if err != nil {
 		return err
@@ -4844,6 +4926,11 @@ func (m *Manager) ShareRequestsToJoinWithPrivilegedMembers(community *Community,
 	var syncRequestsWithoutRevealedAccounts []*protobuf.SyncCommunityRequestsToJoin
 	var syncRequestsWithRevealedAccounts []*protobuf.SyncCommunityRequestsToJoin
 	for _, request := range requestsToJoin {
+		// if shared request to join is not approved by control node - do not send revealed accounts.
+		// revealed accounts will be sent as soon as control node accepts request to join
+		if request.State != RequestToJoinStateAccepted {
+			request.RevealedAccounts = []*protobuf.RevealedAccount{}
+		}
 		syncRequestsWithRevealedAccounts = append(syncRequestsWithRevealedAccounts, request.ToSyncProtobuf())
 		requestProtoWithoutAccounts := request.ToSyncProtobuf()
 		requestProtoWithoutAccounts.RevealedAccounts = []*protobuf.RevealedAccount{}
@@ -4886,8 +4973,8 @@ func (m *Manager) ShareRequestsToJoinWithPrivilegedMembers(community *Community,
 	return nil
 }
 
-func (m *Manager) shareAcceptedRequestToJoinWithPrivilegedMembers(community *Community, requestsToJoin *RequestToJoin) error {
-	pk, err := common.HexToPubkey(requestsToJoin.PublicKey)
+func (m *Manager) shareAcceptedRequestToJoinWithPrivilegedMembers(community *Community, requestToJoin *RequestToJoin) error {
+	pk, err := common.HexToPubkey(requestToJoin.PublicKey)
 	if err != nil {
 		return err
 	}
@@ -4895,9 +4982,13 @@ func (m *Manager) shareAcceptedRequestToJoinWithPrivilegedMembers(community *Com
 	acceptedRequestsToJoinWithoutRevealedAccounts := make(map[string]*protobuf.CommunityRequestToJoin)
 	acceptedRequestsToJoinWithRevealedAccounts := make(map[string]*protobuf.CommunityRequestToJoin)
 
-	acceptedRequestsToJoinWithRevealedAccounts[requestsToJoin.PublicKey] = requestsToJoin.ToCommunityRequestToJoinProtobuf()
-	requestsToJoin.RevealedAccounts = make([]*protobuf.RevealedAccount, 0)
-	acceptedRequestsToJoinWithoutRevealedAccounts[requestsToJoin.PublicKey] = requestsToJoin.ToCommunityRequestToJoinProtobuf()
+	acceptedRequestsToJoinWithRevealedAccounts[requestToJoin.PublicKey] = requestToJoin.ToCommunityRequestToJoinProtobuf()
+
+	revealedAccounts := requestToJoin.RevealedAccounts
+	requestToJoin.RevealedAccounts = make([]*protobuf.RevealedAccount, 0)
+	acceptedRequestsToJoinWithoutRevealedAccounts[requestToJoin.PublicKey] = requestToJoin.ToCommunityRequestToJoinProtobuf()
+	// Set back the revealed accounts
+	requestToJoin.RevealedAccounts = revealedAccounts
 
 	msgWithRevealedAccounts := &protobuf.CommunityPrivilegedUserSyncMessage{
 		Type:          protobuf.CommunityPrivilegedUserSyncMessage_CONTROL_NODE_ACCEPT_REQUEST_TO_JOIN,
@@ -5243,4 +5334,39 @@ func (m *Manager) updateEncryptionKeysRequests(communityID types.HexBytes, chann
 
 func (m *Manager) UpdateEncryptionKeysRequests(communityID types.HexBytes, channelIDs []string) error {
 	return m.updateEncryptionKeysRequests(communityID, channelIDs, time.Now().UnixMilli())
+}
+
+func unmarshalCommunityDescriptionMessage(signedDescription []byte, signerPubkey *ecdsa.PublicKey) (*protobuf.CommunityDescription, error) {
+	metadata := &protobuf.ApplicationMetadataMessage{}
+
+	err := proto.Unmarshal(signedDescription, metadata)
+	if err != nil {
+		return nil, err
+	}
+
+	if metadata.Type != protobuf.ApplicationMetadataMessage_COMMUNITY_DESCRIPTION {
+		return nil, ErrInvalidMessage
+	}
+
+	signer, err := utils.RecoverKey(metadata)
+	if err != nil {
+		return nil, err
+	}
+
+	if signer == nil {
+		return nil, errors.New("CommunityDescription does not contain the control node signature")
+	}
+
+	if !signer.Equal(signerPubkey) {
+		return nil, errors.New("CommunityDescription was not signed by an owner")
+	}
+
+	description := &protobuf.CommunityDescription{}
+
+	err = proto.Unmarshal(metadata.Payload, description)
+	if err != nil {
+		return nil, err
+	}
+
+	return description, nil
 }

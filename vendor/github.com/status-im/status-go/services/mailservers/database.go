@@ -9,72 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/multiformats/go-multiaddr"
 
-	"github.com/ethereum/go-ethereum/p2p/enode"
-
-	"github.com/status-im/status-go/protocol/transport"
+	"github.com/status-im/status-go/messaging"
+	"github.com/status-im/status-go/waku/types"
 )
-
-type Mailserver struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	Custom         bool   `json:"custom"`
-	Address        string `json:"address"`
-	Password       string `json:"password,omitempty"`
-	Fleet          string `json:"fleet"`
-	Version        uint   `json:"version"`
-	FailedRequests uint   `json:"-"`
-}
-
-func (m Mailserver) Enode() (*enode.Node, error) {
-	return enode.ParseV4(m.Address)
-}
-
-func (m Mailserver) IDBytes() ([]byte, error) {
-	if m.Version == 2 {
-		id, err := peer.Decode(m.UniqueID())
-		if err != nil {
-			return nil, err
-		}
-		return []byte(id.String()), err
-	}
-
-	node, err := enode.ParseV4(m.Address)
-	if err != nil {
-		return nil, err
-	}
-	return node.ID().Bytes(), nil
-}
-
-func (m Mailserver) PeerID() (peer.ID, error) {
-	if m.Version != 2 {
-		return "", errors.New("not available")
-	}
-
-	pID, err := peer.Decode(m.UniqueID())
-	if err != nil {
-		return "", err
-	}
-
-	return pID, nil
-}
-
-func (m Mailserver) UniqueID() string {
-	if m.Version == 2 {
-		s := strings.Split(m.Address, "/")
-		return s[len(s)-1]
-	}
-	return m.Address
-}
-
-func (m Mailserver) nullablePassword() (val sql.NullString) {
-	if m.Password != "" {
-		val.String = m.Password
-		val.Valid = true
-	}
-	return
-}
 
 type MailserverRequestGap struct {
 	ID     string `json:"id"`
@@ -128,7 +67,9 @@ func NewDB(db *sql.DB) *Database {
 	return &Database{db: db}
 }
 
-func (d *Database) Add(mailserver Mailserver) error {
+func (d *Database) Add(mailserver types.Mailserver) error {
+	// TODO: we are only storing the multiaddress.
+	// In a future PR we must allow storing multiple multiaddresses and ENR
 	_, err := d.db.Exec(`INSERT OR REPLACE INTO mailservers(
 			id,
 			name,
@@ -138,14 +79,14 @@ func (d *Database) Add(mailserver Mailserver) error {
 		) VALUES (?, ?, ?, ?, ?)`,
 		mailserver.ID,
 		mailserver.Name,
-		mailserver.Address,
-		mailserver.nullablePassword(),
+		(*mailserver.Addr).String(),
+		mailserver.NullablePassword(),
 		mailserver.Fleet,
 	)
 	return err
 }
 
-func (d *Database) Mailservers() ([]Mailserver, error) {
+func (d *Database) Mailservers() ([]types.Mailserver, error) {
 	rows, err := d.db.Query(`SELECT id, name, address, password, fleet FROM mailservers`)
 	if err != nil {
 		return nil, err
@@ -154,18 +95,19 @@ func (d *Database) Mailservers() ([]Mailserver, error) {
 	return toMailservers(rows)
 }
 
-func toMailservers(rows *sql.Rows) ([]Mailserver, error) {
-	var result []Mailserver
+func toMailservers(rows *sql.Rows) ([]types.Mailserver, error) {
+	var result []types.Mailserver
 
 	for rows.Next() {
 		var (
-			m        Mailserver
+			m        types.Mailserver
+			addrStr  string
 			password sql.NullString
 		)
 		if err := rows.Scan(
 			&m.ID,
 			&m.Name,
-			&m.Address,
+			&addrStr,
 			&password,
 			&m.Fleet,
 		); err != nil {
@@ -175,6 +117,15 @@ func toMailservers(rows *sql.Rows) ([]Mailserver, error) {
 		if password.Valid {
 			m.Password = password.String
 		}
+
+		// TODO: we are only storing the multiaddress.
+		// In a future PR we must allow storing multiple multiaddresses and ENR
+		maddr, err := multiaddr.NewMultiaddr(addrStr)
+		if err != nil {
+			return nil, err
+		}
+		m.Addr = &maddr
+
 		result = append(result, m)
 	}
 
@@ -367,7 +318,7 @@ func (d *Database) DeleteTopic(pubsubTopic, contentTopic string) error {
 
 // SetTopics deletes all topics excepts the one set, or upsert those if
 // missing
-func (d *Database) SetTopics(filters []*transport.Filter) (err error) {
+func (d *Database) SetTopics(filters messaging.ChatFilters) (err error) {
 	var tx *sql.Tx
 	tx, err = d.db.Begin()
 	if err != nil {

@@ -4,13 +4,16 @@ import (
 	"encoding/json"
 	"errors"
 
+	"go.uber.org/zap"
+
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/log"
 	signercore "github.com/ethereum/go-ethereum/signer/core/apitypes"
 	"github.com/status-im/status-go/account"
+	gocommon "github.com/status-im/status-go/common"
 	"github.com/status-im/status-go/eth-node/types"
+	"github.com/status-im/status-go/logutils"
 	"github.com/status-im/status-go/services/typeddata"
-	"github.com/status-im/status-go/transactions"
+	"github.com/status-im/status-go/services/wallet/wallettypes"
 )
 
 const Web3SendAsyncReadOnly = "web3-send-async-read-only"
@@ -237,18 +240,21 @@ func (api *API) web3AccResponse(request Web3SendAsyncReadOnlyRequest) (*Web3Send
 func (api *API) getVerifiedWalletAccount(address, password string) (*account.SelectedExtKey, error) {
 	exists, err := api.s.accountsDB.AddressExists(types.HexToAddress(address))
 	if err != nil {
-		log.Error("failed to query db for a given address", "address", address, "error", err)
+		logutils.ZapLogger().Error("failed to query db for a given address",
+			zap.String("address", address),
+			zap.Error(err),
+		)
 		return nil, err
 	}
 
 	if !exists {
-		log.Error("failed to get a selected account", "err", transactions.ErrInvalidTxSender)
-		return nil, transactions.ErrAccountDoesntExist
+		logutils.ZapLogger().Error("failed to get a selected account", zap.Error(wallettypes.ErrInvalidTxSender))
+		return nil, wallettypes.ErrAccountDoesntExist
 	}
 
 	key, err := api.s.accountsManager.VerifyAccountPassword(api.s.config.KeyStoreDir, address, password)
 	if err != nil {
-		log.Error("failed to verify account", "account", address, "error", err)
+		logutils.ZapLogger().Error("failed to verify account", zap.String("account", gocommon.TruncateWithDot(address)), zap.Error(err))
 		return nil, err
 	}
 
@@ -275,7 +281,7 @@ func (api *API) web3SignatureResponse(request Web3SendAsyncReadOnlyRequest) (*We
 	}
 
 	if err != nil {
-		log.Error("could not sign message", "err", err)
+		logutils.ZapLogger().Error("could not sign message", zap.Error(err))
 		return &Web3SendAsyncReadOnlyResponse{
 			ProviderResponse: ProviderResponse{
 				ResponseType: Web3SendAsyncCallback,
@@ -321,14 +327,14 @@ func (api *API) ProcessWeb3ReadOnlyRequest(request Web3SendAsyncReadOnlyRequest)
 			return nil, err
 		}
 
-		var trxArgs transactions.SendTxArgs
+		var trxArgs wallettypes.SendTxArgs
 		if err := json.Unmarshal(jsonString, &trxArgs); err != nil {
 			return nil, err
 		}
 
 		hash, err := api.sendTransaction(request.Payload.ChainID, trxArgs, request.Payload.Password, Web3SendAsyncReadOnly)
 		if err != nil {
-			log.Error("could not send transaction message", "err", err)
+			logutils.ZapLogger().Error("could not send transaction message", zap.Error(err))
 			return &Web3SendAsyncReadOnlyResponse{
 				ProviderResponse: ProviderResponse{
 					ResponseType: Web3SendAsyncCallback,

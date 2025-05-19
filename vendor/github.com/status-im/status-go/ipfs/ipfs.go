@@ -12,9 +12,11 @@ import (
 
 	"github.com/ipfs/go-cid"
 	"github.com/wealdtech/go-multicodec"
+	"go.uber.org/zap"
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/log"
+	"github.com/status-im/status-go/common"
+	"github.com/status-im/status-go/logutils"
 	"github.com/status-im/status-go/params"
 )
 
@@ -83,6 +85,7 @@ func (d *Downloader) Stop() {
 }
 
 func (d *Downloader) worker() {
+	defer common.LogOnPanic()
 	for request := range d.rateLimiterChan {
 		resp, err := d.download(request.cid, request.download)
 		request.doneChan <- taskResponse{
@@ -93,6 +96,7 @@ func (d *Downloader) worker() {
 }
 
 func (d *Downloader) taskDispatcher() {
+	defer common.LogOnPanic()
 	ticker := time.NewTicker(time.Second / maxRequestsPerSecond)
 	defer ticker.Stop()
 
@@ -211,12 +215,12 @@ func (d *Downloader) download(cid string, download bool) ([]byte, error) {
 
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
-			log.Error("failed to close the stickerpack request body", "err", err)
+			logutils.ZapLogger().Error("failed to close the stickerpack request body", zap.Error(err))
 		}
 	}()
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		log.Error("could not load data for", "cid", cid, "code", resp.StatusCode)
+		logutils.ZapLogger().Error("could not load data for", zap.String("cid", cid), zap.Int("code", resp.StatusCode))
 		return nil, errors.New("could not load ipfs data")
 	}
 

@@ -1,9 +1,10 @@
 package thirdparty
 
+//go:generate mockgen -package=mock_thirdparty -source=collectible_types.go -destination=mock/collectible_types.go
+
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"math/big"
 
@@ -13,19 +14,8 @@ import (
 	w_common "github.com/status-im/status-go/services/wallet/common"
 )
 
-var (
-	ErrChainIDNotSupported  = errors.New("chainID not supported")
-	ErrEndpointNotSupported = errors.New("endpoint not supported")
-)
-
-const FetchNoLimit = 0
-const FetchFromStartCursor = ""
-const FetchFromAnyProvider = ""
-
 type CollectibleProvider interface {
-	ID() string
-	IsChainSupported(chainID w_common.ChainID) bool
-	IsConnected() bool
+	ChainProvider
 }
 
 type ContractID struct {

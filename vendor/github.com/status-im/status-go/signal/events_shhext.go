@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/multiformats/go-multiaddr"
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
+
 	"github.com/status-im/status-go/eth-node/types"
+	wakutypes "github.com/status-im/status-go/waku/types"
 )
 
 const (
@@ -102,8 +105,8 @@ type BundleAddedSignal struct {
 }
 
 type MailserverSignal struct {
-	Address string `json:"address"`
-	ID      string `json:"id"`
+	Address *multiaddr.Multiaddr `json:"address"`
+	ID      string               `json:"id"`
 }
 
 type Filter struct {
@@ -118,7 +121,7 @@ type Filter struct {
 	// Identity is the public key of the other recipient for non-public chats
 	Identity string `json:"identity"`
 	// Topic is the whisper topic
-	Topic types.TopicType `json:"topic"`
+	Topic wakutypes.TopicType `json:"topic"`
 }
 
 // SendEnvelopeSent triggered when envelope delivered at least to 1 peer.
@@ -151,8 +154,8 @@ func SendHistoricMessagesRequestStarted(numBatches int) {
 	send(EventHistoryRequestStarted, HistoryMessagesSignal{NumBatches: numBatches})
 }
 
-func SendHistoricMessagesRequestFailed(requestID []byte, peerID peer.ID, err error) {
-	send(EventHistoryRequestFailed, HistoryMessagesSignal{RequestID: hex.EncodeToString(requestID), PeerID: peerID.String(), ErrorMsg: err.Error()})
+func SendHistoricMessagesRequestFailed(requestID []byte, peerInfo peer.AddrInfo, err error) {
+	send(EventHistoryRequestFailed, HistoryMessagesSignal{RequestID: hex.EncodeToString(requestID), PeerID: peerInfo.ID.String(), ErrorMsg: err.Error()})
 }
 
 func SendHistoricMessagesRequestCompleted() {
@@ -218,20 +221,23 @@ func SendNewMessages(obj json.Marshaler) {
 	send(EventNewMessages, obj)
 }
 
-func SendMailserverAvailable(nodeAddress, id string) {
-	send(EventMailserverAvailable, MailserverSignal{
-		Address: nodeAddress,
-		ID:      id,
-	})
+func sendMailserverSignal(ms *wakutypes.Mailserver, event string) {
+	msSignal := MailserverSignal{}
+	if ms != nil {
+		msSignal.Address = ms.Addr
+		msSignal.ID = ms.ID
+	}
+	send(event, msSignal)
 }
 
-func SendMailserverChanged(nodeAddress, id string) {
-	send(EventMailserverChanged, MailserverSignal{
-		Address: nodeAddress,
-		ID:      id,
-	})
+func SendMailserverAvailable(ms *wakutypes.Mailserver) {
+	sendMailserverSignal(ms, EventMailserverAvailable)
+}
+
+func SendMailserverChanged(ms *wakutypes.Mailserver) {
+	sendMailserverSignal(ms, EventMailserverChanged)
 }
 
 func SendMailserverNotWorking() {
-	send(EventMailserverNotWorking, MailserverSignal{})
+	sendMailserverSignal(nil, EventMailserverNotWorking)
 }

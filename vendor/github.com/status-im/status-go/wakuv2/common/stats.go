@@ -5,7 +5,9 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/status-im/status-go/eth-node/types"
+	"github.com/status-im/status-go/common"
+
+	wakutypes "github.com/status-im/status-go/waku/types"
 )
 
 type Measure struct {
@@ -36,6 +38,7 @@ func measure(input interface{}) (*Measure, error) {
 
 func (s *StatsTracker) AddUpload(input interface{}) {
 	go func(input interface{}) {
+		defer common.LogOnPanic()
 		m, err := measure(input)
 		if err != nil {
 			return
@@ -49,6 +52,7 @@ func (s *StatsTracker) AddUpload(input interface{}) {
 
 func (s *StatsTracker) AddDownload(input interface{}) {
 	go func(input interface{}) {
+		defer common.LogOnPanic()
 		m, err := measure(input)
 		if err != nil {
 			return
@@ -62,6 +66,7 @@ func (s *StatsTracker) AddDownload(input interface{}) {
 
 func (s *StatsTracker) AddUploadBytes(size uint64) {
 	go func(size uint64) {
+		defer common.LogOnPanic()
 		m := Measure{
 			Timestamp: time.Now().UnixNano(),
 			Size:      size,
@@ -75,6 +80,7 @@ func (s *StatsTracker) AddUploadBytes(size uint64) {
 
 func (s *StatsTracker) AddDownloadBytes(size uint64) {
 	go func(size uint64) {
+		defer common.LogOnPanic()
 		m := Measure{
 			Timestamp: time.Now().UnixNano(),
 			Size:      size,
@@ -108,9 +114,9 @@ func (s *StatsTracker) GetRatePerSecond() (uploadRate uint64, downloadRate uint6
 	return
 }
 
-func (s *StatsTracker) GetStats() types.StatsSummary {
+func (s *StatsTracker) GetStats() wakutypes.StatsSummary {
 	uploadRate, downloadRate := s.GetRatePerSecond()
-	summary := types.StatsSummary{
+	summary := wakutypes.StatsSummary{
 		UploadRate:   uploadRate,
 		DownloadRate: downloadRate,
 	}

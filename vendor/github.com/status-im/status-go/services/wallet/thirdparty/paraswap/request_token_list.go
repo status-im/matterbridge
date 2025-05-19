@@ -7,7 +7,7 @@ import (
 	"fmt"
 )
 
-const tokensURL = "https://apiv5.paraswap.io/tokens/%d" // nolint: gosec
+const tokensURL = "https://api.paraswap.io/tokens/%d" // nolint: gosec
 
 type Token struct {
 	Symbol   string `json:"symbol"`
@@ -24,7 +24,7 @@ type TokensResponse struct {
 
 func (c *ClientV5) FetchTokensList(ctx context.Context) ([]Token, error) {
 	url := fmt.Sprintf(tokensURL, c.chainID)
-	response, err := c.httpClient.DoGetRequest(ctx, url, nil, nil)
+	response, err := c.httpClient.DoGetRequest(ctx, url, nil)
 	if err != nil {
 		return nil, err
 	}

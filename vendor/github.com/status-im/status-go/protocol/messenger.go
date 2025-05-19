@@ -7,16 +7,15 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/golang/protobuf/proto"
 	"github.com/google/uuid"
+	"github.com/mmcdole/gofeed"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
@@ -25,18 +24,19 @@ import (
 
 	gethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/event"
-	"github.com/ethereum/go-ethereum/p2p"
 
 	"github.com/status-im/status-go/account"
 	"github.com/status-im/status-go/appmetrics"
+	gocommon "github.com/status-im/status-go/common"
 	utils "github.com/status-im/status-go/common"
 	"github.com/status-im/status-go/connection"
 	"github.com/status-im/status-go/contracts"
-	"github.com/status-im/status-go/deprecation"
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/images"
+	"github.com/status-im/status-go/internal/newsfeed"
+	"github.com/status-im/status-go/messaging"
+	"github.com/status-im/status-go/metrics/wakumetrics"
 	multiaccountscommon "github.com/status-im/status-go/multiaccounts/common"
 
 	"github.com/status-im/status-go/multiaccounts"
@@ -44,7 +44,6 @@ import (
 	"github.com/status-im/status-go/multiaccounts/settings"
 	"github.com/status-im/status-go/protocol/anonmetrics"
 	"github.com/status-im/status-go/protocol/common"
-	"github.com/status-im/status-go/protocol/common/shard"
 	"github.com/status-im/status-go/protocol/communities"
 	"github.com/status-im/status-go/protocol/encryption"
 	"github.com/status-im/status-go/protocol/encryption/multidevice"
@@ -59,20 +58,21 @@ import (
 	"github.com/status-im/status-go/protocol/requests"
 	"github.com/status-im/status-go/protocol/sqlite"
 	"github.com/status-im/status-go/protocol/storenodes"
-	"github.com/status-im/status-go/protocol/transport"
 	v1protocol "github.com/status-im/status-go/protocol/v1"
 	"github.com/status-im/status-go/protocol/verification"
 	"github.com/status-im/status-go/server"
 	"github.com/status-im/status-go/services/browsers"
 	ensservice "github.com/status-im/status-go/services/ens"
-	"github.com/status-im/status-go/services/ext/mailservers"
 	localnotifications "github.com/status-im/status-go/services/local-notifications"
 	mailserversDB "github.com/status-im/status-go/services/mailservers"
 	"github.com/status-im/status-go/services/wallet"
 	"github.com/status-im/status-go/services/wallet/community"
 	"github.com/status-im/status-go/services/wallet/token"
 	"github.com/status-im/status-go/signal"
-	"github.com/status-im/status-go/telemetry"
+
+	wakutypes "github.com/status-im/status-go/waku/types"
+
+	_ "github.com/mmcdole/gofeed"
 )
 
 const (
@@ -102,13 +102,11 @@ var messageCacheIntervalMs uint64 = 1000 * 60 * 60 * 48
 // Similarly, it needs to expose an interface to manage
 // mailservers because they can also be managed by the user.
 type Messenger struct {
-	node                      types.Node
-	server                    *p2p.Server
-	peerStore                 *mailservers.PeerStore
+	waku                      wakutypes.Waku
 	config                    *config
 	identity                  *ecdsa.PrivateKey
+	messaging                 *messaging.API
 	persistence               *sqlitePersistence
-	transport                 *transport.Transport
 	encryptor                 *encryption.Protocol
 	sender                    *common.MessageSender
 	ensVerifier               *ens.Verifier
@@ -139,7 +137,6 @@ type Messenger struct {
 	allInstallations           *installationMap
 	modifiedInstallations      *stringBoolMap
 	installationID             string
-	mailserverCycle            mailserverCycle
 	communityStorenodes        *storenodes.CommunityStorenodes
 	database                   *sql.DB
 	multiAccounts              *multiaccounts.Database
@@ -164,7 +161,7 @@ type Messenger struct {
 	}
 
 	connectionState       connection.State
-	telemetryClient       *telemetry.Client
+	wakuMetricsHandler    *wakumetrics.Client
 	contractMaker         *contracts.ContractMaker
 	verificationDatabase  *verification.Persistence
 	savedAddressesManager *wallet.SavedAddressesManager
@@ -172,7 +169,6 @@ type Messenger struct {
 
 	// TODO(samyoul) Determine if/how the remaining usage of this mutex can be removed
 	mutex                     sync.Mutex
-	mailPeersMutex            sync.RWMutex
 	handleMessagesMutex       sync.Mutex
 	handleImportMessagesMutex sync.Mutex
 
@@ -190,41 +186,21 @@ type Messenger struct {
 	unhandledMessagesTracker func(*v1protocol.StatusMessage, error)
 
 	// enables control over chat messages iteration
-	retrievedMessagesIteratorFactory func(map[transport.Filter][]*types.Message) MessagesIterator
+	retrievedMessagesIteratorFactory func(map[messaging.ChatFilter][]*wakutypes.Message) MessagesIterator
 
 	peersyncing         *peersyncing.PeerSyncing
 	peersyncingOffers   map[string]uint64
 	peersyncingRequests map[string]uint64
 
 	mvdsStatusChangeEvent chan datasyncnode.PeerStatusChangeEvent
-}
 
-type connStatus int
+	backedUpFetchingStatus *BackupFetchingStatus
 
-const (
-	disconnected connStatus = iota + 1
-	connecting
-	connected
-)
-
-type peerStatus struct {
-	status                connStatus
-	canConnectAfter       time.Time
-	lastConnectionAttempt time.Time
-	mailserver            mailserversDB.Mailserver
-}
-type mailserverCycle struct {
-	sync.RWMutex
-	allMailservers            []mailserversDB.Mailserver
-	activeMailserver          *mailserversDB.Mailserver
-	peers                     map[string]peerStatus
-	events                    chan *p2p.PeerEvent
-	subscription              event.Subscription
-	availabilitySubscriptions []chan struct{}
+	newsFeedManager *newsfeed.NewsFeedManager
 }
 
 type EnvelopeEventsInterceptor struct {
-	EnvelopeEventsHandler transport.EnvelopeEventsHandler
+	EnvelopeEventsHandler messaging.EnvelopeEventsHandler
 	Messenger             *Messenger
 }
 
@@ -310,9 +286,8 @@ func (interceptor EnvelopeEventsInterceptor) MailServerRequestExpired(hash types
 func NewMessenger(
 	nodeName string,
 	identity *ecdsa.PrivateKey,
-	node types.Node,
+	waku wakutypes.Waku,
 	installationID string,
-	peerStore *mailservers.PeerStore,
 	version string,
 	opts ...Option,
 ) (*Messenger, error) {
@@ -357,40 +332,15 @@ func NewMessenger(
 		return nil, errors.Wrap(err, "failed to apply migrations")
 	}
 
-	// Initialize transport layer.
-	var transp *transport.Transport
-
-	if waku, err := node.GetWaku(nil); err == nil && waku != nil {
-		transp, err = transport.NewTransport(
-			waku,
-			identity,
-			database,
-			"waku_keys",
-			nil,
-			c.envelopesMonitorConfig,
-			logger,
-		)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to create  Transport")
-		}
-	} else {
-		logger.Info("failed to find Waku service; trying WakuV2", zap.Error(err))
-		wakuV2, err := node.GetWakuV2(nil)
-		if err != nil || wakuV2 == nil {
-			return nil, errors.Wrap(err, "failed to find Whisper and Waku V1/V2 services")
-		}
-		transp, err = transport.NewTransport(
-			wakuV2,
-			identity,
-			database,
-			"wakuv2_keys",
-			nil,
-			c.envelopesMonitorConfig,
-			logger,
-		)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to create  Transport")
-		}
+	messaging, err := messaging.NewCore(
+		waku,
+		identity,
+		common.NewMessagingPersistence(database),
+		messaging.WithLogger(logger),
+		messaging.WithEnvelopeEventsConfig(c.envelopeEventsConfig),
+	)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create  messaging core")
 	}
 
 	// Initialize encryption layer.
@@ -403,8 +353,8 @@ func NewMessenger(
 	sender, err := common.NewMessageSender(
 		identity,
 		database,
+		messaging.API(),
 		encryptionProtocol,
-		transp,
 		logger,
 		c.featureFlags,
 	)
@@ -464,7 +414,7 @@ func NewMessenger(
 
 	pushNotificationClient := pushnotificationclient.New(pushNotificationClientPersistence, pushNotificationClientConfig, sender, sqlitePersistence)
 
-	ensVerifier := ens.New(node, logger, transp, database, c.verifyENSURL, c.verifyENSContractAddress)
+	ensVerifier := ens.New(logger, messaging.API(), database, c.verifyENSURL, c.verifyENSContractAddress)
 
 	managerOptions := []communities.ManagerOption{
 		communities.WithAccountManager(c.accountsManager),
@@ -508,8 +458,8 @@ func NewMessenger(
 		logger,
 		ensVerifier,
 		c.communityTokensService,
-		transp,
-		transp,
+		messaging.API(),
+		messaging.API(),
 		communitiesKeyDistributor,
 		c.httpServer,
 		managerOptions...,
@@ -522,7 +472,7 @@ func NewMessenger(
 		TorrentConfig: c.torrentConfig,
 		Logger:        logger,
 		Persistence:   communitiesManager.GetPersistence(),
-		Transport:     transp,
+		Messaging:     messaging.API(),
 		Identity:      identity,
 		Encryptor:     encryptionProtocol,
 		Publisher:     communitiesManager,
@@ -548,28 +498,37 @@ func NewMessenger(
 		return nil, fmt.Errorf("failed to build contact of ourself: %w", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
-	var telemetryClient *telemetry.Client
+	var wakuMetricsHandler *wakumetrics.Client
 	if c.telemetryServerURL != "" {
-		telemetryClient = telemetry.NewClient(logger, c.telemetryServerURL, c.account.KeyUID, nodeName, version)
-		if c.wakuService != nil {
-			c.wakuService.SetStatusTelemetryClient(telemetryClient)
+		options := []wakumetrics.TelemetryClientOption{
+			wakumetrics.WithPeerID(waku.PeerID().String()),
 		}
-		go telemetryClient.Start(ctx)
+		wakuMetricsHandler, err = wakumetrics.NewClient(options...)
+		if err != nil {
+			return nil, err
+		}
+		if c.wakuService != nil {
+			c.wakuService.SetMetricsHandler(wakuMetricsHandler)
+		}
+		sender.SetMetricsHandler(wakuMetricsHandler)
+		err = wakuMetricsHandler.RegisterWithRegistry()
+		if err != nil {
+			return nil, err
+		}
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
 	messenger = &Messenger{
 		config:                     &c,
-		node:                       node,
+		waku:                       waku,
 		identity:                   identity,
+		messaging:                  messaging.API(),
 		persistence:                sqlitePersistence,
-		transport:                  transp,
 		encryptor:                  encryptionProtocol,
 		sender:                     sender,
 		anonMetricsClient:          anonMetricsClient,
 		anonMetricsServer:          anonMetricsServer,
-		telemetryClient:            telemetryClient,
+		wakuMetricsHandler:         wakuMetricsHandler,
 		communityTokensService:     c.communityTokensService,
 		pushNotificationClient:     pushNotificationClient,
 		pushNotificationServer:     pushNotificationServer,
@@ -593,25 +552,20 @@ func NewMessenger(
 		database:                database,
 		multiAccounts:           c.multiAccount,
 		settings:                settings,
-		peersyncing:             peersyncing.New(peersyncing.Config{Database: database, Timesource: transp}),
+		peersyncing:             peersyncing.New(peersyncing.Config{Database: database, Timesource: messaging.API()}),
 		peersyncingOffers:       make(map[string]uint64),
 		peersyncingRequests:     make(map[string]uint64),
-		peerStore:               peerStore,
 		mvdsStatusChangeEvent:   make(chan datasyncnode.PeerStatusChangeEvent, 5),
 		verificationDatabase:    verification.NewPersistence(database),
-		mailserverCycle: mailserverCycle{
-			peers:                     make(map[string]peerStatus),
-			availabilitySubscriptions: make([]chan struct{}, 0),
-		},
-		mailserversDatabase:  c.mailserversDatabase,
-		communityStorenodes:  storenodes.NewCommunityStorenodes(storenodes.NewDB(database), logger),
-		account:              c.account,
-		quit:                 make(chan struct{}),
-		ctx:                  ctx,
-		cancel:               cancel,
-		importingCommunities: make(map[string]bool),
-		importingChannels:    make(map[string]bool),
-		importRateLimiter:    rate.NewLimiter(rate.Every(importSlowRate), 1),
+		mailserversDatabase:     c.mailserversDatabase,
+		communityStorenodes:     storenodes.NewCommunityStorenodes(storenodes.NewDB(database), logger),
+		account:                 c.account,
+		quit:                    make(chan struct{}),
+		ctx:                     ctx,
+		cancel:                  cancel,
+		importingCommunities:    make(map[string]bool),
+		importingChannels:       make(map[string]bool),
+		importRateLimiter:       rate.NewLimiter(rate.Every(importSlowRate), 1),
 		importDelayer: struct {
 			wait chan struct{}
 			once sync.Once
@@ -624,10 +578,11 @@ func NewMessenger(
 			communitiesManager.Stop,
 			archiveManager.Stop,
 			encryptionProtocol.Stop,
+			wakumetrics.UnregisterMetrics,
 			func() error {
 				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 				defer cancel()
-				err := transp.ResetFilters(ctx)
+				err := messaging.API().ResetChatFilters(ctx)
 				if err != nil {
 					logger.Warn("could not reset filters", zap.Error(err))
 				}
@@ -635,7 +590,7 @@ func NewMessenger(
 				// fail
 				return nil
 			},
-			transp.Stop,
+			messaging.API().Stop,
 			func() error { sender.Stop(); return nil },
 			// Currently this often fails, seems like it's safe to ignore them
 			// https://github.com/uber-go/zap/issues/328
@@ -685,19 +640,15 @@ func NewMessenger(
 		messenger.shutdownTasks = append(messenger.shutdownTasks, anonMetricsServer.Stop)
 	}
 
-	if c.envelopesMonitorConfig != nil {
-		interceptor := EnvelopeEventsInterceptor{c.envelopesMonitorConfig.EnvelopeEventsHandler, messenger}
-		err := messenger.transport.SetEnvelopeEventsHandler(interceptor)
+	if c.envelopeEventsConfig != nil {
+		interceptor := EnvelopeEventsInterceptor{c.envelopeEventsConfig.EnvelopeEventsHandler, messenger}
+		err := messenger.messaging.SetEnvelopeEventsHandler(interceptor)
 		if err != nil {
 			logger.Info("Unable to set envelopes event handler", zap.Error(err))
 		}
 	}
 
 	return messenger, nil
-}
-
-func (m *Messenger) SetP2PServer(server *p2p.Server) {
-	m.server = server
 }
 
 func (m *Messenger) EnableBackedupMessagesProcessing() {
@@ -825,7 +776,7 @@ func (m *Messenger) Start() (*MessengerResponse, error) {
 	m.schedulePublishGrantsForControlledCommunities()
 	m.handleENSVerificationSubscription(ensSubscription)
 	m.watchConnectionChange()
-	m.watchChatsAndCommunitiesToUnmute()
+	m.watchChatsToUnmute()
 	m.watchCommunitiesToUnmute()
 	m.watchExpiredMessages()
 	m.watchIdentityImageChanges()
@@ -858,22 +809,19 @@ func (m *Messenger) Start() (*MessengerResponse, error) {
 	}
 	response := &MessengerResponse{}
 
-	mailservers, err := m.allMailservers()
+	response.Mailservers, err = m.AllMailservers()
 	if err != nil {
 		return nil, err
 	}
 
-	response.Mailservers = mailservers
-	err = m.StartMailserverCycle(mailservers)
-	if err != nil {
-		return nil, err
-	}
+	m.messaging.SetStorenodeConfigProvider(m)
 
 	if err := m.communityStorenodes.ReloadFromDB(); err != nil {
 		return nil, err
 	}
 
 	go m.checkForMissingMessagesLoop()
+	go m.checkForStorenodeCycleSignals()
 
 	controlledCommunities, err := m.communitiesManager.Controlled()
 	if err != nil {
@@ -881,33 +829,26 @@ func (m *Messenger) Start() (*MessengerResponse, error) {
 	}
 
 	if m.archiveManager.IsReady() {
-		available := m.SubscribeMailserverAvailable()
 		go func() {
-			<-available
+			defer gocommon.LogOnPanic()
+
+			select {
+			case <-m.ctx.Done():
+				return
+			case <-m.messaging.OnStorenodeAvailable():
+			}
+
 			m.InitHistoryArchiveTasks(controlledCommunities)
 		}()
 	}
 
 	for _, c := range controlledCommunities {
 		if c.Joined() && c.HasTokenPermissions() {
-			go m.communitiesManager.StartMembersReevaluationLoop(c.ID(), false)
+			m.communitiesManager.StartMembersReevaluationLoop(c.ID(), false)
 		}
 	}
 
-	joinedCommunities, err := m.communitiesManager.Joined()
-	if err != nil {
-		return nil, err
-	}
-
-	for _, joinedCommunity := range joinedCommunities {
-		// resume importing message history archives in case
-		// imports have been interrupted previously
-		err := m.resumeHistoryArchivesImport(joinedCommunity.ID())
-		if err != nil {
-			return nil, err
-		}
-	}
-	m.enableHistoryArchivesImportAfterDelay()
+	go m.startHistoryArchivesImportLoop()
 
 	if m.httpServer != nil {
 		err = m.httpServer.Start()
@@ -945,7 +886,68 @@ func (m *Messenger) Start() (*MessengerResponse, error) {
 		}
 	}
 
+	if m.processBackedupMessages {
+		m.backedUpFetchingStatus = &BackupFetchingStatus{
+			dataProgress:      make(map[string]FetchingBackedUpDataTracking),
+			lastKnownMsgClock: 0,
+			fetchingCompleted: false,
+		}
+		err = m.startBackupFetchingTracking(response)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if m.config.featureFlags.EnableNewsFeed {
+		lastFetched, err := m.settings.NewsFeedLastFetchedTimestamp()
+		if err != nil {
+			return nil, err
+		}
+		var feedUrl string
+		if gocommon.IsMobilePlatform() {
+			feedUrl = newsfeed.STATUS_MOBILE_FEED_URL
+		} else {
+			feedUrl = newsfeed.STATUS_DESKTOP_FEED_URL
+		}
+		m.newsFeedManager = newsfeed.NewNewsFeedManager(
+			newsfeed.WithURL(feedUrl),
+			newsfeed.WithParser(gofeed.NewParser()),
+			newsfeed.WithHandler(m),
+			newsfeed.WithLogger(m.logger),
+			newsfeed.WithPollingInterval(30*time.Minute),
+			newsfeed.WithFetchFrom(lastFetched),
+		)
+
+		newsFeedEnabled, err := m.IsNewsFeedEnabled()
+		if err != nil {
+			return nil, err
+		}
+		if newsFeedEnabled {
+			m.newsFeedManager.StartPolling(m.ctx)
+		}
+	}
+
 	return response, nil
+}
+
+func (m *Messenger) startHistoryArchivesImportLoop() {
+	defer gocommon.LogOnPanic()
+	joinedCommunities, err := m.communitiesManager.Joined()
+	if err != nil {
+		m.logger.Error("failed to get joined communities", zap.Error(err))
+		return
+	}
+
+	for _, joinedCommunity := range joinedCommunities {
+		// resume importing message history archives in case
+		// imports have been interrupted previously
+		err := m.resumeHistoryArchivesImport(joinedCommunity.ID())
+		if err != nil {
+			m.logger.Error("failed to resume history archives import", zap.Error(err))
+			continue
+		}
+	}
+	m.enableHistoryArchivesImportAfterDelay()
 }
 
 func (m *Messenger) SetMediaServer(server *server.MediaServer) {
@@ -970,8 +972,8 @@ func (m *Messenger) cleanTopics() error {
 	if m.mailserversDatabase == nil {
 		return nil
 	}
-	var filters []*transport.Filter
-	for _, f := range m.transport.Filters() {
+	var filters messaging.ChatFilters
+	for _, f := range m.messaging.ChatFilters() {
 		if f.Listen && !f.Ephemeral {
 			filters = append(filters, f)
 		}
@@ -1016,12 +1018,11 @@ func (m *Messenger) handleConnectionChange(online bool) {
 }
 
 func (m *Messenger) Online() bool {
-	switch m.transport.WakuVersion() {
-	case 2:
-		return m.transport.PeerCount() > 0
-	default:
-		return m.node.PeersCount() > 0
+	if m.config.onlineChecker != nil {
+		return m.config.onlineChecker()
 	}
+
+	return m.messaging.PeerCount() > 0
 }
 
 func (m *Messenger) buildContactCodeAdvertisement() (*protobuf.ContactCodeAdvertisement, error) {
@@ -1071,11 +1072,12 @@ func (m *Messenger) publishContactCode() error {
 		return err
 	}
 
-	contactCodeTopic := transport.ContactCodeTopic(&m.identity.PublicKey)
+	contactCodeTopic := messaging.ContactCodeTopic(&m.identity.PublicKey)
 	rawMessage := common.RawMessage{
 		LocalChatID: contactCodeTopic,
 		MessageType: protobuf.ApplicationMetadataMessage_CONTACT_CODE_ADVERTISEMENT,
 		Payload:     payload,
+		Priority:    &common.LowPriority,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1105,7 +1107,7 @@ func (m *Messenger) publishContactCode() error {
 // contactCodeAdvertisement attaches a protobuf.ChatIdentity to the given protobuf.ContactCodeAdvertisement,
 // if the `shouldPublish` conditions are met
 func (m *Messenger) attachChatIdentity(cca *protobuf.ContactCodeAdvertisement) error {
-	contactCodeTopic := transport.ContactCodeTopic(&m.identity.PublicKey)
+	contactCodeTopic := messaging.ContactCodeTopic(&m.identity.PublicKey)
 	shouldPublish, err := m.shouldPublishChatIdentity(contactCodeTopic)
 	if err != nil {
 		return err
@@ -1182,6 +1184,7 @@ func (m *Messenger) handleStandaloneChatIdentity(chat *Chat) error {
 		LocalChatID: chat.ID,
 		MessageType: protobuf.ApplicationMetadataMessage_CHAT_IDENTITY,
 		Payload:     payload,
+		Priority:    &common.LowPriority,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1322,7 +1325,7 @@ func (m *Messenger) createChatIdentity(context ChatContext) (*protobuf.ChatIdent
 	}
 
 	ci := &protobuf.ChatIdentity{
-		Clock:              m.transport.GetCurrentTime(),
+		Clock:              m.getTimesource().GetCurrentTime(),
 		EnsName:            "", // TODO add ENS name handling to dedicate PR
 		DisplayName:        displayName,
 		Description:        bio,
@@ -1373,10 +1376,7 @@ func (m *Messenger) attachIdentityImagesToChatIdentity(context ChatContext, ci *
 			return nil
 		}
 
-		m.logger.Debug(fmt.Sprintf("%s images.IdentityImage '%s'", context, spew.Sdump(img)))
-
 		ciis[images.SmallDimName] = m.adaptIdentityImageToProtobuf(img)
-		m.logger.Debug(fmt.Sprintf("%s protobuf.IdentityImage '%s'", context, spew.Sdump(ciis)))
 		ci.Images = ciis
 
 	case privateChat:
@@ -1387,12 +1387,9 @@ func (m *Messenger) attachIdentityImagesToChatIdentity(context ChatContext, ci *
 			return err
 		}
 
-		m.logger.Debug(fmt.Sprintf("%s images.IdentityImage '%s'", context, spew.Sdump(imgs)))
-
 		for _, img := range imgs {
 			ciis[img.Name] = m.adaptIdentityImageToProtobuf(img)
 		}
-		m.logger.Debug(fmt.Sprintf("%s protobuf.IdentityImage '%s'", context, spew.Sdump(ciis)))
 		ci.Images = ciis
 
 	default:
@@ -1416,7 +1413,7 @@ func (m *Messenger) handleSharedSecrets(secrets []*sharedsecret.Secret) error {
 			PublicKey: secret.Identity,
 			Key:       secret.Key,
 		}
-		_, err := m.transport.ProcessNegotiatedSecret(fSecret)
+		_, err := m.messaging.ProcessNegotiatedSecret(fSecret)
 		if err != nil {
 			return err
 		}
@@ -1439,6 +1436,7 @@ func (m *Messenger) handleInstallations(installations []*multidevice.Installatio
 // handleEncryptionLayerSubscriptions handles events from the encryption layer
 func (m *Messenger) handleEncryptionLayerSubscriptions(subscriptions *encryption.Subscriptions) {
 	go func() {
+		defer gocommon.LogOnPanic()
 		for {
 			select {
 			case <-subscriptions.SendContactCode:
@@ -1446,7 +1444,7 @@ func (m *Messenger) handleEncryptionLayerSubscriptions(subscriptions *encryption
 					m.logger.Error("failed to publish contact code", zap.Error(err))
 				}
 				// we also piggy-back to clean up cached messages
-				if err := m.transport.CleanMessagesProcessed(m.getTimesource().GetCurrentTime() - messageCacheIntervalMs); err != nil {
+				if err := m.messaging.CleanMessagesProcessed(m.getTimesource().GetCurrentTime() - messageCacheIntervalMs); err != nil {
 					m.logger.Error("failed to clean processed messages", zap.Error(err))
 				}
 
@@ -1493,6 +1491,7 @@ func (m *Messenger) handleENSVerified(records []*ens.VerificationRecord) {
 
 func (m *Messenger) handleENSVerificationSubscription(c chan []*ens.VerificationRecord) {
 	go func() {
+		defer gocommon.LogOnPanic()
 		for {
 			select {
 			case records, more := <-c:
@@ -1531,20 +1530,8 @@ func (m *Messenger) watchConnectionChange() {
 		m.handleConnectionChange(state)
 	}
 
-	pollConnectionStatus := func() {
-		func() {
-			for {
-				select {
-				case <-time.After(200 * time.Millisecond):
-					processNewState(m.Online())
-				case <-m.quit:
-					return
-				}
-			}
-		}()
-	}
-
-	subscribedConnectionStatus := func(subscription *types.ConnStatusSubscription) {
+	subscribedConnectionStatus := func(subscription *wakutypes.ConnStatusSubscription) {
+		defer gocommon.LogOnPanic()
 		defer subscription.Unsubscribe()
 		ticker := time.NewTicker(keepAlivePeriod)
 		defer ticker.Stop()
@@ -1563,50 +1550,47 @@ func (m *Messenger) watchConnectionChange() {
 	m.logger.Debug("watching connection changes")
 	m.handleConnectionChange(state)
 
-	waku, err := m.node.GetWakuV2(nil)
-	if err != nil {
-		// No waku v2, we can't watch connection changes
-		// Instead we will poll the connection status.
-		m.logger.Warn("using WakuV1, can't watch connection changes, this might be have side-effects")
-		go pollConnectionStatus()
-		return
-	}
-
-	// Wakuv2 is not going to return an error
-	// from SubscribeToConnStatusChanges
-	subscription, _ := waku.SubscribeToConnStatusChanges()
-
+	subscription, _ := m.waku.SubscribeToConnStatusChanges()
 	go subscribedConnectionStatus(subscription)
 }
 
-// watchChatsAndCommunitiesToUnmute regularly checks for chats and communities that should be unmuted
-func (m *Messenger) watchChatsAndCommunitiesToUnmute() {
-	m.logger.Debug("watching unmuted chats")
+// watchChatsToUnmute checks every minute to identify and unmute chats that should no longer be muted.
+func (m *Messenger) watchChatsToUnmute() {
+	m.logger.Debug("Checking for chats to unmute every minute")
 	go func() {
+		defer gocommon.LogOnPanic()
 		for {
-			select {
-			case <-time.After(1 * time.Minute):
-				response := &MessengerResponse{}
-				m.allChats.Range(func(chatID string, c *Chat) bool {
-					chatMuteTill, _ := time.Parse(time.RFC3339, c.MuteTill.Format(time.RFC3339))
-					currTime, _ := time.Parse(time.RFC3339, time.Now().Format(time.RFC3339))
+			// Execute the check immediately upon starting
+			response := &MessengerResponse{}
+			currTime := time.Now()
 
-					if currTime.After(chatMuteTill) && !chatMuteTill.Equal(time.Time{}) && c.Muted {
-						err := m.persistence.UnmuteChat(c.ID)
-						if err != nil {
-							m.logger.Info("err", zap.Any("Couldn't unmute chat", err))
-							return false
-						}
-						c.Muted = false
-						c.MuteTill = time.Time{}
-						response.AddChat(c)
+			m.allChats.Range(func(chatID string, c *Chat) bool {
+				chatMuteTill := c.MuteTill
+				if currTime.After(chatMuteTill) && !chatMuteTill.Equal(time.Time{}) && c.Muted {
+					err := m.persistence.UnmuteChat(c.ID)
+					if err != nil {
+						m.logger.Warn("watchChatsToUnmute error", zap.Any("Couldn't unmute chat", err))
+						return false
 					}
-					return true
-				})
-
-				if !response.IsEmpty() {
-					signal.SendNewMessages(response)
+					c.Muted = false
+					c.MuteTill = time.Time{}
+					response.AddChat(c)
 				}
+				return true
+			})
+
+			if !response.IsEmpty() {
+				signal.SendNewMessages(response)
+			}
+
+			// Calculate the time until the next whole minute
+			now := time.Now()
+			waitDuration := time.Until(now.Truncate(time.Minute).Add(time.Minute))
+
+			// Wait until the next minute
+			select {
+			case <-time.After(waitDuration):
+				// Continue to next iteration
 			case <-m.quit:
 				return
 			}
@@ -1614,21 +1598,31 @@ func (m *Messenger) watchChatsAndCommunitiesToUnmute() {
 	}()
 }
 
-// watchCommunitiesToUnmute regularly checks for communities that should be unmuted
+// watchCommunitiesToUnmute checks every minute to identify and unmute communities that should no longer be muted.
 func (m *Messenger) watchCommunitiesToUnmute() {
-	m.logger.Debug("watching unmuted communities")
+	logger := m.logger.Named("watchCommunitiesToUnmute")
+	logger.Debug("starting")
+
+	check := func() {
+		response, err := m.CheckCommunitiesToUnmute()
+		if err != nil {
+			logger.Warn("couldn't check communities to unmute", zap.Error(err))
+		} else if !response.IsEmpty() {
+			signal.SendNewMessages(response)
+		}
+	}
+
 	go func() {
+		defer gocommon.LogOnPanic()
+		check()
+
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+
 		for {
 			select {
-			case <-time.After(1 * time.Minute):
-				response, err := m.CheckCommunitiesToUnmute()
-				if err != nil {
-					return
-				}
-
-				if !response.IsEmpty() {
-					signal.SendNewMessages(response)
-				}
+			case <-ticker.C:
+				check()
 			case <-m.quit:
 				return
 			}
@@ -1646,6 +1640,7 @@ func (m *Messenger) watchIdentityImageChanges() {
 	channel := m.multiAccounts.SubscribeToIdentityImageChanges()
 
 	go func() {
+		defer gocommon.LogOnPanic()
 		for {
 			select {
 			case change := <-channel:
@@ -1683,6 +1678,7 @@ func (m *Messenger) watchPendingCommunityRequestToJoin() {
 	m.logger.Debug("watching community request to join")
 
 	go func() {
+		defer gocommon.LogOnPanic()
 		for {
 			select {
 			case <-time.After(time.Minute * 10):
@@ -1717,6 +1713,7 @@ func (m *Messenger) PublishIdentityImage() error {
 // handlePushNotificationClientRegistration handles registration events
 func (m *Messenger) handlePushNotificationClientRegistrations(c chan struct{}) {
 	go func() {
+		defer gocommon.LogOnPanic()
 		for {
 			_, more := <-c
 			if !more {
@@ -1728,220 +1725,6 @@ func (m *Messenger) handlePushNotificationClientRegistrations(c chan struct{}) {
 
 		}
 	}()
-}
-
-// InitFilters analyzes chats and contacts in order to setup filters
-// which are responsible for retrieving messages.
-func (m *Messenger) InitFilters() error {
-
-	// Seed the for color generation
-	rand.Seed(time.Now().Unix())
-
-	logger := m.logger.With(zap.String("site", "Init"))
-
-	// Community requests will arrive in this pubsub topic
-	err := m.SubscribeToPubsubTopic(shard.DefaultNonProtectedPubsubTopic(), nil)
-	if err != nil {
-		return err
-	}
-
-	var (
-		filtersToInit []transport.FiltersToInitialize
-		publicKeys    []*ecdsa.PublicKey
-	)
-
-	joinedCommunities, err := m.communitiesManager.Joined()
-	if err != nil {
-		return err
-	}
-	for _, org := range joinedCommunities {
-		// the org advertise on the public topic derived by the pk
-		filtersToInit = append(filtersToInit, m.DefaultFilters(org)...)
-
-		// This is for status-go versions that didn't have `CommunitySettings`
-		// We need to ensure communities that existed before community settings
-		// were introduced will have community settings as well
-		exists, err := m.communitiesManager.CommunitySettingsExist(org.ID())
-		if err != nil {
-			logger.Warn("failed to check if community settings exist", zap.Error(err))
-			continue
-		}
-
-		if !exists {
-			communitySettings := communities.CommunitySettings{
-				CommunityID:                  org.IDString(),
-				HistoryArchiveSupportEnabled: true,
-			}
-
-			err = m.communitiesManager.SaveCommunitySettings(communitySettings)
-			if err != nil {
-				logger.Warn("failed to save community settings", zap.Error(err))
-			}
-			continue
-		}
-
-		// In case we do have settings, but the history archive support is disabled
-		// for this community, we enable it, as this should be the default for all
-		// non-admin communities
-		communitySettings, err := m.communitiesManager.GetCommunitySettingsByID(org.ID())
-		if err != nil {
-			logger.Warn("failed to fetch community settings", zap.Error(err))
-			continue
-		}
-
-		if !org.IsControlNode() && !communitySettings.HistoryArchiveSupportEnabled {
-			communitySettings.HistoryArchiveSupportEnabled = true
-			err = m.communitiesManager.UpdateCommunitySettings(*communitySettings)
-			if err != nil {
-				logger.Warn("failed to update community settings", zap.Error(err))
-			}
-		}
-	}
-
-	spectatedCommunities, err := m.communitiesManager.Spectated()
-	if err != nil {
-		return err
-	}
-	for _, org := range spectatedCommunities {
-		filtersToInit = append(filtersToInit, m.DefaultFilters(org)...)
-	}
-
-	// Get chat IDs and public keys from the existing chats.
-	// TODO: Get only active chats by the query.
-	chats, err := m.persistence.Chats()
-	if err != nil {
-		return err
-	}
-
-	communityInfo := make(map[string]*communities.Community)
-	for _, chat := range chats {
-		if err := chat.Validate(); err != nil {
-			logger.Warn("failed to validate chat", zap.Error(err))
-			continue
-		}
-
-		if err = m.initChatFirstMessageTimestamp(chat); err != nil {
-			logger.Warn("failed to init first message timestamp", zap.Error(err))
-			continue
-		}
-
-		if !chat.Active || chat.Timeline() {
-			m.allChats.Store(chat.ID, chat)
-			continue
-		}
-
-		switch chat.ChatType {
-		case ChatTypePublic, ChatTypeProfile:
-			filtersToInit = append(filtersToInit, transport.FiltersToInitialize{ChatID: chat.ID})
-		case ChatTypeCommunityChat:
-			community, ok := communityInfo[chat.CommunityID]
-			if !ok {
-				community, err = m.communitiesManager.GetByIDString(chat.CommunityID)
-				if err != nil {
-					return err
-				}
-				communityInfo[chat.CommunityID] = community
-			}
-
-			if chat.UnviewedMessagesCount > 0 || chat.UnviewedMentionsCount > 0 {
-				// Make sure the unread count is 0 for the channels the user cannot view
-				// It's possible that the users received messages to a channel before permissions were added
-				canView := community.CanView(&m.identity.PublicKey, chat.CommunityChatID())
-
-				if !canView {
-					chat.UnviewedMessagesCount = 0
-					chat.UnviewedMentionsCount = 0
-				}
-			}
-
-			filtersToInit = append(filtersToInit, transport.FiltersToInitialize{ChatID: chat.ID, PubsubTopic: community.PubsubTopic()})
-		case ChatTypeOneToOne:
-			pk, err := chat.PublicKey()
-			if err != nil {
-				return err
-			}
-			publicKeys = append(publicKeys, pk)
-		case ChatTypePrivateGroupChat:
-			for _, member := range chat.Members {
-				publicKey, err := member.PublicKey()
-				if err != nil {
-					return errors.Wrapf(err, "invalid public key for member %s in chat %s", member.ID, chat.Name)
-				}
-				publicKeys = append(publicKeys, publicKey)
-			}
-		default:
-			return errors.New("invalid chat type")
-		}
-
-		m.allChats.Store(chat.ID, chat)
-	}
-
-	// Timeline and profile chats are deprecated.
-	// This code can be removed after some reasonable time.
-
-	// upsert timeline chat
-	if !deprecation.ChatProfileDeprecated {
-		err = m.ensureTimelineChat()
-		if err != nil {
-			return err
-		}
-	}
-
-	// upsert profile chat
-	if !deprecation.ChatTimelineDeprecated {
-		err = m.ensureMyOwnProfileChat()
-		if err != nil {
-			return err
-		}
-	}
-
-	// Get chat IDs and public keys from the contacts.
-	contacts, err := m.persistence.Contacts()
-	if err != nil {
-		return err
-	}
-	for idx, contact := range contacts {
-		if err = m.updateContactImagesURL(contact); err != nil {
-			return err
-		}
-		m.allContacts.Store(contact.ID, contacts[idx])
-		// We only need filters for contacts added by us and not blocked.
-		if !contact.added() || contact.Blocked {
-			continue
-		}
-		publicKey, err := contact.PublicKey()
-		if err != nil {
-			logger.Error("failed to get contact's public key", zap.Error(err))
-			continue
-		}
-		publicKeys = append(publicKeys, publicKey)
-	}
-
-	_, err = m.transport.InitFilters(filtersToInit, publicKeys)
-	if err != nil {
-		return err
-	}
-
-	// Init filters for the communities we control
-	var communityFiltersToInitialize []transport.CommunityFilterToInitialize
-	controlledCommunities, err := m.communitiesManager.Controlled()
-	if err != nil {
-		return err
-	}
-
-	for _, c := range controlledCommunities {
-		communityFiltersToInitialize = append(communityFiltersToInitialize, transport.CommunityFilterToInitialize{
-			Shard:   c.Shard(),
-			PrivKey: c.PrivateKey(),
-		})
-	}
-
-	_, err = m.InitCommunityFilters(communityFiltersToInitialize)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 // Shutdown takes care of ensuring a clean shutdown of Messenger
@@ -1998,24 +1781,84 @@ func (m *Messenger) Mailservers() ([]string, error) {
 	return nil, ErrNotImplemented
 }
 
-func (m *Messenger) initChatFirstMessageTimestamp(chat *Chat) error {
-	if !chat.CommunityChat() || chat.FirstMessageTimestamp != FirstMessageTimestampUndefined {
+func (m *Messenger) initChatsFirstMessageTimestamp(communityCache map[string]*communities.Community, chats []*Chat) {
+	communityChats, communityChatIDs := m.filterCommunityChats(chats)
+	if len(communityChatIDs) == 0 {
+		return
+	}
+
+	oldestMessageTimestamps, err := m.persistence.OldestMessageWhisperTimestampByChatIDs(communityChatIDs)
+	if err != nil {
+		m.logger.Warn("failed to get oldest message timestamps", zap.Error(err))
+		return
+	}
+
+	changedCommunities := m.processCommunityChats(communityChats, communityCache, oldestMessageTimestamps)
+	m.saveAndPublishCommunities(changedCommunities)
+}
+
+func (m *Messenger) filterCommunityChats(chats []*Chat) ([]*Chat, []string) {
+	var communityChats []*Chat
+	var communityChatIDs []string
+	for _, chat := range chats {
+		if chat.CommunityChat() && chat.FirstMessageTimestamp == FirstMessageTimestampUndefined {
+			communityChats = append(communityChats, chat)
+			communityChatIDs = append(communityChatIDs, chat.ID)
+		}
+	}
+	return communityChats, communityChatIDs
+}
+
+func (m *Messenger) processCommunityChats(communityChats []*Chat, communityCache map[string]*communities.Community, oldestMessageTimestamps map[string]uint64) []*communities.Community {
+	var changedCommunities []*communities.Community
+	for _, chat := range communityChats {
+		community := m.getCommunity(chat.CommunityID, communityCache)
+		if community == nil {
+			continue
+		}
+
+		oldestMessageTimestamp, ok := oldestMessageTimestamps[chat.ID]
+		timestamp := uint32(FirstMessageTimestampNoMessage)
+		if ok {
+			if oldestMessageTimestamp == FirstMessageTimestampUndefined {
+				continue
+			}
+			timestamp = whisperToUnixTimestamp(oldestMessageTimestamp)
+		}
+
+		changes, err := m.updateChatFirstMessageTimestampForCommunity(chat, timestamp, community)
+		if err != nil {
+			m.logger.Warn("failed to init first message timestamp", zap.Error(err), zap.String("chatID", chat.ID))
+			continue
+		}
+		if changes != nil {
+			changedCommunities = append(changedCommunities, community)
+		}
+	}
+	return changedCommunities
+}
+
+func (m *Messenger) getCommunity(communityID string, communityCache map[string]*communities.Community) *communities.Community {
+	community, ok := communityCache[communityID]
+	if ok {
+		return community
+	}
+	community, err := m.communitiesManager.GetByIDString(communityID)
+	if err != nil {
+		m.logger.Warn("failed to get community", zap.Error(err), zap.String("communityID", communityID))
 		return nil
 	}
+	communityCache[communityID] = community
+	return community
+}
 
-	oldestMessageTimestamp, hasAnyMessage, err := m.persistence.OldestMessageWhisperTimestampByChatID(chat.ID)
-	if err != nil {
-		return err
-	}
-
-	if hasAnyMessage {
-		if oldestMessageTimestamp == FirstMessageTimestampUndefined {
-			return nil
+func (m *Messenger) saveAndPublishCommunities(communities []*communities.Community) {
+	for _, community := range communities {
+		err := m.communitiesManager.SaveAndPublish(community)
+		if err != nil {
+			m.logger.Warn("failed to save and publish community", zap.Error(err), zap.String("communityID", community.IDString()))
 		}
-		return m.updateChatFirstMessageTimestamp(chat, whisperToUnixTimestamp(oldestMessageTimestamp), &MessengerResponse{})
 	}
-
-	return m.updateChatFirstMessageTimestamp(chat, FirstMessageTimestampNoMessage, &MessengerResponse{})
 }
 
 func (m *Messenger) addMessagesAndChat(chat *Chat, messages []*common.Message, response *MessengerResponse) (*MessengerResponse, error) {
@@ -2103,6 +1946,10 @@ func (m *Messenger) dispatchPairInstallationMessage(ctx context.Context, spec co
 }
 
 func (m *Messenger) dispatchMessage(ctx context.Context, rawMessage common.RawMessage) (common.RawMessage, error) {
+	if rawMessage.ContentTopic == "" {
+		rawMessage.ContentTopic = rawMessage.LocalChatID
+	}
+
 	var err error
 	var id []byte
 	logger := m.logger.With(zap.String("site", "dispatchMessage"), zap.String("chatID", rawMessage.LocalChatID))
@@ -2137,7 +1984,7 @@ func (m *Messenger) dispatchMessage(ctx context.Context, rawMessage common.RawMe
 
 	case ChatTypePublic, ChatTypeProfile:
 		logger.Debug("sending public message", zap.String("chatName", chat.Name))
-		id, err = m.sender.SendPublic(ctx, chat.ID, rawMessage)
+		id, err = m.sender.SendPublic(ctx, rawMessage.ContentTopic, rawMessage)
 		if err != nil {
 			return rawMessage, err
 		}
@@ -2147,6 +1994,9 @@ func (m *Messenger) dispatchMessage(ctx context.Context, rawMessage common.RawMe
 		if err != nil {
 			return rawMessage, err
 		}
+		// Use a single content-topic for all community chats.
+		// Reasoning: https://github.com/status-im/status-go/pull/5864
+		rawMessage.ContentTopic = community.UniversalChatID()
 		rawMessage.PubsubTopic = community.PubsubTopic()
 
 		canPost, err := m.communitiesManager.CanPost(&m.identity.PublicKey, chat.CommunityID, chat.CommunityChatID(), rawMessage.MessageType)
@@ -2160,7 +2010,7 @@ func (m *Messenger) dispatchMessage(ctx context.Context, rawMessage common.RawMe
 				zap.String("chatName", chat.Name),
 				zap.Any("messageType", rawMessage.MessageType),
 			)
-			return rawMessage, fmt.Errorf("can't post message type '%d' on chat '%s'", rawMessage.MessageType, chat.ID)
+			return rawMessage, fmt.Errorf("can't post message type '%d' on chat '%s'", rawMessage.MessageType, gocommon.TruncateWithDot(chat.ID))
 		}
 
 		logger.Debug("sending community chat message", zap.String("chatName", chat.Name))
@@ -2174,7 +2024,7 @@ func (m *Messenger) dispatchMessage(ctx context.Context, rawMessage common.RawMe
 		}
 		isEncrypted := isCommunityEncrypted || isChannelEncrypted
 		if !isEncrypted {
-			id, err = m.sender.SendPublic(ctx, chat.ID, rawMessage)
+			id, err = m.sender.SendPublic(ctx, rawMessage.ContentTopic, rawMessage)
 			if err != nil {
 				return rawMessage, err
 			}
@@ -2306,7 +2156,7 @@ func (m *Messenger) sendChatMessage(ctx context.Context, message *common.Message
 	if err == nil {
 		message.Text = replacedText
 	} else {
-		m.logger.Error("failed to replace text with public key", zap.String("chatID", message.ChatId), zap.String("text", message.Text))
+		m.logger.Error("failed to replace text with public key", zap.String("chatID", gocommon.TruncateWithDot(message.ChatId)), zap.Error(err))
 	}
 
 	if len(message.ImagePath) != 0 {
@@ -2436,7 +2286,7 @@ func (m *Messenger) sendChatMessage(ctx context.Context, message *common.Message
 			ID:        types.Hex2Bytes(rawMessage.ID),
 			ChatID:    []byte(chat.ID),
 			Payload:   wrappedMessage,
-			Timestamp: m.transport.GetCurrentTime() / 1000,
+			Timestamp: m.getTimesource().GetCurrentTime() / 1000,
 		}
 
 		// If the chat type is not supported, skip saving it
@@ -2510,6 +2360,13 @@ func (m *Messenger) updateChatFirstMessageTimestamp(chat *Chat, timestamp uint32
 	}
 
 	return nil
+}
+
+func (m *Messenger) updateChatFirstMessageTimestampForCommunity(chat *Chat, timestamp uint32, community *communities.Community) (*communities.CommunityChanges, error) {
+	if community.IsControlNode() && chat.UpdateFirstMessageTimestamp(timestamp) {
+		return m.communitiesManager.UpdateChatFirstMessageTimestamp(community, chat.ID, chat.FirstMessageTimestamp)
+	}
+	return nil, nil
 }
 
 func (m *Messenger) ShareImageMessage(request *requests.ShareImageMessage) (*MessengerResponse, error) {
@@ -3022,7 +2879,7 @@ func (m *Messenger) SyncVerificationRequest(ctx context.Context, vr *verificatio
 // RetrieveAll retrieves messages from all filters, processes them and returns a
 // MessengerResponse to the client
 func (m *Messenger) RetrieveAll() (*MessengerResponse, error) {
-	chatWithMessages, err := m.transport.RetrieveRawAll()
+	chatWithMessages, err := m.messaging.RetrieveRawAll()
 	if err != nil {
 		return nil, err
 	}
@@ -3033,6 +2890,7 @@ func (m *Messenger) RetrieveAll() (*MessengerResponse, error) {
 func (m *Messenger) StartRetrieveMessagesLoop(tick time.Duration, cancel <-chan struct{}) {
 	m.shutdownWaitGroup.Add(1)
 	go func() {
+		defer gocommon.LogOnPanic()
 		defer m.shutdownWaitGroup.Done()
 		ticker := time.NewTicker(tick)
 		defer ticker.Stop()
@@ -3068,12 +2926,8 @@ func (m *Messenger) PublishMessengerResponse(response *MessengerResponse) {
 	localnotifications.PushMessages(notifications)
 }
 
-func (m *Messenger) GetStats() types.StatsSummary {
-	return m.transport.GetStats()
-}
-
-func (m *Messenger) GetTransport() *transport.Transport {
-	return m.transport
+func (m *Messenger) GetStats() wakutypes.StatsSummary {
+	return m.messaging.GetStats()
 }
 
 type CurrentMessageState struct {
@@ -3101,9 +2955,10 @@ type ReceivedMessageState struct {
 	// List of contacts modified
 	ModifiedContacts *stringBoolMap
 	// All installations in memory
-	AllInstallations *installationMap
-	// List of communities modified
+	AllInstallations      *installationMap
 	ModifiedInstallations *stringBoolMap
+	// List of installations targeted to this device modified
+	TargetedInstallations *stringBoolMap
 	// Map of existing messages
 	ExistingMessagesMap map[string]bool
 	// EmojiReactions is a list of emoji reactions for the current batch
@@ -3136,12 +2991,12 @@ func (r *ReceivedMessageState) addNewMessageNotification(publicKey ecdsa.PublicK
 
 	chat, ok := r.AllChats.Load(m.LocalChatID)
 	if !ok {
-		return fmt.Errorf("chat ID '%s' not present", m.LocalChatID)
+		return fmt.Errorf("chat ID '%s' not present", gocommon.TruncateWithDot(m.LocalChatID))
 	}
 
 	contact, ok := r.AllContacts.Load(contactID)
 	if !ok {
-		return fmt.Errorf("contact ID '%s' not present", contactID)
+		return fmt.Errorf("contact ID '%s' not present", gocommon.TruncateWithDot(contactID))
 	}
 
 	if !chat.Muted {
@@ -3211,7 +3066,7 @@ func (r *ReceivedMessageState) addNewActivityCenterNotification(publicKey ecdsa.
 
 	chat, ok := r.AllChats.Load(message.LocalChatID)
 	if !ok {
-		return fmt.Errorf("chat ID '%s' not present", message.LocalChatID)
+		return fmt.Errorf("chat ID '%s' not present", gocommon.TruncateWithDot(message.LocalChatID))
 	}
 
 	isNotification, notificationType := showMentionOrReplyActivityCenterNotification(publicKey, message, chat, responseTo)
@@ -3276,6 +3131,7 @@ func (m *Messenger) buildMessageState() *ReceivedMessageState {
 		ModifiedContacts:      new(stringBoolMap),
 		AllInstallations:      m.allInstallations,
 		ModifiedInstallations: m.modifiedInstallations,
+		TargetedInstallations: new(stringBoolMap),
 		ExistingMessagesMap:   make(map[string]bool),
 		EmojiReactions:        make(map[string]*EmojiReaction),
 		GroupChatInvitations:  make(map[string]*GroupChatInvitation),
@@ -3287,7 +3143,7 @@ func (m *Messenger) buildMessageState() *ReceivedMessageState {
 	}
 }
 
-func (m *Messenger) outputToCSV(timestamp uint32, messageID types.HexBytes, from string, topic types.TopicType, chatID string, msgType protobuf.ApplicationMetadataMessage_Type, parsedMessage interface{}) {
+func (m *Messenger) outputToCSV(timestamp uint32, messageID types.HexBytes, from string, topic wakutypes.TopicType, chatID string, msgType protobuf.ApplicationMetadataMessage_Type, parsedMessage interface{}) {
 	if !m.outputCSV {
 		return
 	}
@@ -3319,7 +3175,7 @@ func (m *Messenger) shouldSkipDuplicate(messageType protobuf.ApplicationMetadata
 	return true
 }
 
-func (m *Messenger) handleImportedMessages(messagesToHandle map[transport.Filter][]*types.Message) error {
+func (m *Messenger) handleImportedMessages(messagesToHandle map[messaging.ChatFilter][]*wakutypes.Message) error {
 
 	messageState := m.buildMessageState()
 
@@ -3460,7 +3316,7 @@ func (m *Messenger) handleImportedMessages(messagesToHandle map[transport.Filter
 	return nil
 }
 
-func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filter][]*types.Message, storeWakuMessages bool, fromArchive bool) (*MessengerResponse, error) {
+func (m *Messenger) handleRetrievedMessages(chatWithMessages map[messaging.ChatFilter][]*wakutypes.Message, storeWakuMessages bool, fromArchive bool) (*MessengerResponse, error) {
 
 	m.handleMessagesMutex.Lock()
 	defer m.handleMessagesMutex.Unlock()
@@ -3471,7 +3327,17 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 
 	controlledCommunitiesChatIDs, err := m.communitiesManager.GetOwnedCommunitiesChatIDs()
 	if err != nil {
-		logger.Info("failed to retrieve admin communities", zap.Error(err))
+		logger.Error("failed to retrieve admin communities", zap.Error(err))
+		return nil, err
+	}
+
+	// fetch universal chatIDs as well.
+	controlledCommunitiesUniversalChatIDs, err := m.communitiesManager.GetOwnedCommunitiesUniversalChatIDs()
+	if err != nil {
+		logger.Info("failed to retrieve controlled communities", zap.Error(err))
+	}
+	for chatID, flag := range controlledCommunitiesUniversalChatIDs {
+		controlledCommunitiesChatIDs[chatID] = flag
 	}
 
 	iterator := m.retrievedMessagesIteratorFactory(chatWithMessages)
@@ -3494,9 +3360,6 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 
 			handleMessagesResponse, err := m.sender.HandleMessages(shhMessage)
 			if err != nil {
-				if m.telemetryClient != nil {
-					go m.telemetryClient.UpdateEnvelopeProcessingError(shhMessage, err)
-				}
 				logger.Info("failed to decode messages", zap.Error(err))
 				continue
 			}
@@ -3507,10 +3370,10 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 
 			statusMessages := handleMessagesResponse.StatusMessages
 
-			if m.telemetryClient != nil {
-				m.telemetryClient.PushReceivedMessages(m.ctx, telemetry.ReceivedMessages{
+			if m.wakuMetricsHandler != nil {
+				m.wakuMetricsHandler.PushReceivedMessages(wakumetrics.ReceivedMessages{
 					Filter:     filter,
-					SSHMessage: shhMessage,
+					SHHMessage: shhMessage,
 					Messages:   statusMessages,
 				})
 			}
@@ -3588,7 +3451,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 					err := m.dispatchToHandler(messageState, msg.ApplicationLayer.Payload, msg, filter, fromArchive)
 					if err != nil {
 						allMessagesProcessed = false
-						logger.Warn("failed to process protobuf", zap.Error(err))
+						logger.Warn("failed to process protobuf", zap.String("type", msg.ApplicationLayer.Type.String()), zap.Error(err))
 						if m.unhandledMessagesTracker != nil {
 							m.unhandledMessagesTracker(msg, err)
 						}
@@ -3607,7 +3470,7 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 			// actually processed them, this is because we need to differentiate
 			// from messages that we want to retry to process and messages that
 			// are never going to be processed
-			m.transport.MarkP2PMessageAsProcessed(gethcommon.BytesToHash(shhMessage.Hash))
+			m.messaging.MarkP2PMessageAsProcessed(gethcommon.BytesToHash(shhMessage.Hash))
 
 			if allMessagesProcessed {
 				processedMessages = append(processedMessages, types.EncodeHex(shhMessage.Hash))
@@ -3615,13 +3478,39 @@ func (m *Messenger) handleRetrievedMessages(chatWithMessages map[transport.Filte
 		}
 
 		if len(processedMessages) != 0 {
-			if err := m.transport.ConfirmMessagesProcessed(processedMessages, m.getTimesource().GetCurrentTime()); err != nil {
+			if err := m.messaging.ConfirmMessagesProcessed(processedMessages, m.getTimesource().GetCurrentTime()); err != nil {
 				logger.Warn("failed to confirm processed messages", zap.Error(err))
 			}
 		}
 	}
 
 	return m.saveDataAndPrepareResponse(messageState)
+}
+
+func (m *Messenger) deleteNotification(response *MessengerResponse, installationID string) error {
+	notification, err := m.persistence.GetActivityCenterNotificationByID(types.FromHex(installationID))
+	if err != nil {
+		return err
+	}
+
+	if notification == nil {
+		return nil
+	}
+
+	updatedAt := m.GetCurrentTimeInMillis()
+	notification.UpdatedAt = updatedAt
+	notification.Deleted = true
+	// we shouldn't sync deleted notification here,
+	// as the same user on different devices will receive the same message(CommunityCancelRequestToJoin) ?
+	err = m.persistence.DeleteActivityCenterNotificationByID(types.FromHex(installationID), updatedAt)
+	if err != nil {
+		m.logger.Error("failed to delete notification from Activity Center", zap.Error(err))
+		return err
+	}
+
+	// sending signal to client to remove the activity center notification from UI
+	response.AddActivityCenterNotification(notification)
+	return nil
 }
 
 func (m *Messenger) saveDataAndPrepareResponse(messageState *ReceivedMessageState) (*MessengerResponse, error) {
@@ -3660,6 +3549,34 @@ func (m *Messenger) saveDataAndPrepareResponse(messageState *ReceivedMessageStat
 			err = m.setInstallationMetadata(id, installation.InstallationMetadata)
 			if err != nil {
 				return false
+			}
+		}
+
+		targeted, _ := messageState.TargetedInstallations.Load(id)
+		if targeted {
+			if installation.Enabled {
+				// Delete AC notif since the installation is now enabled
+				err = m.deleteNotification(messageState.Response, id)
+				if err != nil {
+					m.logger.Error("error deleting notification", zap.Error(err))
+					return false
+				}
+			} else if id != m.installationID {
+				// Add activity center notification when we receive a new installation
+				notification := &ActivityCenterNotification{
+					ID:             types.FromHex(id),
+					Type:           ActivityCenterNotificationTypeNewInstallationReceived,
+					InstallationID: id,
+					Timestamp:      m.getTimesource().GetCurrentTime(),
+					Read:           false,
+					Deleted:        false,
+					UpdatedAt:      m.GetCurrentTimeInMillis(),
+				}
+
+				err = m.addActivityCenterNotification(messageState.Response, notification, nil)
+				if err != nil {
+					return false
+				}
 			}
 		}
 
@@ -4332,7 +4249,7 @@ func (m *Messenger) MarkAllReadInCommunity(ctx context.Context, communityID stri
 			m.allChats.Store(chat.ID, chat)
 			response.AddChat(chat)
 		} else {
-			err = fmt.Errorf("chat with chatID %s not found", chatID)
+			err = fmt.Errorf("chat with chatID %s not found", gocommon.TruncateWithDot(chatID))
 		}
 	}
 	return response, err
@@ -4378,6 +4295,8 @@ func (m *Messenger) MuteChat(request *requests.MuteChat) (time.Time, error) {
 		MuteTill = time.Now().Add(MuteFor1HrsDuration)
 	case MuteFor8Hr:
 		MuteTill = time.Now().Add(MuteFor8HrsDuration)
+	case MuteFor24Hr:
+		MuteTill = time.Now().Add(MuteFor24HrsDuration)
 	case MuteFor1Week:
 		MuteTill = time.Now().Add(MuteFor1WeekDuration)
 	default:
@@ -4505,7 +4424,7 @@ func (m *Messenger) RequestTransaction(ctx context.Context, chatID, value, contr
 	}
 
 	message := common.NewMessage()
-	err := extendMessageFromChat(message, chat, &m.identity.PublicKey, m.transport)
+	err := extendMessageFromChat(message, chat, &m.identity.PublicKey, m.getTimesource())
 	if err != nil {
 		return nil, err
 	}
@@ -4557,7 +4476,7 @@ func (m *Messenger) RequestTransaction(ctx context.Context, chatID, value, contr
 		return nil, err
 	}
 
-	err = chat.UpdateFromMessage(message, m.transport)
+	err = chat.UpdateFromMessage(message, m.getTimesource())
 	if err != nil {
 		return nil, err
 	}
@@ -4583,7 +4502,7 @@ func (m *Messenger) RequestAddressForTransaction(ctx context.Context, chatID, fr
 	}
 
 	message := common.NewMessage()
-	err := extendMessageFromChat(message, chat, &m.identity.PublicKey, m.transport)
+	err := extendMessageFromChat(message, chat, &m.identity.PublicKey, m.getTimesource())
 	if err != nil {
 		return nil, err
 	}
@@ -4635,7 +4554,7 @@ func (m *Messenger) RequestAddressForTransaction(ctx context.Context, chatID, fr
 		return nil, err
 	}
 
-	err = chat.UpdateFromMessage(message, m.transport)
+	err = chat.UpdateFromMessage(message, m.getTimesource())
 	if err != nil {
 		return nil, err
 	}
@@ -4671,7 +4590,7 @@ func (m *Messenger) AcceptRequestAddressForTransaction(ctx context.Context, mess
 		return nil, errors.New("Need to be a one-to-one chat")
 	}
 
-	clock, timestamp := chat.NextClockAndTimestamp(m.transport)
+	clock, timestamp := chat.NextClockAndTimestamp(m.getTimesource())
 	message.Clock = clock
 	message.WhisperTimestamp = timestamp
 	message.Timestamp = timestamp
@@ -4731,7 +4650,7 @@ func (m *Messenger) AcceptRequestAddressForTransaction(ctx context.Context, mess
 		return nil, err
 	}
 
-	err = chat.UpdateFromMessage(message, m.transport)
+	err = chat.UpdateFromMessage(message, m.getTimesource())
 	if err != nil {
 		return nil, err
 	}
@@ -4767,7 +4686,7 @@ func (m *Messenger) DeclineRequestTransaction(ctx context.Context, messageID str
 		return nil, errors.New("Need to be a one-to-one chat")
 	}
 
-	clock, timestamp := chat.NextClockAndTimestamp(m.transport)
+	clock, timestamp := chat.NextClockAndTimestamp(m.getTimesource())
 	message.Clock = clock
 	message.WhisperTimestamp = timestamp
 	message.Timestamp = timestamp
@@ -4814,7 +4733,7 @@ func (m *Messenger) DeclineRequestTransaction(ctx context.Context, messageID str
 		return nil, err
 	}
 
-	err = chat.UpdateFromMessage(message, m.transport)
+	err = chat.UpdateFromMessage(message, m.getTimesource())
 	if err != nil {
 		return nil, err
 	}
@@ -4850,7 +4769,7 @@ func (m *Messenger) DeclineRequestAddressForTransaction(ctx context.Context, mes
 		return nil, errors.New("Need to be a one-to-one chat")
 	}
 
-	clock, timestamp := chat.NextClockAndTimestamp(m.transport)
+	clock, timestamp := chat.NextClockAndTimestamp(m.getTimesource())
 	message.Clock = clock
 	message.WhisperTimestamp = timestamp
 	message.Timestamp = timestamp
@@ -4897,7 +4816,7 @@ func (m *Messenger) DeclineRequestAddressForTransaction(ctx context.Context, mes
 		return nil, err
 	}
 
-	err = chat.UpdateFromMessage(message, m.transport)
+	err = chat.UpdateFromMessage(message, m.getTimesource())
 	if err != nil {
 		return nil, err
 	}
@@ -4933,7 +4852,7 @@ func (m *Messenger) AcceptRequestTransaction(ctx context.Context, transactionHas
 		return nil, errors.New("Need to be a one-to-one chat")
 	}
 
-	clock, timestamp := chat.NextClockAndTimestamp(m.transport)
+	clock, timestamp := chat.NextClockAndTimestamp(m.getTimesource())
 	message.Clock = clock
 	message.WhisperTimestamp = timestamp
 	message.Timestamp = timestamp
@@ -4997,7 +4916,7 @@ func (m *Messenger) AcceptRequestTransaction(ctx context.Context, transactionHas
 		return nil, err
 	}
 
-	err = chat.UpdateFromMessage(message, m.transport)
+	err = chat.UpdateFromMessage(message, m.getTimesource())
 	if err != nil {
 		return nil, err
 	}
@@ -5023,7 +4942,7 @@ func (m *Messenger) SendTransaction(ctx context.Context, chatID, value, contract
 	}
 
 	message := common.NewMessage()
-	err := extendMessageFromChat(message, chat, &m.identity.PublicKey, m.transport)
+	err := extendMessageFromChat(message, chat, &m.identity.PublicKey, m.getTimesource())
 	if err != nil {
 		return nil, err
 	}
@@ -5032,7 +4951,7 @@ func (m *Messenger) SendTransaction(ctx context.Context, chatID, value, contract
 	message.ContentType = protobuf.ChatMessage_TRANSACTION_COMMAND
 	message.LocalChatID = chatID
 
-	clock, timestamp := chat.NextClockAndTimestamp(m.transport)
+	clock, timestamp := chat.NextClockAndTimestamp(m.getTimesource())
 	message.Clock = clock
 	message.WhisperTimestamp = timestamp
 	message.Seen = true
@@ -5079,7 +4998,7 @@ func (m *Messenger) SendTransaction(ctx context.Context, chatID, value, contract
 		return nil, err
 	}
 
-	err = chat.UpdateFromMessage(message, m.transport)
+	err = chat.UpdateFromMessage(message, m.getTimesource())
 	if err != nil {
 		return nil, err
 	}
@@ -5117,13 +5036,13 @@ func (m *Messenger) ValidateTransactions(ctx context.Context, addresses []types.
 		chatID := contactIDFromPublicKey(validationResult.Transaction.From)
 		chat, ok := m.allChats.Load(chatID)
 		if !ok {
-			chat = OneToOneFromPublicKey(validationResult.Transaction.From, m.transport)
+			chat = OneToOneFromPublicKey(validationResult.Transaction.From, m.getTimesource())
 		}
 		if validationResult.Message != nil {
 			message = validationResult.Message
 		} else {
 			message = common.NewMessage()
-			err := extendMessageFromChat(message, chat, &m.identity.PublicKey, m.transport)
+			err := extendMessageFromChat(message, chat, &m.identity.PublicKey, m.getTimesource())
 			if err != nil {
 				return nil, err
 			}
@@ -5134,7 +5053,7 @@ func (m *Messenger) ValidateTransactions(ctx context.Context, addresses []types.
 		message.LocalChatID = chatID
 		message.OutgoingStatus = ""
 
-		clock, timestamp := chat.NextClockAndTimestamp(m.transport)
+		clock, timestamp := chat.NextClockAndTimestamp(m.getTimesource())
 		message.Clock = clock
 		message.Timestamp = timestamp
 		message.WhisperTimestamp = timestamp
@@ -5159,7 +5078,7 @@ func (m *Messenger) ValidateTransactions(ctx context.Context, addresses []types.
 			return nil, err
 		}
 
-		err = chat.UpdateFromMessage(message, m.transport)
+		err = chat.UpdateFromMessage(message, m.getTimesource())
 		if err != nil {
 			return nil, err
 		}
@@ -5243,8 +5162,12 @@ func (m *Messenger) CreateCommunityTokenDeploymentSignature(ctx context.Context,
 	return m.communitiesManager.CreateCommunityTokenDeploymentSignature(ctx, chainID, addressFrom, communityID)
 }
 
+func (m *Messenger) GetTimesource() common.TimeSource {
+	return m.getTimesource()
+}
+
 func (m *Messenger) getTimesource() common.TimeSource {
-	return m.transport
+	return m.messaging
 }
 
 func (m *Messenger) GetCurrentTimeInMillis() uint64 {
@@ -5521,10 +5444,6 @@ func (m *Messenger) getOrBuildContactFromMessage(msg *common.Message) (*Contact,
 	return c, nil
 }
 
-func (m *Messenger) BloomFilter() []byte {
-	return m.transport.BloomFilter()
-}
-
 func (m *Messenger) getSettings() (settings.Settings, error) {
 	sDB, err := accounts.NewDB(m.database)
 	if err != nil {
@@ -5661,6 +5580,7 @@ func (m *Messenger) startCleanupLoop(name string, cleanupFunc func() error) {
 	logger := m.logger.Named(name)
 
 	go func() {
+		defer gocommon.LogOnPanic()
 		// Delay by a few minutes to minimize messenger's startup time
 		var interval time.Duration = 5 * time.Minute
 		for {

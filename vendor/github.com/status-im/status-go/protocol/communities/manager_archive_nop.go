@@ -7,8 +7,9 @@ import (
 	"time"
 
 	"github.com/status-im/status-go/eth-node/types"
+	"github.com/status-im/status-go/messaging"
 	"github.com/status-im/status-go/params"
-	"github.com/status-im/status-go/protocol/transport"
+	wakutypes "github.com/status-im/status-go/waku/types"
 )
 
 type ArchiveManagerNop struct {
@@ -41,11 +42,11 @@ func (tmm *ArchiveManagerNop) IsReady() bool {
 	return false
 }
 
-func (tmm *ArchiveManagerNop) GetCommunityChatsFilters(communityID types.HexBytes) ([]*transport.Filter, error) {
+func (tmm *ArchiveManagerNop) GetCommunityChatsFilters(communityID types.HexBytes) (messaging.ChatFilters, error) {
 	return nil, nil
 }
 
-func (tmm *ArchiveManagerNop) GetCommunityChatsTopics(communityID types.HexBytes) ([]types.TopicType, error) {
+func (tmm *ArchiveManagerNop) GetCommunityChatsTopics(communityID types.HexBytes) ([]wakutypes.TopicType, error) {
 	return nil, nil
 }
 
@@ -53,7 +54,7 @@ func (tmm *ArchiveManagerNop) GetHistoryArchivePartitionStartTimestamp(community
 	return 0, nil
 }
 
-func (tmm *ArchiveManagerNop) CreateAndSeedHistoryArchive(communityID types.HexBytes, topics []types.TopicType, startDate time.Time, endDate time.Time, partition time.Duration, encrypt bool) error {
+func (tmm *ArchiveManagerNop) CreateAndSeedHistoryArchive(communityID types.HexBytes, topics []wakutypes.TopicType, startDate time.Time, endDate time.Time, partition time.Duration, encrypt bool) error {
 	return nil
 }
 

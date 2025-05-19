@@ -10,14 +10,14 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-
-	"github.com/ethereum/go-ethereum/log"
+	"go.uber.org/zap"
 
 	"github.com/mat/besticon/besticon"
 
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/images"
 	userimage "github.com/status-im/status-go/images"
+	"github.com/status-im/status-go/logutils"
 	multiaccountscommon "github.com/status-im/status-go/multiaccounts/common"
 	"github.com/status-im/status-go/protocol/common"
 
@@ -1189,58 +1189,6 @@ func (db sqlitePersistence) StatusUpdates() (statusUpdates []UserStatus, err err
 	return
 }
 
-func (db sqlitePersistence) DeleteSwitcherCard(cardID string) error {
-	_, err := db.db.Exec("DELETE from switcher_cards WHERE card_id = ?", cardID)
-	return err
-}
-
-func (db sqlitePersistence) UpsertSwitcherCard(switcherCard SwitcherCard) error {
-	_, err := db.db.Exec(`INSERT INTO switcher_cards(
-		card_id,
-		type,
-		clock,
-		screen_id)
-		VALUES (?, ?, ?, ?)`,
-		switcherCard.CardID,
-		switcherCard.Type,
-		switcherCard.Clock,
-		switcherCard.ScreenID,
-	)
-
-	return err
-}
-
-func (db sqlitePersistence) SwitcherCards() (switcherCards []SwitcherCard, err error) {
-	rows, err := db.db.Query(`
-		SELECT
-			card_id,
-			type,
-			clock,
-			screen_id
-		FROM switcher_cards
-	`)
-	if err != nil {
-		return
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var switcherCard SwitcherCard
-		err = rows.Scan(
-			&switcherCard.CardID,
-			&switcherCard.Type,
-			&switcherCard.Clock,
-			&switcherCard.ScreenID,
-		)
-		if err != nil {
-			return
-		}
-		switcherCards = append(switcherCards, switcherCard)
-	}
-
-	return
-}
-
 func (db sqlitePersistence) NextHigherClockValueOfAutomaticStatusUpdates(clock uint64) (uint64, error) {
 	var nextClock uint64
 
@@ -1323,7 +1271,7 @@ func (db *sqlitePersistence) AddBookmark(bookmark browsers.Bookmark) (browsers.B
 			bookmark.ImageURL = icons[0].URL
 		}
 	} else {
-		log.Error("error getting the bookmark icon", "iconError", iconError)
+		logutils.ZapLogger().Error("error getting the bookmark icon", zap.Error(iconError))
 	}
 
 	_, err = insert.Exec(bookmark.URL, bookmark.Name, bookmark.ImageURL, bookmark.Removed, bookmark.Clock)
