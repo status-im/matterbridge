@@ -371,7 +371,7 @@ require (
 
 go 1.22
 
-toolchain go1.24.2
+toolchain go1.22.10
 
 replace github.com/ethereum/go-ethereum v1.10.26 => github.com/status-im/go-ethereum v1.10.25-status.19
 
