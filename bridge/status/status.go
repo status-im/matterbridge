@@ -15,15 +15,12 @@ import (
 	"github.com/42wim/matterbridge/bridge/config"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
-	"github.com/syndtr/goleveldb/leveldb"
-	"github.com/syndtr/goleveldb/leveldb/storage"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 
 	crypto "github.com/ethereum/go-ethereum/crypto"
 	api "github.com/status-im/status-go/api"
 	"github.com/status-im/status-go/appdatabase"
-	gethbridge "github.com/status-im/status-go/eth-node/bridge/geth"
 	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/multiaccounts"
 	"github.com/status-im/status-go/multiaccounts/accounts"
@@ -37,8 +34,8 @@ import (
 	"github.com/status-im/status-go/protocol/identity/alias"
 	"github.com/status-im/status-go/protocol/protobuf"
 	"github.com/status-im/status-go/protocol/requests"
-	"github.com/status-im/status-go/services/ext/mailservers"
-	mailserversDB "github.com/status-im/status-go/services/mailservers"
+	//"github.com/status-im/status-go/services/ext/mailservers"
+	//mailserversDB "github.com/status-im/status-go/services/mailservers"
 
 	"github.com/status-im/status-go/common/dbsetup"
 	"github.com/status-im/status-go/walletdatabase"
@@ -310,9 +307,8 @@ func (b *Bstatus) Send(msg config.Message) (string, error) {
 			return "", errors.Wrap(err, "failed to decode status message ID")
 		}
 		editedMessage := &requests.EditMessage{
-			ID:          decodedStatusMessageID,
-			Text:        msg.Text,
-			ContentType: protobuf.ChatMessage_BRIDGE_MESSAGE,
+			ID:   decodedStatusMessageID,
+			Text: msg.Text,
 		}
 		response, err := b.messenger.EditMessage(context.Background(), editedMessage)
 		if err != nil {
@@ -346,12 +342,15 @@ func (b *Bstatus) Connect() error {
 		b.privateKey = privKey
 	}
 
+	// Create a custom logger to suppress DEBUG messages
+	logger, _ := zap.NewProduction()
+
 	b.nodeConfig, err = b.generateNodeConfig()
 	if err != nil {
 		return errors.Wrap(err, "Failed to generate node config")
 	}
 
-	backend := api.NewGethStatusBackend()
+	backend := api.NewGethStatusBackend(logger)
 	b.statusNode = backend.StatusNode()
 
 	walletDB, err := walletdatabase.InitializeDB(b.statusDataDir+"/"+"wallet.db", "", dbsetup.ReducedKDFIterationsNumber)
@@ -387,14 +386,10 @@ func (b *Bstatus) Connect() error {
 		return errors.Wrap(err, "Failed to start status node")
 	}
 
-	// Create a custom logger to suppress DEBUG messages
-	logger, _ := zap.NewProduction()
-
 	options := []status.Option{
 		status.WithDatabase(appDB),
 		status.WithWalletDatabase(walletDB),
 		status.WithCustomLogger(logger),
-		status.WithMailserversDatabase(mailserversDB.NewDB(appDB)),
 		status.WithClusterConfig(b.nodeConfig.ClusterConfig),
 		status.WithCheckingForBackupDisabled(),
 		status.WithAutoMessageDisabled(),
@@ -404,24 +399,18 @@ func (b *Bstatus) Connect() error {
 		status.WithAccountManager(backend.AccountManager()),
 	}
 
-	ldb, _ := leveldb.Open(storage.NewMemStorage(), nil)
-	cache := mailservers.NewCache(ldb)
-	peerStore := mailservers.NewPeerStore(cache)
-
 	messenger, err := status.NewMessenger(
 		"status bridge messenger",
 		b.privateKey,
-		gethbridge.NewNodeBridge(b.statusNode.GethNode(), nil, b.statusNode.WakuV2Service()),
+		b.statusNode.WakuV2Service(),
 		installationID,
-		peerStore,
-		"v0.182.39-0",
+		"v10.26.0",
 		options...,
 	)
 	if err != nil {
 		return errors.Wrap(err, "Failed to create Messenger")
 	}
 
-	messenger.SetP2PServer(b.statusNode.GethNode().Server())
 	messenger.EnableBackedupMessagesProcessing()
 
 	if _, err := messenger.Start(); err != nil {
