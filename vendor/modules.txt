@@ -270,8 +270,8 @@ github.com/edsrzf/mmap-go
 ## explicit; go 1.14
 github.com/elastic/gosigar
 github.com/elastic/gosigar/sys/windows
-# github.com/ethereum/go-ethereum v1.10.26 => github.com/status-im/go-ethereum v1.10.25-status.15
-## explicit; go 1.17
+# github.com/ethereum/go-ethereum v1.10.26 => github.com/status-im/go-ethereum v1.10.25-status.19
+## explicit; go 1.21
 github.com/ethereum/go-ethereum
 github.com/ethereum/go-ethereum/accounts
 github.com/ethereum/go-ethereum/accounts/abi
@@ -1526,9 +1526,6 @@ github.com/status-im/status-go/wakuv2/common
 github.com/status-im/status-go/wakuv2/persistence
 github.com/status-im/status-go/walletdatabase
 github.com/status-im/status-go/walletdatabase/migrations
-# github.com/status-im/status-go/extkeys v1.1.2
-## explicit; go 1.13
-github.com/status-im/status-go/extkeys
 # github.com/stretchr/objx v0.5.2
 ## explicit; go 1.20
 github.com/stretchr/objx

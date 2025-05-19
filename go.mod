@@ -45,7 +45,6 @@ require (
 	github.com/spf13/viper v1.16.0
 	github.com/status-im/status-go v1.1.1-0.20250519103238-bcc0364dea91
 	github.com/stretchr/testify v1.9.0
-	github.com/syndtr/goleveldb v1.0.1-0.20220614013038-64ee5596c38a
 	github.com/vincent-petithory/dataurl v1.0.0
 	github.com/writeas/go-strip-markdown v2.0.1+incompatible
 	github.com/yaegashi/msgraph.go v0.1.4
@@ -296,9 +295,9 @@ require (
 	github.com/status-im/markdown v0.0.0-20240404192634-b7e33c6ac3d4 // indirect
 	github.com/status-im/migrate/v4 v4.6.2-status.3 // indirect
 	github.com/status-im/mvds v0.0.27-0.20241031073756-b192c603a75d // indirect
-	github.com/status-im/status-go/extkeys v1.1.2 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/subosito/gotenv v1.4.2 // indirect
+	github.com/syndtr/goleveldb v1.0.1-0.20220614013038-64ee5596c38a // indirect
 	github.com/tinylib/msgp v1.1.6 // indirect
 	github.com/tklauser/go-sysconf v0.3.11 // indirect
 	github.com/tklauser/numcpus v0.6.0 // indirect
@@ -374,7 +373,7 @@ go 1.22
 
 toolchain go1.24.2
 
-replace github.com/ethereum/go-ethereum v1.10.26 => github.com/status-im/go-ethereum v1.10.25-status.15
+replace github.com/ethereum/go-ethereum v1.10.26 => github.com/status-im/go-ethereum v1.10.25-status.19
 
 replace github.com/mutecomm/go-sqlcipher/v4 v4.4.2 => github.com/status-im/go-sqlcipher/v4 v4.5.4-status.2
 
