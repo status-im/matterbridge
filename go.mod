@@ -43,7 +43,7 @@ require (
 	github.com/sirupsen/logrus v1.9.3
 	github.com/slack-go/slack v0.12.2
 	github.com/spf13/viper v1.16.0
-	github.com/status-im/status-go v1.1.1-0.20250519103238-bcc0364dea91
+	github.com/status-im/status-go v1.1.1-0.20250521110245-96ce1e1b9191
 	github.com/stretchr/testify v1.9.0
 	github.com/vincent-petithory/dataurl v1.0.0
 	github.com/writeas/go-strip-markdown v2.0.1+incompatible
@@ -75,12 +75,12 @@ require (
 	github.com/anacrolix/confluence v1.9.0 // indirect
 	github.com/anacrolix/dht/v2 v2.15.2-0.20220123034220-0538803801cb // indirect
 	github.com/anacrolix/envpprof v1.1.1 // indirect
-	github.com/anacrolix/go-libutp v1.3.1 // indirect
+	github.com/anacrolix/go-libutp v1.3.2 // indirect
 	github.com/anacrolix/log v0.13.1 // indirect
 	github.com/anacrolix/missinggo v1.3.0 // indirect
 	github.com/anacrolix/missinggo/perf v1.0.0 // indirect
 	github.com/anacrolix/missinggo/v2 v2.5.2 // indirect
-	github.com/anacrolix/mmsg v1.0.0 // indirect
+	github.com/anacrolix/mmsg v1.0.1 // indirect
 	github.com/anacrolix/multiless v0.2.0 // indirect
 	github.com/anacrolix/stm v0.3.0 // indirect
 	github.com/anacrolix/sync v0.4.0 // indirect

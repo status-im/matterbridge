@@ -75,7 +75,7 @@ github.com/anacrolix/dht/v2/types
 # github.com/anacrolix/envpprof v1.1.1
 ## explicit; go 1.12
 github.com/anacrolix/envpprof
-# github.com/anacrolix/go-libutp v1.3.1
+# github.com/anacrolix/go-libutp v1.3.2
 ## explicit; go 1.14
 github.com/anacrolix/go-libutp
 # github.com/anacrolix/log v0.13.1
@@ -102,7 +102,7 @@ github.com/anacrolix/missinggo/v2/bitmap
 github.com/anacrolix/missinggo/v2/iter
 github.com/anacrolix/missinggo/v2/pproffd
 github.com/anacrolix/missinggo/v2/resource
-# github.com/anacrolix/mmsg v1.0.0
+# github.com/anacrolix/mmsg v1.0.1
 ## explicit
 github.com/anacrolix/mmsg
 github.com/anacrolix/mmsg/socket
@@ -1293,7 +1293,7 @@ github.com/status-im/mvds/state/migrations
 github.com/status-im/mvds/store
 github.com/status-im/mvds/store/migrations
 github.com/status-im/mvds/transport
-# github.com/status-im/status-go v1.1.1-0.20250519103238-bcc0364dea91
+# github.com/status-im/status-go v1.1.1-0.20250521110245-96ce1e1b9191
 ## explicit; go 1.22
 github.com/status-im/status-go/abi-spec
 github.com/status-im/status-go/account
@@ -1361,6 +1361,7 @@ github.com/status-im/status-go/healthmanager/provider_errors
 github.com/status-im/status-go/healthmanager/rpcstatus
 github.com/status-im/status-go/images
 github.com/status-im/status-go/internal/newsfeed
+github.com/status-im/status-go/internal/security
 github.com/status-im/status-go/internal/sentry
 github.com/status-im/status-go/internal/version
 github.com/status-im/status-go/ipfs
@@ -1368,7 +1369,10 @@ github.com/status-im/status-go/logutils
 github.com/status-im/status-go/logutils/callog
 github.com/status-im/status-go/logutils/requestlog
 github.com/status-im/status-go/messaging
-github.com/status-im/status-go/messaging/transport
+github.com/status-im/status-go/messaging/adapters
+github.com/status-im/status-go/messaging/layers/transport
+github.com/status-im/status-go/messaging/types
+github.com/status-im/status-go/messaging/utils
 github.com/status-im/status-go/metrics
 github.com/status-im/status-go/metrics/wakumetrics
 github.com/status-im/status-go/multiaccounts

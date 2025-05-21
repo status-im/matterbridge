@@ -19,6 +19,7 @@ import (
 
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
+	"github.com/status-im/status-go/internal/security"
 	"github.com/status-im/status-go/internal/version"
 	"github.com/status-im/status-go/logutils"
 	"github.com/status-im/status-go/static"
@@ -420,25 +421,25 @@ type NodeConfig struct {
 // WalletConfig extra configuration for wallet.Service.
 type WalletConfig struct {
 	Enabled                   bool
-	OpenseaAPIKey             string                `json:"OpenseaAPIKey"`
-	RaribleMainnetAPIKey      string                `json:"RaribleMainnetAPIKey"`
-	RaribleTestnetAPIKey      string                `json:"RaribleTestnetAPIKey"`
-	AlchemyAPIKeys            map[uint64]string     `json:"AlchemyAPIKeys"`
-	InfuraAPIKey              string                `json:"InfuraAPIKey"`
-	InfuraAPIKeySecret        string                `json:"InfuraAPIKeySecret"`
-	StatusProxyMarketUser     string                `json:"StatusProxyMarketUser"`
-	StatusProxyMarketPassword string                `json:"StatusProxyMarketPassword"`
-	MarketDataProxyConfig     MarketDataProxyConfig `json:"MarketDataProxyConfig"`
+	OpenseaAPIKey             security.SensitiveString            `json:"OpenseaAPIKey"`
+	RaribleMainnetAPIKey      security.SensitiveString            `json:"RaribleMainnetAPIKey"`
+	RaribleTestnetAPIKey      security.SensitiveString            `json:"RaribleTestnetAPIKey"`
+	AlchemyAPIKeys            map[uint64]security.SensitiveString `json:"AlchemyAPIKeys"`
+	InfuraAPIKey              security.SensitiveString            `json:"InfuraAPIKey"`
+	InfuraAPIKeySecret        security.SensitiveString            `json:"InfuraAPIKeySecret"`
+	StatusProxyMarketUser     security.SensitiveString            `json:"StatusProxyMarketUser"`
+	StatusProxyMarketPassword security.SensitiveString            `json:"StatusProxyMarketPassword"`
+	MarketDataProxyConfig     MarketDataProxyConfig               `json:"MarketDataProxyConfig"`
 	// FIXME: remove when EthRpcProxy* is integrated
-	StatusProxyBlockchainUser     string `json:"StatusProxyBlockchainUser"`
-	StatusProxyBlockchainPassword string `json:"StatusProxyBlockchainPassword"`
+	StatusProxyBlockchainUser     security.SensitiveString `json:"StatusProxyBlockchainUser"`
+	StatusProxyBlockchainPassword security.SensitiveString `json:"StatusProxyBlockchainPassword"`
 
-	StatusProxyStageName   string `json:"StatusProxyStageName"`
-	EnableCelerBridge      bool   `json:"EnableCelerBridge"`
-	EnableMercuryoProvider bool   `json:"EnableMercuryoProvider"`
-	EthRpcProxyUrl         string `json:"EthRpcProxyUrl"`
-	EthRpcProxyUser        string `json:"EthRpcProxyUser"`
-	EthRpcProxyPassword    string `json:"EthRpcProxyPassword"`
+	StatusProxyStageName   string                   `json:"StatusProxyStageName"`
+	EnableCelerBridge      bool                     `json:"EnableCelerBridge"`
+	EnableMercuryoProvider bool                     `json:"EnableMercuryoProvider"`
+	EthRpcProxyUrl         security.SensitiveString `json:"EthRpcProxyUrl"`
+	EthRpcProxyUser        security.SensitiveString `json:"EthRpcProxyUser"`
+	EthRpcProxyPassword    security.SensitiveString `json:"EthRpcProxyPassword"`
 
 	TokensListsAutoRefreshInterval      int `json:"TokensListsAutoRefreshInterval"`      // in seconds
 	TokensListsAutoRefreshCheckInterval int `json:"TokensListsAutoRefreshCheckInterval"` // in seconds
