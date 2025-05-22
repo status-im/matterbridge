@@ -16,7 +16,7 @@ jobs:
   test-build-upload:
     strategy:
       matrix:
-        go-version: [1.21.x]
+        go-version: [1.22.x]
         platform: [ubuntu-latest]
     runs-on: ${{ matrix.platform }}
     steps:
@@ -37,7 +37,7 @@ jobs:
         VERSION=$(git describe --tags)
         CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -ldflags "-s -X github.com/42wim/matterbridge/version.GitHash=$(git log --pretty=format:'%h' -n 1)" -o output/lin/matterbridge-$VERSION-linux-amd64
     - name: Upload linux 64-bit
-      if: startsWith(matrix.go-version,'1.21')
+      if: startsWith(matrix.go-version,'1.22')
       uses: actions/upload-artifact@v3
       with:
         name: matterbridge-linux-64bit
