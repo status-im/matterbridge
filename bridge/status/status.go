@@ -14,6 +14,8 @@ import (
 
 	"github.com/42wim/matterbridge/bridge"
 	"github.com/42wim/matterbridge/bridge/config"
+	"github.com/42wim/matterbridge/version"
+
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/status-im/status-go/pkg/security"
@@ -284,19 +286,6 @@ func (b *Bstatus) createMultiAccount(privKey *ecdsa.PrivateKey) multiaccounts.Ac
 	}
 }
 
-func version() string {
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return "unknown"
-	}
-	for _, setting := range info.Settings {
-		if setting.Key == "vcs.revision" {
-			return setting.Value
-		}
-	}
-	return ""
-}
-
 // i-face functions
 
 func (b *Bstatus) Send(msg config.Message) (string, error) {
@@ -343,7 +332,7 @@ func (b *Bstatus) Send(msg config.Message) (string, error) {
 
 func (b *Bstatus) Connect() error {
 	err := statussentry.Init(
-		statussentry.WithContext("matterbridge", version()),
+		statussentry.WithContext("matterbridge", version.GitHash),
 		statussentry.WithDefaultEnvironmentDSN(),
 	)
 	if err != nil {
