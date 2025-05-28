@@ -9,10 +9,13 @@ import (
 	"math/big"
 	"reflect"
 
+	"go.uber.org/zap"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/log"
 
+	"github.com/status-im/status-go/logutils"
+	ac "github.com/status-im/status-go/services/wallet/activity/common"
 	"github.com/status-im/status-go/services/wallet/bigint"
 	w_common "github.com/status-im/status-go/services/wallet/common"
 	"github.com/status-im/status-go/services/wallet/thirdparty"
@@ -33,9 +36,9 @@ type DBHeader struct {
 	Loaded bool
 }
 
-func toDBHeader(header *types.Header, blockHash common.Hash, account common.Address) *DBHeader {
+func toDBHeader(header *types.Header, account common.Address) *DBHeader {
 	return &DBHeader{
-		Hash:      blockHash,
+		Hash:      header.Hash(),
 		Number:    header.Number,
 		Timestamp: header.Time,
 		Loaded:    false,
@@ -185,7 +188,7 @@ func (db *Database) GetTransfers(chainID uint64, start, end *big.Int) (rst []Tra
 	return query.TransferScan(rows)
 }
 
-func (db *Database) GetTransfersForIdentities(ctx context.Context, identities []TransactionIdentity) (rst []Transfer, err error) {
+func (db *Database) GetTransfersForIdentities(ctx context.Context, identities []ac.TransactionIdentity) (rst []Transfer, err error) {
 	query := newTransfersQuery()
 	for _, identity := range identities {
 		subQuery := newSubQuery()
@@ -224,32 +227,6 @@ func (db *Database) GetTransactionsToLoad(chainID uint64, address common.Address
 // statementCreator allows to pass transaction or database to use in consumer.
 type statementCreator interface {
 	Prepare(query string) (*sql.Stmt, error)
-}
-
-// Only used by status-mobile
-func (db *Database) InsertBlock(chainID uint64, account common.Address, blockNumber *big.Int, blockHash common.Hash) error {
-	var (
-		tx *sql.Tx
-	)
-	tx, err := db.client.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err == nil {
-			err = tx.Commit()
-			return
-		}
-		_ = tx.Rollback()
-	}()
-
-	blockDB := blockDBFields{
-		chainID:     chainID,
-		account:     account,
-		blockNumber: blockNumber,
-		blockHash:   blockHash,
-	}
-	return insertBlockDBFields(tx, blockDB)
 }
 
 type blockDBFields struct {
@@ -316,7 +293,7 @@ func insertBlocksWithTransactions(chainID uint64, creator statementCreator, head
 			// Is that correct to set sender as account address?
 			_, err = insertTx.Exec(chainID, header.Address, header.Address, transaction.ID, (*bigint.SQLBigInt)(header.Number), header.Hash, transaction.Type, &JSONBlob{transaction.Log}, logIndex, tokenID, txValue)
 			if err != nil {
-				log.Error("error saving token transfer", "err", err)
+				logutils.ZapLogger().Error("error saving token transfer", zap.Error(err))
 				return err
 			}
 		}
@@ -491,7 +468,13 @@ func updateOrInsertTransfersDBFields(creator statementCreator, transfers []trans
 			t.receiptStatus, t.receiptType, t.txHash, t.logIndex, t.receiptBlockHash, t.cumulativeGasUsed, t.contractAddress, t.gasUsed, t.transactionIndex,
 			t.txType, t.txProtected, t.txGas, txGasPrice, txGasTipCap, txGasFeeCap, txValue, t.txNonce, t.txSize, t.tokenAddress, (*bigint.SQLBigIntBytes)(t.tokenID), t.txFrom, t.txTo)
 		if err != nil {
-			log.Error("can't save transfer", "b-hash", t.blockHash, "b-n", t.blockNumber, "a", t.address, "h", t.id)
+			logutils.ZapLogger().Error("can't save transfer",
+				zap.Stringer("b-hash", t.blockHash),
+				zap.Stringer("b-n", t.blockNumber),
+				zap.Stringer("a", t.address),
+				zap.Stringer("h", t.id),
+				zap.Error(err),
+			)
 			return err
 		}
 	}
@@ -499,7 +482,13 @@ func updateOrInsertTransfersDBFields(creator statementCreator, transfers []trans
 	for _, t := range transfers {
 		err = removeGasOnlyEthTransfer(creator, t)
 		if err != nil {
-			log.Error("can't remove gas only eth transfer", "b-hash", t.blockHash, "b-n", t.blockNumber, "a", t.address, "h", t.id, "err", err)
+			logutils.ZapLogger().Error("can't remove gas only eth transfer",
+				zap.Stringer("b-hash", t.blockHash),
+				zap.Stringer("b-n", t.blockNumber),
+				zap.Stringer("a", t.address),
+				zap.Stringer("h", t.id),
+				zap.Error(err),
+			)
 			// no return err, since it's not critical
 		}
 	}
@@ -522,7 +511,7 @@ func removeGasOnlyEthTransfer(creator statementCreator, t transferDBFields) erro
 
 		// If there's only one (or none), return without deleting
 		if count <= 1 {
-			log.Debug("Only one or no transfer found with the same tx_hash, skipping deletion.")
+			logutils.ZapLogger().Debug("Only one or no transfer found with the same tx_hash, skipping deletion.")
 			return nil
 		}
 	}
@@ -540,7 +529,7 @@ func removeGasOnlyEthTransfer(creator statementCreator, t transferDBFields) erro
 	if err != nil {
 		return err
 	}
-	log.Debug("removeGasOnlyEthTransfer rows deleted", "count", count)
+	logutils.ZapLogger().Debug("removeGasOnlyEthTransfer rows deleted", zap.Int64("count", count))
 	return nil
 }
 

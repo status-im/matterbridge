@@ -20,10 +20,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/status-im/status-go/common"
 	"github.com/status-im/status-go/eth-node/types"
+	"github.com/status-im/status-go/messaging"
+	messagingtypes "github.com/status-im/status-go/messaging/types"
 	"github.com/status-im/status-go/params"
 	"github.com/status-im/status-go/protocol/encryption"
-	"github.com/status-im/status-go/protocol/transport"
 	"github.com/status-im/status-go/signal"
 
 	"github.com/anacrolix/torrent"
@@ -65,7 +67,7 @@ type ArchiveManager struct {
 
 	logger      *zap.Logger
 	persistence *Persistence
-	transport   *transport.Transport
+	messaging   *messaging.API
 	identity    *ecdsa.PrivateKey
 	encryptor   *encryption.Protocol
 
@@ -85,7 +87,7 @@ func NewArchiveManager(amc *ArchiveManagerConfig) *ArchiveManager {
 
 		logger:      amc.Logger,
 		persistence: amc.Persistence,
-		transport:   amc.Transport,
+		messaging:   amc.Messaging,
 		identity:    amc.Identity,
 		encryptor:   amc.Encryptor,
 
@@ -224,26 +226,26 @@ func (m *ArchiveManager) IsReady() bool {
 		m.torrentClientStarted()
 }
 
-func (m *ArchiveManager) GetCommunityChatsFilters(communityID types.HexBytes) ([]*transport.Filter, error) {
+func (m *ArchiveManager) GetCommunityChatsFilters(communityID types.HexBytes) (messagingtypes.ChatFilters, error) {
 	chatIDs, err := m.persistence.GetCommunityChatIDs(communityID)
 	if err != nil {
 		return nil, err
 	}
 
-	filters := []*transport.Filter{}
+	filters := messagingtypes.ChatFilters{}
 	for _, cid := range chatIDs {
-		filters = append(filters, m.transport.FilterByChatID(cid))
+		filters = append(filters, m.messaging.ChatFilterByChatID(cid))
 	}
 	return filters, nil
 }
 
-func (m *ArchiveManager) GetCommunityChatsTopics(communityID types.HexBytes) ([]types.TopicType, error) {
+func (m *ArchiveManager) GetCommunityChatsTopics(communityID types.HexBytes) ([]messagingtypes.ContentTopic, error) {
 	filters, err := m.GetCommunityChatsFilters(communityID)
 	if err != nil {
 		return nil, err
 	}
 
-	topics := []types.TopicType{}
+	topics := []messagingtypes.ContentTopic{}
 	for _, filter := range filters {
 		topics = append(topics, filter.ContentTopic)
 	}
@@ -251,7 +253,7 @@ func (m *ArchiveManager) GetCommunityChatsTopics(communityID types.HexBytes) ([]
 	return topics, nil
 }
 
-func (m *ArchiveManager) getOldestWakuMessageTimestamp(topics []types.TopicType) (uint64, error) {
+func (m *ArchiveManager) getOldestWakuMessageTimestamp(topics []messagingtypes.ContentTopic) (uint64, error) {
 	return m.persistence.GetOldestWakuMessageTimestamp(topics)
 }
 
@@ -273,7 +275,7 @@ func (m *ArchiveManager) GetHistoryArchivePartitionStartTimestamp(communityID ty
 		return 0, nil
 	}
 
-	topics := []types.TopicType{}
+	topics := []messagingtypes.ContentTopic{}
 
 	for _, filter := range filters {
 		topics = append(topics, filter.ContentTopic)
@@ -306,7 +308,7 @@ func (m *ArchiveManager) GetHistoryArchivePartitionStartTimestamp(communityID ty
 	return lastArchiveEndDateTimestamp, nil
 }
 
-func (m *ArchiveManager) CreateAndSeedHistoryArchive(communityID types.HexBytes, topics []types.TopicType, startDate time.Time, endDate time.Time, partition time.Duration, encrypt bool) error {
+func (m *ArchiveManager) CreateAndSeedHistoryArchive(communityID types.HexBytes, topics []messagingtypes.ContentTopic, startDate time.Time, endDate time.Time, partition time.Duration, encrypt bool) error {
 	m.UnseedHistoryArchiveTorrent(communityID)
 	_, err := m.ArchiveFileManager.CreateHistoryArchiveTorrentFromDB(communityID, topics, startDate, endDate, partition, encrypt)
 	if err != nil {
@@ -316,6 +318,7 @@ func (m *ArchiveManager) CreateAndSeedHistoryArchive(communityID types.HexBytes,
 }
 
 func (m *ArchiveManager) StartHistoryArchiveTasksInterval(community *Community, interval time.Duration) {
+	defer common.LogOnPanic()
 	id := community.IDString()
 	if _, exists := m.historyArchiveTasks.Load(id); exists {
 		m.logger.Error("history archive tasks interval already in progress", zap.String("id", id))
@@ -352,6 +355,10 @@ func (m *ArchiveManager) StartHistoryArchiveTasksInterval(community *Community, 
 				m.logger.Error("failed to get community chat topics ", zap.Error(err))
 				continue
 			}
+			// adding the content-topic used for member updates.
+			// since member updates would not be too frequent i.e only addition/deletion would add a new message,
+			// this shouldn't cause too much increase in size of archive generated.
+			topics = append(topics, m.messaging.ChatFilterByChatID(community.UniversalChatID()).ContentTopic)
 
 			ts := time.Now().Unix()
 			to := time.Unix(ts, 0)
@@ -644,11 +651,10 @@ func (m *ArchiveManager) TorrentFileExists(communityID string) bool {
 	return err == nil
 }
 
-func topicsAsByteArrays(topics []types.TopicType) [][]byte {
+func topicsAsByteArrays(topics []messagingtypes.ContentTopic) [][]byte {
 	var topicsAsByteArrays [][]byte
 	for _, t := range topics {
-		topic := types.TopicTypeToByteArray(t)
-		topicsAsByteArrays = append(topicsAsByteArrays, topic)
+		topicsAsByteArrays = append(topicsAsByteArrays, t.Bytes())
 	}
 	return topicsAsByteArrays
 }

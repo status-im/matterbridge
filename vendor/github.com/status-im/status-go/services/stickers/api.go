@@ -6,17 +6,19 @@ import (
 	"time"
 
 	"github.com/zenthangplus/goccm"
+	"go.uber.org/zap"
 	"olympos.io/encoding/edn"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/log"
 	"github.com/status-im/status-go/account"
+	gocommon "github.com/status-im/status-go/common"
 	"github.com/status-im/status-go/contracts"
 	"github.com/status-im/status-go/contracts/stickers"
 	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/ipfs"
+	"github.com/status-im/status-go/logutils"
 	"github.com/status-im/status-go/multiaccounts/accounts"
 	"github.com/status-im/status-go/rpc"
 	"github.com/status-im/status-go/server"
@@ -152,6 +154,7 @@ func (api *API) Market(chainID uint64) ([]StickerPack, error) {
 }
 
 func (api *API) execTokenPackID(chainID uint64, tokenIDs []*big.Int, resultChan chan<- *big.Int, errChan chan<- error, doneChan chan<- struct{}) {
+	defer gocommon.LogOnPanic()
 	defer close(doneChan)
 	defer close(errChan)
 	defer close(resultChan)
@@ -172,6 +175,7 @@ func (api *API) execTokenPackID(chainID uint64, tokenIDs []*big.Int, resultChan 
 	for _, tokenID := range tokenIDs {
 		c.Wait()
 		go func(tokenID *big.Int) {
+			defer gocommon.LogOnPanic()
 			defer c.Done()
 			packID, err := stickerPack.TokenPackId(callOpts, tokenID)
 			if err != nil {
@@ -232,6 +236,7 @@ func (api *API) getPurchasedPackIDs(chainID uint64, account types.Address) ([]*b
 }
 
 func (api *API) fetchStickerPacks(chainID uint64, resultChan chan<- *StickerPack, errChan chan<- error, doneChan chan<- struct{}) {
+	defer gocommon.LogOnPanic()
 	defer close(doneChan)
 	defer close(errChan)
 	defer close(resultChan)
@@ -270,6 +275,7 @@ func (api *API) fetchStickerPacks(chainID uint64, resultChan chan<- *StickerPack
 	for i := uint64(0); i < numPacks.Uint64(); i++ {
 		c.Wait()
 		go func(i uint64) {
+			defer gocommon.LogOnPanic()
 			defer c.Done()
 
 			packID := new(big.Int).SetUint64(i)
@@ -286,7 +292,9 @@ func (api *API) fetchStickerPacks(chainID uint64, resultChan chan<- *StickerPack
 
 			stickerPack, err := api.fetchPackData(stickerType, packID, true)
 			if err != nil {
-				log.Warn("Could not retrieve stickerpack data", "packID", packID, "error", err)
+				logutils.ZapLogger().Warn("Could not retrieve stickerpack data",
+					zap.Uint64("packID", packID.Uint64()),
+					zap.Error(err))
 				errChan <- err
 				return
 			}
@@ -395,6 +403,7 @@ func (api *API) getContractPacks(chainID uint64) ([]StickerPack, error) {
 }
 
 func (api *API) getAccountsPurchasedPack(chainID uint64, accs []*accounts.Account, resultChan chan<- *big.Int, errChan chan<- error, doneChan chan<- struct{}) {
+	defer gocommon.LogOnPanic()
 	defer close(doneChan)
 	defer close(errChan)
 	defer close(resultChan)
@@ -407,6 +416,7 @@ func (api *API) getAccountsPurchasedPack(chainID uint64, accs []*accounts.Accoun
 	for _, account := range accs {
 		c.Wait()
 		go func(acc *accounts.Account) {
+			defer gocommon.LogOnPanic()
 			defer c.Done()
 			packs, err := api.getPurchasedPackIDs(chainID, acc.Address)
 			if err != nil {
@@ -423,6 +433,7 @@ func (api *API) getAccountsPurchasedPack(chainID uint64, accs []*accounts.Accoun
 }
 
 func (api *API) execTokenOwnerOfIndex(chainID uint64, account types.Address, balance *big.Int, resultChan chan<- *big.Int, errChan chan<- error, doneChan chan<- struct{}) {
+	defer gocommon.LogOnPanic()
 	defer close(doneChan)
 	defer close(errChan)
 	defer close(resultChan)
@@ -443,6 +454,7 @@ func (api *API) execTokenOwnerOfIndex(chainID uint64, account types.Address, bal
 	for i := uint64(0); i < balance.Uint64(); i++ {
 		c.Wait()
 		go func(i uint64) {
+			defer gocommon.LogOnPanic()
 			defer c.Done()
 			tokenID, err := stickerPack.TokenOfOwnerByIndex(callOpts, common.Address(account), new(big.Int).SetUint64(i))
 			if err != nil {

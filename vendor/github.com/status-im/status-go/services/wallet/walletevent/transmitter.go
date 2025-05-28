@@ -1,11 +1,15 @@
 package walletevent
 
 import (
+	"context"
 	"sync"
 
-	"github.com/ethereum/go-ethereum/event"
-	"github.com/ethereum/go-ethereum/log"
+	"go.uber.org/zap"
 
+	"github.com/ethereum/go-ethereum/event"
+
+	gocommon "github.com/status-im/status-go/common"
+	"github.com/status-im/status-go/logutils"
 	"github.com/status-im/status-go/signal"
 )
 
@@ -22,7 +26,7 @@ type SignalsTransmitter struct {
 }
 
 // Start runs loop in background.
-func (tmr *SignalsTransmitter) Start() error {
+func (tmr *SignalsTransmitter) Start(ctx context.Context) error {
 	if tmr.quit != nil {
 		// already running, nothing to do
 		return nil
@@ -33,6 +37,7 @@ func (tmr *SignalsTransmitter) Start() error {
 
 	tmr.wg.Add(1)
 	go func() {
+		defer gocommon.LogOnPanic()
 		defer tmr.wg.Done()
 		for {
 			select {
@@ -43,7 +48,7 @@ func (tmr *SignalsTransmitter) Start() error {
 				// technically event.Feed cannot send an error to subscription.Err channel.
 				// the only time we will get an event is when that channel is closed.
 				if err != nil {
-					log.Error("wallet signals transmitter failed with", "error", err)
+					logutils.ZapLogger().Error("wallet signals transmitter failed with", zap.Error(err))
 				}
 				return
 			case event := <-events:

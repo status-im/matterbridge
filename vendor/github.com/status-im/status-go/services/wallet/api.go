@@ -4,21 +4,26 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"strings"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/ethclient"
-	"github.com/ethereum/go-ethereum/log"
 	gethrpc "github.com/ethereum/go-ethereum/rpc"
 	signercore "github.com/ethereum/go-ethereum/signer/core/apitypes"
 	abi_spec "github.com/status-im/status-go/abi-spec"
 	"github.com/status-im/status-go/account"
+	gocommon "github.com/status-im/status-go/common"
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
+	"github.com/status-im/status-go/healthmanager"
+	"github.com/status-im/status-go/logutils"
 	"github.com/status-im/status-go/params"
 	"github.com/status-im/status-go/rpc/network"
 	"github.com/status-im/status-go/services/typeddata"
@@ -27,68 +32,28 @@ import (
 	wcommon "github.com/status-im/status-go/services/wallet/common"
 	"github.com/status-im/status-go/services/wallet/currency"
 	"github.com/status-im/status-go/services/wallet/history"
+	"github.com/status-im/status-go/services/wallet/leaderboard"
 	"github.com/status-im/status-go/services/wallet/onramp"
+	"github.com/status-im/status-go/services/wallet/requests"
 	"github.com/status-im/status-go/services/wallet/router"
-	"github.com/status-im/status-go/services/wallet/router/pathprocessor"
+	"github.com/status-im/status-go/services/wallet/router/fees"
 	"github.com/status-im/status-go/services/wallet/thirdparty"
 	"github.com/status-im/status-go/services/wallet/token"
+	tokenTypes "github.com/status-im/status-go/services/wallet/token/types"
 	"github.com/status-im/status-go/services/wallet/transfer"
 	"github.com/status-im/status-go/services/wallet/walletconnect"
+	"github.com/status-im/status-go/services/wallet/wallettypes"
 	"github.com/status-im/status-go/transactions"
 )
 
 func NewAPI(s *Service) *API {
-	rpcClient := s.GetRPCClient()
-	transactor := s.GetTransactor()
-	tokenManager := s.GetTokenManager()
-	ensService := s.GetEnsService()
-	stickersService := s.GetStickersService()
-	featureFlags := s.FeatureFlags()
-
-	router := router.NewRouter(rpcClient, transactor, tokenManager, s.GetMarketManager(), s.GetCollectiblesService(),
-		s.GetCollectiblesManager(), ensService, stickersService)
-
-	transfer := pathprocessor.NewTransferProcessor(rpcClient, transactor)
-	router.AddPathProcessor(transfer)
-
-	erc721Transfer := pathprocessor.NewERC721Processor(rpcClient, transactor)
-	router.AddPathProcessor(erc721Transfer)
-
-	erc1155Transfer := pathprocessor.NewERC1155Processor(rpcClient, transactor)
-	router.AddPathProcessor(erc1155Transfer)
-
-	hop := pathprocessor.NewHopBridgeProcessor(rpcClient, transactor, tokenManager, rpcClient.NetworkManager)
-	router.AddPathProcessor(hop)
-
-	if featureFlags.EnableCelerBridge {
-		// TODO: Celar Bridge is out of scope for 2.30, check it thoroughly once we decide to include it again
-		cbridge := pathprocessor.NewCelerBridgeProcessor(rpcClient, transactor, tokenManager)
-		router.AddPathProcessor(cbridge)
-	}
-
-	paraswap := pathprocessor.NewSwapParaswapProcessor(rpcClient, transactor, tokenManager)
-	router.AddPathProcessor(paraswap)
-
-	ensRegister := pathprocessor.NewENSRegisterProcessor(rpcClient, transactor, ensService)
-	router.AddPathProcessor(ensRegister)
-
-	ensRelease := pathprocessor.NewENSReleaseProcessor(rpcClient, transactor, ensService)
-	router.AddPathProcessor(ensRelease)
-
-	ensPublicKey := pathprocessor.NewENSPublicKeyProcessor(rpcClient, transactor, ensService)
-	router.AddPathProcessor(ensPublicKey)
-
-	buyStickers := pathprocessor.NewStickersBuyProcessor(rpcClient, transactor, stickersService)
-	router.AddPathProcessor(buyStickers)
-
-	return &API{s, s.reader, router}
+	return &API{s, s.reader}
 }
 
 // API is class with methods available over RPC.
 type API struct {
 	s      *Service
-	reader *Reader
-	router *router.Router
+	reader ReaderInterface
 }
 
 func (api *API) StartWallet(ctx context.Context) error {
@@ -96,7 +61,6 @@ func (api *API) StartWallet(ctx context.Context) error {
 }
 
 func (api *API) StopWallet(ctx context.Context) error {
-	api.router.Stop()
 	return api.s.Stop()
 }
 
@@ -108,25 +72,8 @@ func (api *API) SetPairingsJSONFileContent(content []byte) error {
 	return api.s.keycardPairings.SetPairingsJSONFileContent(content)
 }
 
-// Used by mobile
-func (api *API) GetWalletToken(ctx context.Context, addresses []common.Address) (map[common.Address][]token.StorageToken, error) {
-	currency, err := api.s.accountsDB.GetCurrency()
-	if err != nil {
-		return nil, err
-	}
-
-	activeNetworks, err := api.s.rpcClient.NetworkManager.GetActiveNetworks()
-	if err != nil {
-		return nil, err
-	}
-
-	chainIDs := wcommon.NetworksToChainIDs(activeNetworks)
-	clients, err := api.s.rpcClient.EthClients(chainIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	return api.reader.GetWalletToken(ctx, clients, addresses, currency)
+func (api *API) GetLastWalletTokenUpdate() map[common.Address]int64 {
+	return api.reader.GetLastTokenUpdateTimestamps()
 }
 
 // GetBalancesByChain return a map with key as chain id and value as map of account address and map of token address and balance
@@ -140,7 +87,7 @@ func (api *API) GetBalancesByChain(ctx context.Context, chainIDs []uint64, addre
 	return api.s.tokenManager.GetBalancesByChain(ctx, clients, addresses, tokens)
 }
 
-func (api *API) FetchOrGetCachedWalletBalances(ctx context.Context, addresses []common.Address) (map[common.Address][]token.StorageToken, error) {
+func (api *API) FetchOrGetCachedWalletBalances(ctx context.Context, addresses []common.Address, forceRefresh bool) (map[common.Address][]tokenTypes.StorageToken, error) {
 	activeNetworks, err := api.s.rpcClient.NetworkManager.GetActiveNetworks()
 	if err != nil {
 		return nil, err
@@ -152,7 +99,7 @@ func (api *API) FetchOrGetCachedWalletBalances(ctx context.Context, addresses []
 		return nil, err
 	}
 
-	return api.reader.FetchOrGetCachedWalletBalances(ctx, clients, addresses, false)
+	return api.reader.FetchOrGetCachedWalletBalances(ctx, clients, addresses, forceRefresh)
 }
 
 type DerivedAddress struct {
@@ -163,65 +110,21 @@ type DerivedAddress struct {
 	AlreadyCreated bool           `json:"alreadyCreated"`
 }
 
-// @deprecated
-func (api *API) CheckRecentHistory(ctx context.Context, addresses []common.Address) error {
-	return api.s.transferController.CheckRecentHistory([]uint64{api.s.rpcClient.UpstreamChainID}, addresses)
-}
-
-// @deprecated
-func (api *API) CheckRecentHistoryForChainIDs(ctx context.Context, chainIDs []uint64, addresses []common.Address) error {
-	return api.s.transferController.CheckRecentHistory(chainIDs, addresses)
-}
-
-func hexBigToBN(hexBig *hexutil.Big) *big.Int {
-	var bN *big.Int
-	if hexBig != nil {
-		bN = hexBig.ToInt()
-	}
-	return bN
-}
-
-// @deprecated
-// GetTransfersByAddress returns transfers for a single address
-func (api *API) GetTransfersByAddress(ctx context.Context, address common.Address, toBlock, limit *hexutil.Big, fetchMore bool) ([]transfer.View, error) {
-	log.Debug("[WalletAPI:: GetTransfersByAddress] get transfers for an address", "address", address)
-	var intLimit = int64(1)
-	if limit != nil {
-		intLimit = limit.ToInt().Int64()
-	}
-	return api.s.transferController.GetTransfersByAddress(ctx, api.s.rpcClient.UpstreamChainID, address, hexBigToBN(toBlock), intLimit, fetchMore)
-}
-
-// @deprecated
-// LoadTransferByHash loads transfer to the database
-// Only used by status-mobile
-func (api *API) LoadTransferByHash(ctx context.Context, address common.Address, hash common.Hash) error {
-	log.Debug("[WalletAPI:: LoadTransferByHash] get transfer by hash", "address", address, "hash", hash)
-	return api.s.transferController.LoadTransferByHash(ctx, api.s.rpcClient, address, hash)
-}
-
-// @deprecated
-func (api *API) GetTransfersByAddressAndChainID(ctx context.Context, chainID uint64, address common.Address, toBlock, limit *hexutil.Big, fetchMore bool) ([]transfer.View, error) {
-	log.Debug("[WalletAPI:: GetTransfersByAddressAndChainIDs] get transfers for an address", "address", address)
-	return api.s.transferController.GetTransfersByAddress(ctx, chainID, address, hexBigToBN(toBlock), limit.ToInt().Int64(), fetchMore)
-}
-
-// @deprecated
-func (api *API) GetTransfersForIdentities(ctx context.Context, identities []transfer.TransactionIdentity) ([]transfer.View, error) {
-	log.Debug("wallet.api.GetTransfersForIdentities", "identities.len", len(identities))
-
-	return api.s.transferController.GetTransfersForIdentities(ctx, identities)
-}
-
 func (api *API) FetchDecodedTxData(ctx context.Context, data string) (*thirdparty.DataParsed, error) {
-	log.Debug("[Wallet: FetchDecodedTxData]")
+	logutils.ZapLogger().Debug("[Wallet: FetchDecodedTxData]")
 
 	return api.s.decoder.Decode(data)
 }
 
 // GetBalanceHistory retrieves token balance history for token identity on multiple chains
 func (api *API) GetBalanceHistory(ctx context.Context, chainIDs []uint64, addresses []common.Address, tokenSymbol string, currencySymbol string, timeInterval history.TimeInterval) ([]*history.ValuePoint, error) {
-	log.Debug("wallet.api.GetBalanceHistory", "chainIDs", chainIDs, "address", addresses, "tokenSymbol", tokenSymbol, "currencySymbol", currencySymbol, "timeInterval", timeInterval)
+	logutils.ZapLogger().Debug("wallet.api.GetBalanceHistory",
+		zap.Uint64s("chainIDs", chainIDs),
+		zap.Stringers("address", addresses),
+		zap.String("tokenSymbol", tokenSymbol),
+		zap.String("currencySymbol", currencySymbol),
+		zap.Int("timeInterval", int(timeInterval)),
+	)
 
 	var fromTimestamp uint64
 	now := uint64(time.Now().UTC().Unix())
@@ -246,109 +149,106 @@ func (api *API) GetBalanceHistory(ctx context.Context, chainIDs []uint64, addres
 // GetBalanceHistoryRange retrieves token balance history for token identity on multiple chains for a time range
 // 'toTimestamp' is ignored for now, but will be used in the future to limit the range of the history
 func (api *API) GetBalanceHistoryRange(ctx context.Context, chainIDs []uint64, addresses []common.Address, tokenSymbol string, currencySymbol string, fromTimestamp uint64, _ uint64) ([]*history.ValuePoint, error) {
-	log.Debug("wallet.api.GetBalanceHistoryRange", "chainIDs", chainIDs, "address", addresses, "tokenSymbol", tokenSymbol, "currencySymbol", currencySymbol, "fromTimestamp", fromTimestamp)
+	logutils.ZapLogger().Debug("wallet.api.GetBalanceHistoryRange",
+		zap.Uint64s("chainIDs", chainIDs),
+		zap.Stringers("address", addresses),
+		zap.String("tokenSymbol", tokenSymbol),
+		zap.String("currencySymbol", currencySymbol),
+		zap.Uint64("fromTimestamp", fromTimestamp),
+	)
 	return api.s.history.GetBalanceHistory(ctx, chainIDs, addresses, tokenSymbol, currencySymbol, fromTimestamp)
 }
 
 func (api *API) GetTokenList(ctx context.Context) (*token.ListWrapper, error) {
-	log.Debug("call to get token list")
+	logutils.ZapLogger().Debug("call to get token list")
 	rst := api.s.tokenManager.GetList()
-	log.Debug("result from token list", "len", len(rst.Data))
+	logutils.ZapLogger().Debug("result from token list", zap.Int("len", len(rst.Data)))
 	return rst, nil
 }
 
+func (api *API) GetTokensAvailableForBridgeOnChain(ctx context.Context, chainID uint64) []*tokenTypes.Token {
+	logutils.ZapLogger().Debug("call to get tokens available for bridge on chain")
+	return api.s.router.GetTokensAvailableForBridgeOnChain(chainID)
+}
+
 // @deprecated
-func (api *API) GetTokens(ctx context.Context, chainID uint64) ([]*token.Token, error) {
-	log.Debug("call to get tokens")
+func (api *API) GetTokens(ctx context.Context, chainID uint64) ([]*tokenTypes.Token, error) {
+	logutils.ZapLogger().Debug("call to get tokens")
 	rst, err := api.s.tokenManager.GetTokens(chainID)
-	log.Debug("result from token store", "len", len(rst))
+	logutils.ZapLogger().Debug("result from token store", zap.Int("len", len(rst)))
 	return rst, err
 }
 
 // @deprecated
-func (api *API) GetCustomTokens(ctx context.Context) ([]*token.Token, error) {
-	log.Debug("call to get custom tokens")
+func (api *API) GetCustomTokens(ctx context.Context) ([]*tokenTypes.Token, error) {
+	logutils.ZapLogger().Debug("call to get custom tokens")
 	rst, err := api.s.tokenManager.GetCustoms(true)
-	log.Debug("result from database for custom tokens", "len", len(rst))
+	logutils.ZapLogger().Debug("result from database for custom tokens", zap.Int("len", len(rst)))
 	return rst, err
 }
 
-func (api *API) DiscoverToken(ctx context.Context, chainID uint64, address common.Address) (*token.Token, error) {
-	log.Debug("call to get discover token")
+func (api *API) DiscoverToken(ctx context.Context, chainID uint64, address common.Address) (*tokenTypes.Token, error) {
+	logutils.ZapLogger().Debug("call to get discover token")
 	token, err := api.s.tokenManager.DiscoverToken(ctx, chainID, address)
 	return token, err
 }
 
-func (api *API) AddCustomToken(ctx context.Context, token token.Token) error {
-	log.Debug("call to create or edit custom token")
+func (api *API) AddCustomToken(ctx context.Context, token tokenTypes.Token) error {
+	logutils.ZapLogger().Debug("call to create or edit custom token")
 	if token.ChainID == 0 {
 		token.ChainID = api.s.rpcClient.UpstreamChainID
 	}
 	err := api.s.tokenManager.UpsertCustom(token)
-	log.Debug("result from database for create or edit custom token", "err", err)
+	logutils.ZapLogger().Debug("result from database for create or edit custom token", zap.Error(err))
 	return err
 }
 
 // @deprecated
 func (api *API) DeleteCustomToken(ctx context.Context, address common.Address) error {
-	log.Debug("call to remove custom token")
+	logutils.ZapLogger().Debug("call to remove custom token")
 	err := api.s.tokenManager.DeleteCustom(api.s.rpcClient.UpstreamChainID, address)
-	log.Debug("result from database for remove custom token", "err", err)
+	logutils.ZapLogger().Debug("result from database for remove custom token", zap.Error(err))
 	return err
 }
 
 func (api *API) DeleteCustomTokenByChainID(ctx context.Context, chainID uint64, address common.Address) error {
-	log.Debug("call to remove custom token")
+	logutils.ZapLogger().Debug("call to remove custom token")
 	err := api.s.tokenManager.DeleteCustom(chainID, address)
-	log.Debug("result from database for remove custom token", "err", err)
+	logutils.ZapLogger().Debug("result from database for remove custom token", zap.Error(err))
 	return err
 }
 
 // @deprecated
 // Not used by status-desktop anymore
 func (api *API) GetPendingTransactions(ctx context.Context) ([]*transactions.PendingTransaction, error) {
-	log.Debug("wallet.api.GetPendingTransactions")
+	logutils.ZapLogger().Debug("wallet.api.GetPendingTransactions")
 	rst, err := api.s.pendingTxManager.GetAllPending()
-	log.Debug("wallet.api.GetPendingTransactions RESULT", "len", len(rst))
+	logutils.ZapLogger().Debug("wallet.api.GetPendingTransactions RESULT", zap.Int("len", len(rst)))
 	return rst, err
-}
-
-// @deprecated
-// Not used by status-desktop anymore
-func (api *API) GetPendingTransactionsForIdentities(ctx context.Context, identities []transfer.TransactionIdentity) (
-	result []*transactions.PendingTransaction, err error) {
-
-	log.Debug("wallet.api.GetPendingTransactionsForIdentities")
-
-	result = make([]*transactions.PendingTransaction, 0, len(identities))
-	var pt *transactions.PendingTransaction
-	for _, identity := range identities {
-		pt, err = api.s.pendingTxManager.GetPendingEntry(identity.ChainID, identity.Hash)
-		result = append(result, pt)
-	}
-
-	log.Debug("wallet.api.GetPendingTransactionsForIdentities RES", "len", len(result))
-	return
 }
 
 // @deprecated
 // TODO - #11861: Remove this and replace with EventPendingTransactionStatusChanged event and Delete to confirm the transaction where it is needed
 func (api *API) WatchTransactionByChainID(ctx context.Context, chainID uint64, transactionHash common.Hash) (err error) {
-	log.Debug("wallet.api.WatchTransactionByChainID", "chainID", chainID, "transactionHash", transactionHash)
+	logutils.ZapLogger().Debug("wallet.api.WatchTransactionByChainID", zap.Uint64("chainID", chainID), zap.Stringer("transactionHash", transactionHash))
 	defer func() {
-		log.Debug("wallet.api.WatchTransactionByChainID return", "err", err, "chainID", chainID, "transactionHash", transactionHash)
+		logutils.ZapLogger().Debug("wallet.api.WatchTransactionByChainID",
+			zap.Error(err),
+			zap.Uint64("chainID", chainID),
+			zap.Stringer("transactionHash", transactionHash),
+		)
 	}()
 
 	return api.s.transactionManager.WatchTransaction(ctx, chainID, transactionHash)
 }
 
 func (api *API) GetCryptoOnRamps(ctx context.Context) ([]onramp.CryptoOnRamp, error) {
-	log.Debug("call to GetCryptoOnRamps")
+	logutils.ZapLogger().Debug("call to GetCryptoOnRamps")
 	return api.s.cryptoOnRampManager.GetProviders(ctx)
 }
 
 func (api *API) GetCryptoOnRampURL(ctx context.Context, providerID string, parameters onramp.Parameters) (string, error) {
-	log.Debug("call to GetCryptoOnRampURL")
+	logutils.ZapLogger().Debug("call to GetCryptoOnRampURL")
 	return api.s.cryptoOnRampManager.GetURL(ctx, providerID, parameters)
 }
 
@@ -357,13 +257,13 @@ func (api *API) GetCryptoOnRampURL(ctx context.Context, providerID string, param
 */
 
 func (api *API) FetchCachedBalancesByOwnerAndContractAddress(ctx context.Context, chainID wcommon.ChainID, ownerAddress common.Address, contractAddresses []common.Address) (thirdparty.TokenBalancesPerContractAddress, error) {
-	log.Debug("call to FetchCachedBalancesByOwnerAndContractAddress")
+	logutils.ZapLogger().Debug("call to FetchCachedBalancesByOwnerAndContractAddress")
 
 	return api.s.collectiblesManager.FetchCachedBalancesByOwnerAndContractAddress(ctx, chainID, ownerAddress, contractAddresses)
 }
 
 func (api *API) FetchBalancesByOwnerAndContractAddress(ctx context.Context, chainID wcommon.ChainID, ownerAddress common.Address, contractAddresses []common.Address) (thirdparty.TokenBalancesPerContractAddress, error) {
-	log.Debug("call to FetchBalancesByOwnerAndContractAddress")
+	logutils.ZapLogger().Debug("call to FetchBalancesByOwnerAndContractAddress")
 
 	return api.s.collectiblesManager.FetchBalancesByOwnerAndContractAddress(ctx, chainID, ownerAddress, contractAddresses)
 }
@@ -373,49 +273,61 @@ func (api *API) GetCollectibleOwnership(id thirdparty.CollectibleUniqueID) ([]th
 }
 
 func (api *API) RefetchOwnedCollectibles() error {
-	log.Debug("wallet.api.RefetchOwnedCollectibles")
+	logutils.ZapLogger().Debug("wallet.api.RefetchOwnedCollectibles")
 
 	api.s.collectibles.RefetchOwnedCollectibles()
 	return nil
 }
 
 func (api *API) GetOwnedCollectiblesAsync(requestID int32, chainIDs []wcommon.ChainID, addresses []common.Address, filter collectibles.Filter, offset int, limit int, dataType collectibles.CollectibleDataType, fetchCriteria collectibles.FetchCriteria) error {
-	log.Debug("wallet.api.GetOwnedCollectiblesAsync", "requestID", requestID, "chainIDs.count", len(chainIDs), "addr.count", len(addresses), "offset", offset, "limit", limit, "dataType", dataType, "fetchCriteria", fetchCriteria)
+	logutils.ZapLogger().Debug("wallet.api.GetOwnedCollectiblesAsync",
+		zap.Int32("requestID", requestID),
+		zap.Int("chainIDs.count", len(chainIDs)),
+		zap.Int("addr.count", len(addresses)),
+		zap.Int("offset", offset),
+		zap.Int("limit", limit),
+		zap.Any("dataType", dataType),
+		zap.Any("fetchCriteria", fetchCriteria),
+	)
 
 	api.s.collectibles.GetOwnedCollectiblesAsync(requestID, chainIDs, addresses, filter, offset, limit, dataType, fetchCriteria)
 	return nil
 }
 
 func (api *API) GetCollectiblesByUniqueIDAsync(requestID int32, uniqueIDs []thirdparty.CollectibleUniqueID, dataType collectibles.CollectibleDataType) error {
-	log.Debug("wallet.api.GetCollectiblesByUniqueIDAsync", "requestID", requestID, "uniqueIDs.count", len(uniqueIDs), "dataType", dataType)
+	logutils.ZapLogger().Debug("wallet.api.GetCollectiblesByUniqueIDAsync",
+		zap.Int32("requestID", requestID),
+		zap.Int("uniqueIDs.count", len(uniqueIDs)),
+		zap.Any("dataType", dataType),
+	)
 
 	api.s.collectibles.GetCollectiblesByUniqueIDAsync(requestID, uniqueIDs, dataType)
 	return nil
 }
 
 func (api *API) FetchCollectionSocialsAsync(contractID thirdparty.ContractID) error {
-	log.Debug("wallet.api.FetchCollectionSocialsAsync", "contractID", contractID)
+	logutils.ZapLogger().Debug("wallet.api.FetchCollectionSocialsAsync", zap.Any("contractID", contractID))
 
 	return api.s.collectiblesManager.FetchCollectionSocialsAsync(contractID)
 }
 
 func (api *API) GetCollectibleOwnersByContractAddress(ctx context.Context, chainID wcommon.ChainID, contractAddress common.Address) (*thirdparty.CollectibleContractOwnership, error) {
-	log.Debug("call to GetCollectibleOwnersByContractAddress")
+	logutils.ZapLogger().Debug("call to GetCollectibleOwnersByContractAddress")
 	return api.s.collectiblesManager.FetchCollectibleOwnersByContractAddress(ctx, chainID, contractAddress)
 }
 
 func (api *API) FetchCollectibleOwnersByContractAddress(ctx context.Context, chainID wcommon.ChainID, contractAddress common.Address) (*thirdparty.CollectibleContractOwnership, error) {
-	log.Debug("call to FetchCollectibleOwnersByContractAddress")
+	logutils.ZapLogger().Debug("call to FetchCollectibleOwnersByContractAddress")
 	return api.s.collectiblesManager.FetchCollectibleOwnersByContractAddress(ctx, chainID, contractAddress)
 }
 
 func (api *API) SearchCollectibles(ctx context.Context, chainID wcommon.ChainID, text string, cursor string, limit int, providerID string) (*thirdparty.FullCollectibleDataContainer, error) {
-	log.Debug("call to SearchCollectibles")
+	logutils.ZapLogger().Debug("call to SearchCollectibles")
 	return api.s.collectiblesManager.SearchCollectibles(ctx, chainID, text, cursor, limit, providerID)
 }
 
 func (api *API) SearchCollections(ctx context.Context, chainID wcommon.ChainID, text string, cursor string, limit int, providerID string) (*thirdparty.CollectionDataContainer, error) {
-	log.Debug("call to SearchCollections")
+	logutils.ZapLogger().Debug("call to SearchCollections")
 	return api.s.collectiblesManager.SearchCollections(ctx, chainID, text, cursor, limit, providerID)
 }
 
@@ -423,62 +335,102 @@ func (api *API) SearchCollections(ctx context.Context, chainID wcommon.ChainID, 
    Collectibles API End
 */
 
+// @deprecated: Custom networks not currently supported. Change settings using specific API functions.
 func (api *API) AddEthereumChain(ctx context.Context, network params.Network) error {
-	log.Debug("call to AddEthereumChain")
+	logutils.ZapLogger().Debug("call to AddEthereumChain")
 	return api.s.rpcClient.NetworkManager.Upsert(&network)
 }
 
+// @deprecated: Custom networks not currently supported. Change settings using specific API functions.
 func (api *API) DeleteEthereumChain(ctx context.Context, chainID uint64) error {
-	log.Debug("call to DeleteEthereumChain")
+	logutils.ZapLogger().Debug("call to DeleteEthereumChain")
 	return api.s.rpcClient.NetworkManager.Delete(chainID)
 }
 
+func (api *API) SetChainUserRpcProviders(ctx context.Context, chainID uint64, rpcProviders []params.RpcProvider) error {
+	logutils.ZapLogger().Debug("call to SetChainUserRpcProviders")
+	return api.s.rpcClient.NetworkManager.SetUserRpcProviders(chainID, rpcProviders)
+}
+
+// Active chains are the ones that are available for selection across the whole application
+// Providers are expected to be accessed only for active chains.
+func (api *API) SetChainActive(ctx context.Context, chainID uint64, active bool) error {
+	logutils.ZapLogger().Debug("call to SetChainActive")
+	return api.s.rpcClient.NetworkManager.SetActive(chainID, active)
+}
+
+// Enabled chains are the ones taken into account when displaying balances, collectibles, activity, etc.
+func (api *API) SetChainEnabled(ctx context.Context, chainID uint64, enabled bool) error {
+	logutils.ZapLogger().Debug("call to SetChainEnabled")
+	return api.s.rpcClient.NetworkManager.SetEnabled(chainID, enabled)
+}
+
+// @deprecated: Combined networks are not used anymore, use GetFlatEthereumChains instead
 func (api *API) GetEthereumChains(ctx context.Context) ([]*network.CombinedNetwork, error) {
-	log.Debug("call to GetEthereumChains")
+	logutils.ZapLogger().Debug("call to GetEthereumChains")
 	return api.s.rpcClient.NetworkManager.GetCombinedNetworks()
+}
+
+func (api *API) GetFlatEthereumChains(ctx context.Context) ([]*params.Network, error) {
+	logutils.ZapLogger().Debug("call to GetFlatEthereumChains")
+	return api.s.rpcClient.NetworkManager.GetAll()
 }
 
 // @deprecated
 func (api *API) FetchPrices(ctx context.Context, symbols []string, currencies []string) (map[string]map[string]float64, error) {
-	log.Debug("call to FetchPrices")
+	logutils.ZapLogger().Debug("call to FetchPrices")
 	return api.s.marketManager.FetchPrices(symbols, currencies)
 }
 
 // @deprecated
 func (api *API) FetchMarketValues(ctx context.Context, symbols []string, currency string) (map[string]thirdparty.TokenMarketValues, error) {
-	log.Debug("call to FetchMarketValues")
+	logutils.ZapLogger().Debug("call to FetchMarketValues")
 	return api.s.marketManager.FetchTokenMarketValues(symbols, currency)
 }
 
 func (api *API) GetHourlyMarketValues(ctx context.Context, symbol string, currency string, limit int, aggregate int) ([]thirdparty.HistoricalPrice, error) {
-	log.Debug("call to GetHourlyMarketValues")
+	logutils.ZapLogger().Debug("call to GetHourlyMarketValues")
 	return api.s.marketManager.FetchHistoricalHourlyPrices(symbol, currency, limit, aggregate)
 }
 
 func (api *API) GetDailyMarketValues(ctx context.Context, symbol string, currency string, limit int, allData bool, aggregate int) ([]thirdparty.HistoricalPrice, error) {
-	log.Debug("call to GetDailyMarketValues")
+	logutils.ZapLogger().Debug("call to GetDailyMarketValues")
 	return api.s.marketManager.FetchHistoricalDailyPrices(symbol, currency, limit, allData, aggregate)
 }
 
 // @deprecated
 func (api *API) FetchTokenDetails(ctx context.Context, symbols []string) (map[string]thirdparty.TokenDetails, error) {
-	log.Debug("call to FetchTokenDetails")
+	logutils.ZapLogger().Debug("call to FetchTokenDetails")
 	return api.s.marketManager.FetchTokenDetails(symbols)
 }
 
-func (api *API) GetSuggestedFees(ctx context.Context, chainID uint64) (*router.SuggestedFeesGwei, error) {
-	log.Debug("call to GetSuggestedFees")
-	return api.router.GetFeesManager().SuggestedFeesGwei(ctx, chainID)
+// @deprecated we should remove it once clients fully switched to wallet router, `GetSuggestedRoutesAsync` should be used instead
+func (api *API) GetSuggestedFees(ctx context.Context, chainID uint64) (*fees.SuggestedFeesGwei, error) {
+	logutils.ZapLogger().Debug("call to GetSuggestedFees")
+	return api.s.router.GetFeesManager().SuggestedFeesGwei(ctx, chainID)
 }
 
 func (api *API) GetEstimatedLatestBlockNumber(ctx context.Context, chainID uint64) (uint64, error) {
-	log.Debug("call to GetEstimatedLatestBlockNumber, chainID:", chainID)
+	logutils.ZapLogger().Debug("call to GetEstimatedLatestBlockNumber", zap.Uint64("chainID", chainID))
 	return api.s.blockChainState.GetEstimatedLatestBlockNumber(ctx, chainID)
 }
 
-func (api *API) GetTransactionEstimatedTime(ctx context.Context, chainID uint64, maxFeePerGas *big.Float) (router.TransactionEstimation, error) {
-	log.Debug("call to getTransactionEstimatedTime")
-	return api.router.GetFeesManager().TransactionEstimatedTime(ctx, chainID, gweiToWei(maxFeePerGas)), nil
+// @deprecated we should remove it once clients fully switched to wallet router, `GetSuggestedRoutesAsync` should be used instead
+func (api *API) GetTransactionEstimatedTime(ctx context.Context, chainID uint64, maxFeePerGas *big.Float) (fees.TransactionEstimation, error) {
+	logutils.ZapLogger().Debug("call to getTransactionEstimatedTime")
+	return api.s.router.GetFeesManager().TransactionEstimatedTime(ctx, chainID, gweiToWei(maxFeePerGas)), nil
+}
+
+func (api *API) GetTransactionEstimatedTimeV2(ctx context.Context, chainID uint64, gasPrice *hexutil.Big, maxFeePerGas *hexutil.Big, maxPriorityFeePerGas *hexutil.Big) (uint, error) {
+	logutils.ZapLogger().Debug("call to getTransactionEstimatedTimeV2")
+	isEIP1559Enabled, err := api.s.router.GetFeesManager().IsEIP1559Enabled(ctx, chainID)
+	if err != nil {
+		return 0, err
+	}
+	if !isEIP1559Enabled {
+		return api.s.router.GetFeesManager().TransactionEstimatedTimeV2Legacy(ctx, chainID, gasPrice.ToInt()), nil
+	}
+	return api.s.router.GetFeesManager().TransactionEstimatedTimeV2(ctx, chainID, maxFeePerGas.ToInt(), maxPriorityFeePerGas.ToInt()), nil
 }
 
 func gweiToWei(val *big.Float) *big.Int {
@@ -486,47 +438,53 @@ func gweiToWei(val *big.Float) *big.Int {
 	return res
 }
 
-func (api *API) GetSuggestedRoutes(
-	ctx context.Context,
-	sendType router.SendType,
-	addrFrom common.Address,
-	addrTo common.Address,
-	amountIn *hexutil.Big,
-	tokenID string,
-	toTokenID string,
-	disabledFromChainIDs,
-	disabledToChainIDs,
-	preferedChainIDs []uint64,
-	gasFeeMode router.GasFeeMode,
-	fromLockedAmount map[uint64]*hexutil.Big,
-) (*router.SuggestedRoutes, error) {
-	log.Debug("call to GetSuggestedRoutes")
+func (api *API) GetSuggestedRoutes(ctx context.Context, input *requests.RouteInputParams) (*router.SuggestedRoutes, error) {
+	logutils.ZapLogger().Debug("call to GetSuggestedRoutes")
 
-	testnetMode, err := api.s.rpcClient.NetworkManager.GetTestNetworksEnabled()
-	if err != nil {
-		return nil, err
-	}
+	api.s.routeExecutionManager.ClearLocalRouteData()
 
-	return api.router.SuggestedRoutes(ctx, sendType, addrFrom, addrTo, amountIn.ToInt(), tokenID, toTokenID, disabledFromChainIDs,
-		disabledToChainIDs, preferedChainIDs, gasFeeMode, fromLockedAmount, testnetMode)
+	return api.s.router.SuggestedRoutes(ctx, input)
 }
 
-func (api *API) GetSuggestedRoutesV2(ctx context.Context, input *router.RouteInputParams) (*router.SuggestedRoutesV2, error) {
-	log.Debug("call to GetSuggestedRoutesV2")
+func (api *API) GetSuggestedRoutesAsync(ctx context.Context, input *requests.RouteInputParams) {
+	logutils.ZapLogger().Debug("call to GetSuggestedRoutesAsync")
 
-	return api.router.SuggestedRoutesV2(ctx, input)
+	api.s.routeExecutionManager.ClearLocalRouteData()
+
+	api.s.router.SuggestedRoutesAsync(input)
 }
 
-func (api *API) GetSuggestedRoutesV2Async(ctx context.Context, input *router.RouteInputParams) {
-	log.Debug("call to GetSuggestedRoutesV2Async")
+func (api *API) StopSuggestedRoutesAsyncCalculation(ctx context.Context) {
+	logutils.ZapLogger().Debug("call to StopSuggestedRoutesAsyncCalculation")
 
-	api.router.SuggestedRoutesV2Async(input)
+	api.s.router.StopSuggestedRoutesAsyncCalculation()
 }
 
-func (api *API) StopSuggestedRoutesV2AsyncCalcualtion(ctx context.Context) {
-	log.Debug("call to StopSuggestedRoutesV2AsyncCalcualtion")
+// GetBlockchainHealthStatus returns the status of rpc clients
+func (api *API) GetBlockchainHealthStatus(ctx context.Context) healthmanager.BlockchainFullStatus {
+	logutils.ZapLogger().Debug("call to GetBlockchainHealthStatus")
+	return api.s.GetRPCClient().GetHealthManagerFullStatus()
+}
 
-	api.router.StopSuggestedRoutesV2AsyncCalcualtion()
+func (api *API) StopSuggestedRoutesCalculation(ctx context.Context) {
+	logutils.ZapLogger().Debug("call to StopSuggestedRoutesCalculation")
+
+	api.s.router.StopSuggestedRoutesCalculation()
+}
+
+// SetFeeMode sets the fee mode for the provided path it should be used for setting predefined fee modes `GasFeeLow`, `GasFeeMedium` and `GasFeeHigh`
+// in case of setting custom fee use `SetCustomTxDetails` function
+func (api *API) SetFeeMode(ctx context.Context, pathTxIdentity *requests.PathTxIdentity, feeMode fees.GasFeeMode) error {
+	logutils.ZapLogger().Debug("call to SetFeeMode")
+
+	return api.s.router.SetFeeMode(ctx, pathTxIdentity, feeMode)
+}
+
+// SetCustomTxDetails sets custom tx details for the provided path, in case of setting predefined fee modes use `SetFeeMode` function
+func (api *API) SetCustomTxDetails(ctx context.Context, pathTxIdentity *requests.PathTxIdentity, pathTxCustomParams *requests.PathTxCustomParams) error {
+	logutils.ZapLogger().Debug("call to SetCustomTxDetails")
+
+	return api.s.router.SetCustomTxDetails(ctx, pathTxIdentity, pathTxCustomParams)
 }
 
 // Generates addresses for the provided paths, response doesn't include `HasActivity` value (if you need it check `GetAddressDetails` function)
@@ -589,7 +547,66 @@ func (api *API) AddressExists(ctx context.Context, address types.Address) (bool,
 	return api.s.accountsDB.AddressExists(address)
 }
 
-// Returns details for the passed address (response doesn't include derivation path)
+// AddressDetails returns details for passed params (passed address, chains to check, timeout for the call to complete)
+// if chainIDs is empty, it will use all active chains
+// if timeout is zero, it will wait until the call completes
+// response doesn't include derivation path
+func (api *API) AddressDetails(ctx context.Context, params *requests.AddressDetails) (*DerivedAddress, error) {
+	if err := params.Validate(); err != nil {
+		return nil, err
+	}
+
+	result := &DerivedAddress{
+		Address: common.HexToAddress(params.Address),
+	}
+	addressExists, err := api.s.accountsDB.AddressExists(types.Address(result.Address))
+	if err != nil {
+		return result, err
+	}
+
+	result.AlreadyCreated = addressExists
+
+	chainIDs := params.ChainIDs
+	if len(chainIDs) == 0 {
+		activeNetworks, err := api.s.rpcClient.NetworkManager.GetActiveNetworks()
+		if err != nil {
+			return nil, err
+		}
+
+		chainIDs = wcommon.NetworksToChainIDs(activeNetworks)
+	}
+
+	clients, err := api.s.rpcClient.EthClients(chainIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	if params.TimeoutInMilliseconds > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(params.TimeoutInMilliseconds)*time.Millisecond)
+		defer cancel()
+	}
+
+	for _, client := range clients {
+		balance, err := api.s.tokenManager.GetChainBalance(ctx, client, result.Address)
+		if err != nil {
+			if err != nil && errors.Is(err, context.DeadlineExceeded) {
+				return result, nil
+			}
+			return result, err
+		}
+
+		result.HasActivity = balance.Cmp(big.NewInt(0)) != 0
+		if result.HasActivity {
+			break
+		}
+	}
+
+	return result, nil
+}
+
+// @deprecated replaced by AddressDetails
+// GetAddressDetails returns details for the passed address (response doesn't include derivation path)
 func (api *API) GetAddressDetails(ctx context.Context, chainID uint64, address string) (*DerivedAddress, error) {
 	result := &DerivedAddress{
 		Address: common.HexToAddress(address),
@@ -616,7 +633,7 @@ func (api *API) GetAddressDetails(ctx context.Context, chainID uint64, address s
 }
 
 func (api *API) SignMessage(ctx context.Context, message types.HexBytes, address common.Address, password string) (string, error) {
-	log.Debug("[WalletAPI::SignMessage]", "message", message, "address", address)
+	logutils.ZapLogger().Debug("[WalletAPI::SignMessage]", zap.Stringer("message", message), zap.Stringer("address", address))
 
 	selectedAccount, err := api.s.gethManager.VerifyAccountPassword(api.s.Config().KeyStoreDir, address.Hex(), password)
 	if err != nil {
@@ -627,8 +644,8 @@ func (api *API) SignMessage(ctx context.Context, message types.HexBytes, address
 }
 
 func (api *API) BuildTransaction(ctx context.Context, chainID uint64, sendTxArgsJSON string) (response *transfer.TxResponse, err error) {
-	log.Debug("[WalletAPI::BuildTransaction]", "chainID", chainID, "sendTxArgsJSON", sendTxArgsJSON)
-	var params transactions.SendTxArgs
+	logutils.ZapLogger().Debug("[WalletAPI::BuildTransaction]", zap.Uint64("chainID", chainID), zap.String("sendTxArgsJSON", sendTxArgsJSON))
+	var params wallettypes.SendTxArgs
 	err = json.Unmarshal([]byte(sendTxArgsJSON), &params)
 	if err != nil {
 		return nil, err
@@ -637,14 +654,14 @@ func (api *API) BuildTransaction(ctx context.Context, chainID uint64, sendTxArgs
 }
 
 func (api *API) BuildRawTransaction(ctx context.Context, chainID uint64, sendTxArgsJSON string, signature string) (response *transfer.TxResponse, err error) {
-	log.Debug("[WalletAPI::BuildRawTransaction]", "chainID", chainID, "sendTxArgsJSON", sendTxArgsJSON, "signature", signature)
+	logutils.ZapLogger().Debug("[WalletAPI::BuildRawTransaction]", zap.Uint64("chainID", chainID), zap.String("sendTxArgsJSON", sendTxArgsJSON), zap.String("signature", signature))
 
 	sig, err := hex.DecodeString(signature)
 	if err != nil {
 		return nil, err
 	}
 
-	var params transactions.SendTxArgs
+	var params wallettypes.SendTxArgs
 	err = json.Unmarshal([]byte(sendTxArgsJSON), &params)
 	if err != nil {
 		return nil, err
@@ -655,13 +672,18 @@ func (api *API) BuildRawTransaction(ctx context.Context, chainID uint64, sendTxA
 
 func (api *API) SendTransactionWithSignature(ctx context.Context, chainID uint64, txType transactions.PendingTrxType,
 	sendTxArgsJSON string, signature string) (hash types.Hash, err error) {
-	log.Debug("[WalletAPI::SendTransactionWithSignature]", "chainID", chainID, "txType", txType, "sendTxArgsJSON", sendTxArgsJSON, "signature", signature)
+	logutils.ZapLogger().Debug("[WalletAPI::SendTransactionWithSignature]",
+		zap.Uint64("chainID", chainID),
+		zap.String("txType", string(txType)),
+		zap.String("sendTxArgsJSON", sendTxArgsJSON),
+		zap.String("signature", signature),
+	)
 	sig, err := hex.DecodeString(signature)
 	if err != nil {
 		return hash, err
 	}
 
-	var params transactions.SendTxArgs
+	var params wallettypes.SendTxArgs
 	err = json.Unmarshal([]byte(sendTxArgsJSON), &params)
 	if err != nil {
 		return hash, err
@@ -669,130 +691,120 @@ func (api *API) SendTransactionWithSignature(ctx context.Context, chainID uint64
 	return api.s.transactionManager.SendTransactionWithSignature(chainID, params, sig)
 }
 
-func (api *API) CreateMultiTransaction(ctx context.Context, multiTransactionCommand *transfer.MultiTransactionCommand, data []*pathprocessor.MultipathProcessorTxArgs, password string) (*transfer.MultiTransactionCommandResult, error) {
-	log.Debug("[WalletAPI:: CreateMultiTransaction] create multi transaction")
-
-	cmd, err := api.s.transactionManager.CreateMultiTransactionFromCommand(multiTransactionCommand, data)
-	if err != nil {
-		return nil, err
-	}
-
-	if password != "" {
-		selectedAccount, err := api.getVerifiedWalletAccount(multiTransactionCommand.FromAddress.Hex(), password)
-		if err != nil {
-			return nil, err
-		}
-
-		cmdRes, err := api.s.transactionManager.SendTransactions(ctx, cmd, data, api.router.GetPathProcessors(), selectedAccount)
-		if err != nil {
-			return nil, err
-		}
-
-		_, err = api.s.transactionManager.InsertMultiTransaction(cmd)
-		if err != nil {
-			log.Error("Failed to save multi transaction", "error", err) // not critical
-		}
-
-		return cmdRes, nil
-	}
-
-	return nil, api.s.transactionManager.SendTransactionForSigningToKeycard(ctx, cmd, data, api.router.GetPathProcessors())
+func (api *API) BuildTransactionsFromRoute(ctx context.Context, uuid string) {
+	logutils.ZapLogger().Debug("[WalletAPI::BuildTransactionsFromRoute] builds transactions from the generated best route", zap.String("uuid", uuid))
+	api.s.routeExecutionManager.BuildTransactionsFromRoute(ctx, uuid)
 }
 
-func (api *API) ProceedWithTransactionsSignatures(ctx context.Context, signatures map[string]transfer.SignatureDetails) (*transfer.MultiTransactionCommandResult, error) {
-	log.Debug("[WalletAPI:: ProceedWithTransactionsSignatures] sign with signatures and send multi transaction")
+// Deprecated: `ProceedWithTransactionsSignatures` is the endpoint used in the old way of sending transactions and should not be used anymore.
+//
+// The flow that should be used instead:
+// - call `BuildTransactionsFromRoute`
+// - wait for the `wallet.router.sign-transactions` signal
+// - sign received hashes using `SignMessage` call or sign on keycard
+// - call `SendRouterTransactionsWithSignatures` with the signatures of signed hashes from the previous step
+//
+// TODO: remove this struct once mobile switches to the new approach
+func (api *API) ProceedWithTransactionsSignatures(ctx context.Context, signatures map[string]requests.SignatureDetails) (*transfer.MultiTransactionCommandResult, error) {
+	logutils.ZapLogger().Debug("[WalletAPI:: ProceedWithTransactionsSignatures] sign with signatures and send multi transaction")
 	return api.s.transactionManager.ProceedWithTransactionsSignatures(ctx, signatures)
 }
 
+func (api *API) SendRouterTransactionsWithSignatures(ctx context.Context, sendInputParams *requests.RouterSendTransactionsParams) {
+	logutils.ZapLogger().Debug("[WalletAPI:: SendRouterTransactionsWithSignatures] sign with signatures and send")
+	api.s.routeExecutionManager.SendRouterTransactionsWithSignatures(ctx, sendInputParams)
+}
+
+// ReevaluateRouterPath reevaluates the tx-fields from the router path that matches the provided pathTxIdentity and sends signal.SuggestedRoutes.
+func (api *API) ReevaluateRouterPath(ctx context.Context, pathTxIdentity *requests.PathTxIdentity) error {
+	logutils.ZapLogger().Debug("wallet.api.ReevaluateRouterPath")
+	return api.s.routeExecutionManager.ReevaluateRouterPath(ctx, pathTxIdentity)
+}
+
 func (api *API) GetMultiTransactions(ctx context.Context, transactionIDs []wcommon.MultiTransactionIDType) ([]*transfer.MultiTransaction, error) {
-	log.Debug("wallet.api.GetMultiTransactions", "IDs.len", len(transactionIDs))
+	logutils.ZapLogger().Debug("wallet.api.GetMultiTransactions", zap.Int("IDs.len", len(transactionIDs)))
 	return api.s.transactionManager.GetMultiTransactions(ctx, transactionIDs)
 }
 
 func (api *API) GetCachedCurrencyFormats() (currency.FormatPerSymbol, error) {
-	log.Debug("call to GetCachedCurrencyFormats")
+	logutils.ZapLogger().Debug("call to GetCachedCurrencyFormats")
 	return api.s.currency.GetCachedCurrencyFormats()
 }
 
 func (api *API) FetchAllCurrencyFormats() (currency.FormatPerSymbol, error) {
-	log.Debug("call to FetchAllCurrencyFormats")
+	logutils.ZapLogger().Debug("call to FetchAllCurrencyFormats")
 	return api.s.currency.FetchAllCurrencyFormats()
 }
 
-// @deprecated replaced by session APIs; see #12120
-func (api *API) FilterActivityAsync(requestID int32, addresses []common.Address, chainIDs []wcommon.ChainID, filter activity.Filter, offset int, limit int) error {
-	log.Debug("wallet.api.FilterActivityAsync", "requestID", requestID, "addr.count", len(addresses), "chainIDs.count", len(chainIDs), "offset", offset, "limit", limit)
+func (api *API) StartActivityFilterSessionV2(addresses []common.Address, chainIDs []wcommon.ChainID, filter activity.Filter, firstPageCount int) (activity.SessionID, error) {
+	logutils.ZapLogger().Debug("wallet.api.StartActivityFilterSessionV2",
+		zap.Int("addr.count", len(addresses)),
+		zap.Int("chainIDs.count", len(chainIDs)),
+		zap.Int("firstPageCount", firstPageCount),
+	)
 
-	api.s.activity.FilterActivityAsync(requestID, addresses, chainIDs, filter, offset, limit)
-	return nil
-}
-
-// @deprecated replaced by session APIs; see #12120
-func (api *API) CancelActivityFilterTask(requestID int32) error {
-	log.Debug("wallet.api.CancelActivityFilterTask", "requestID", requestID)
-
-	api.s.activity.CancelFilterTask(requestID)
-	return nil
-}
-
-func (api *API) StartActivityFilterSession(addresses []common.Address, chainIDs []wcommon.ChainID, filter activity.Filter, firstPageCount int) (activity.SessionID, error) {
-	log.Debug("wallet.api.StartActivityFilterSession", "addr.count", len(addresses), "chainIDs.count", len(chainIDs), "firstPageCount", firstPageCount)
-
-	return api.s.activity.StartFilterSession(addresses, chainIDs, filter, firstPageCount), nil
+	return api.s.activity.StartFilterSession(addresses, chainIDs, filter, firstPageCount, activity.V2), nil
 }
 
 func (api *API) UpdateActivityFilterForSession(sessionID activity.SessionID, filter activity.Filter, firstPageCount int) error {
-	log.Debug("wallet.api.UpdateActivityFilterForSession", "sessionID", sessionID, "firstPageCount", firstPageCount)
+	logutils.ZapLogger().Debug("wallet.api.UpdateActivityFilterForSession",
+		zap.Int32("sessionID", int32(sessionID)),
+		zap.Int("firstPageCount", firstPageCount),
+	)
 
 	return api.s.activity.UpdateFilterForSession(sessionID, filter, firstPageCount)
 }
 
 func (api *API) ResetActivityFilterSession(id activity.SessionID, firstPageCount int) error {
-	log.Debug("wallet.api.ResetActivityFilterSession", "id", id, "firstPageCount", firstPageCount)
+	logutils.ZapLogger().Debug("wallet.api.ResetActivityFilterSession",
+		zap.Int32("id", int32(id)),
+		zap.Int("firstPageCount", firstPageCount),
+	)
 
 	return api.s.activity.ResetFilterSession(id, firstPageCount)
 }
 
 func (api *API) GetMoreForActivityFilterSession(id activity.SessionID, pageCount int) error {
-	log.Debug("wallet.api.GetMoreForActivityFilterSession", "id", id, "pageCount", pageCount)
+	logutils.ZapLogger().Debug("wallet.api.GetMoreForActivityFilterSession",
+		zap.Int32("id", int32(id)),
+		zap.Int("pageCount", pageCount),
+	)
 
 	return api.s.activity.GetMoreForFilterSession(id, pageCount)
 }
 
 func (api *API) StopActivityFilterSession(id activity.SessionID) {
-	log.Debug("wallet.api.StopActivityFilterSession", "id", id)
+	logutils.ZapLogger().Debug("wallet.api.StopActivityFilterSession", zap.Int32("id", int32(id)))
 
 	api.s.activity.StopFilterSession(id)
 }
 
-func (api *API) GetMultiTxDetails(ctx context.Context, multiTxID int) (*activity.EntryDetails, error) {
-	log.Debug("wallet.api.GetMultiTxDetails", "multiTxID", multiTxID)
-
-	return api.s.activity.GetMultiTxDetails(ctx, multiTxID)
-}
-
-func (api *API) GetTxDetails(ctx context.Context, id string) (*activity.EntryDetails, error) {
-	log.Debug("wallet.api.GetTxDetails", "id", id)
-
-	return api.s.activity.GetTxDetails(ctx, id)
-}
-
 func (api *API) GetRecipientsAsync(requestID int32, chainIDs []wcommon.ChainID, addresses []common.Address, offset int, limit int) (ignored bool, err error) {
-	log.Debug("wallet.api.GetRecipientsAsync", "addresses.len", len(addresses), "chainIDs.len", len(chainIDs), "offset", offset, "limit", limit)
+	logutils.ZapLogger().Debug("wallet.api.GetRecipientsAsync",
+		zap.Int("addresses.len", len(addresses)),
+		zap.Int("chainIDs.len", len(chainIDs)),
+		zap.Int("offset", offset),
+		zap.Int("limit", limit),
+	)
 
 	ignored = api.s.activity.GetRecipientsAsync(requestID, chainIDs, addresses, offset, limit)
 	return ignored, err
 }
 
 func (api *API) GetOldestActivityTimestampAsync(requestID int32, addresses []common.Address) error {
-	log.Debug("wallet.api.GetOldestActivityTimestamp", "addresses.len", len(addresses))
+	logutils.ZapLogger().Debug("wallet.api.GetOldestActivityTimestamp", zap.Int("addresses.len", len(addresses)))
 
 	api.s.activity.GetOldestTimestampAsync(requestID, addresses)
 	return nil
 }
 
 func (api *API) GetActivityCollectiblesAsync(requestID int32, chainIDs []wcommon.ChainID, addresses []common.Address, offset int, limit int) error {
-	log.Debug("wallet.api.GetActivityCollectiblesAsync", "addresses.len", len(addresses), "chainIDs.len", len(chainIDs), "offset", offset, "limit", limit)
+	logutils.ZapLogger().Debug("wallet.api.GetActivityCollectiblesAsync",
+		zap.Int("addresses.len", len(addresses)),
+		zap.Int("chainIDs.len", len(chainIDs)),
+		zap.Int("offset", offset),
+		zap.Int("limit", limit),
+	)
 
 	api.s.activity.GetActivityCollectiblesAsync(requestID, chainIDs, addresses, offset, limit)
 
@@ -800,7 +812,7 @@ func (api *API) GetActivityCollectiblesAsync(requestID int32, chainIDs []wcommon
 }
 
 func (api *API) FetchChainIDForURL(ctx context.Context, rpcURL string) (*big.Int, error) {
-	log.Debug("wallet.api.VerifyURL", "rpcURL", rpcURL)
+	logutils.ZapLogger().Debug("wallet.api.VerifyURL", zap.String("rpcURL", rpcURL))
 
 	rpcClient, err := gethrpc.Dial(rpcURL)
 	if err != nil {
@@ -813,19 +825,19 @@ func (api *API) FetchChainIDForURL(ctx context.Context, rpcURL string) (*big.Int
 func (api *API) getVerifiedWalletAccount(address, password string) (*account.SelectedExtKey, error) {
 	exists, err := api.s.accountsDB.AddressExists(types.HexToAddress(address))
 	if err != nil {
-		log.Error("failed to query db for a given address", "address", address, "error", err)
+		logutils.ZapLogger().Error("failed to query db for a given address", zap.String("address", gocommon.TruncateWithDot(address)), zap.Error(err))
 		return nil, err
 	}
 
 	if !exists {
-		log.Error("failed to get a selected account", "err", transactions.ErrInvalidTxSender)
-		return nil, transactions.ErrAccountDoesntExist
+		logutils.ZapLogger().Error("failed to get a selected account", zap.Error(wallettypes.ErrInvalidTxSender))
+		return nil, wallettypes.ErrAccountDoesntExist
 	}
 
 	keyStoreDir := api.s.Config().KeyStoreDir
 	key, err := api.s.gethManager.VerifyAccountPassword(keyStoreDir, address, password)
 	if err != nil {
-		log.Error("failed to verify account", "account", address, "error", err)
+		logutils.ZapLogger().Error("failed to verify account", zap.String("account", gocommon.TruncateWithDot(address)), zap.Error(err))
 		return nil, err
 	}
 
@@ -837,33 +849,36 @@ func (api *API) getVerifiedWalletAccount(address, password string) (*account.Sel
 
 // AddWalletConnectSession adds or updates a session wallet connect session
 func (api *API) AddWalletConnectSession(ctx context.Context, session_json string) error {
-	log.Debug("wallet.api.AddWalletConnectSession", "rpcURL", len(session_json))
+	logutils.ZapLogger().Debug("wallet.api.AddWalletConnectSession", zap.Int("rpcURL", len(session_json)))
 	return walletconnect.AddSession(api.s.db, api.s.config.Networks, session_json)
 }
 
 // DisconnectWalletConnectSession removes a wallet connect session
 func (api *API) DisconnectWalletConnectSession(ctx context.Context, topic walletconnect.Topic) error {
-	log.Debug("wallet.api.DisconnectWalletConnectSession", "topic", topic)
+	logutils.ZapLogger().Debug("wallet.api.DisconnectWalletConnectSession", zap.String("topic", string(topic)))
 	return walletconnect.DisconnectSession(api.s.db, topic)
 }
 
 // GetWalletConnectActiveSessions returns all active wallet connect sessions
 func (api *API) GetWalletConnectActiveSessions(ctx context.Context, validAtTimestamp int64) ([]walletconnect.DBSession, error) {
-	log.Debug("wallet.api.GetWalletConnectActiveSessions")
+	logutils.ZapLogger().Debug("wallet.api.GetWalletConnectActiveSessions")
 	return walletconnect.GetActiveSessions(api.s.db, validAtTimestamp)
 }
 
 // GetWalletConnectDapps returns all active wallet connect dapps
 // Active dApp are those having active sessions (not expired and not disconnected)
 func (api *API) GetWalletConnectDapps(ctx context.Context, validAtTimestamp int64, testChains bool) ([]walletconnect.DBDApp, error) {
-	log.Debug("wallet.api.GetWalletConnectDapps", "validAtTimestamp", validAtTimestamp, "testChains", testChains)
+	logutils.ZapLogger().Debug("wallet.api.GetWalletConnectDapps",
+		zap.Int64("validAtTimestamp", validAtTimestamp),
+		zap.Bool("testChains", testChains),
+	)
 	return walletconnect.GetActiveDapps(api.s.db, validAtTimestamp, testChains)
 }
 
 // HashMessageEIP191 is used for hashing dApps requests for "personal_sign" and "eth_sign"
 // in a safe manner following the EIP-191 version 0x45 for signing on the client side.
 func (api *API) HashMessageEIP191(ctx context.Context, message types.HexBytes) types.Hash {
-	log.Debug("wallet.api.HashMessageEIP191", "len(data)", len(message))
+	logutils.ZapLogger().Debug("wallet.api.HashMessageEIP191", zap.Int("len(data)", len(message)))
 	safeMsg := fmt.Sprintf("\x19Ethereum Signed Message:\n%d%s", len(message), string(message))
 	return crypto.Keccak256Hash([]byte(safeMsg))
 }
@@ -872,7 +887,11 @@ func (api *API) HashMessageEIP191(ctx context.Context, message types.HexBytes) t
 // the formatted typed data will be prefixed with \x19\x01 based on the EIP-712
 // @deprecated
 func (api *API) SignTypedDataV4(typedJson string, address string, password string) (types.HexBytes, error) {
-	log.Debug("wallet.api.SignTypedDataV4", "len(typedJson)", len(typedJson), "address", address, "len(password)", len(password))
+	logutils.ZapLogger().Debug("wallet.api.SignTypedDataV4",
+		zap.Int("len(typedJson)", len(typedJson)),
+		zap.String("address", address),
+		zap.Int("len(password)", len(password)),
+	)
 
 	account, err := api.getVerifiedWalletAccount(address, password)
 	if err != nil {
@@ -899,7 +918,13 @@ func (api *API) SignTypedDataV4(typedJson string, address string, password strin
 // old dApps implementation expects
 // the chain is validate for both cases
 func (api *API) SafeSignTypedDataForDApps(typedJson string, address string, password string, chainID uint64, legacy bool) (types.HexBytes, error) {
-	log.Debug("wallet.api.SafeSignTypedDataForDApps", "len(typedJson)", len(typedJson), "address", address, "len(password)", len(password), "chainID", chainID, "legacy", legacy)
+	logutils.ZapLogger().Debug("wallet.api.SafeSignTypedDataForDApps",
+		zap.Int("len(typedJson)", len(typedJson)),
+		zap.String("address", address),
+		zap.Int("len(password)", len(password)),
+		zap.Uint64("chainID", chainID),
+		zap.Bool("legacy", legacy),
+	)
 
 	account, err := api.getVerifiedWalletAccount(address, password)
 	if err != nil {
@@ -914,6 +939,26 @@ func (api *API) RestartWalletReloadTimer(ctx context.Context) error {
 }
 
 func (api *API) IsChecksumValidForAddress(address string) (bool, error) {
-	log.Debug("wallet.api.isChecksumValidForAddress", "address", address)
+	logutils.ZapLogger().Debug("wallet.api.isChecksumValidForAddress", zap.String("address", address))
 	return abi_spec.CheckAddressChecksum(address)
+}
+
+// GetLeaderboardData returns cryptocurrency data with updated price information
+func (api *API) GetLeaderboardData(ctx context.Context) ([]leaderboard.Cryptocurrency, error) {
+	logutils.ZapLogger().Debug("call to GetLeaderboardData")
+	if api.s.leaderboardService == nil {
+		return nil, errors.New("leaderboard service not initialized")
+	}
+	return api.s.leaderboardService.GetCombinedData(), nil
+}
+
+func (api *API) FetchMarketTokenPageAsync(ctx context.Context, page, pageSize, sortOrder int, currency string) error {
+	logutils.ZapLogger().Debug("call to GetMarketTokenPageAsync", zap.Int("page", page), zap.Int("pageSize", pageSize), zap.Int("sortOrder", sortOrder), zap.String("currency", currency))
+	api.s.leaderboardService.FetchLeaderboardPageAsync(page, pageSize, sortOrder, currency)
+	return nil
+}
+
+func (api *API) UnsubscribeFromLeaderboard() error {
+	logutils.ZapLogger().Debug("call to UnsubscribeFromLeaderboard")
+	return api.s.leaderboardService.UnsubscribeFromLeaderboard()
 }

@@ -8,13 +8,17 @@ import (
 	"math/big"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/log"
 	"github.com/status-im/status-go/account"
+	gocommon "github.com/status-im/status-go/common"
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
+	"github.com/status-im/status-go/logutils"
 	wallet_common "github.com/status-im/status-go/services/wallet/common"
+	"github.com/status-im/status-go/services/wallet/requests"
 	"github.com/status-im/status-go/services/wallet/router/pathprocessor"
 )
 
@@ -70,7 +74,7 @@ func rowsToMultiTransactions(rows *sql.Rows) ([]*MultiTransaction, error) {
 	return multiTransactions, nil
 }
 
-func addSignaturesToTransactions(transactions map[common.Hash]*TransactionDescription, signatures map[string]SignatureDetails) error {
+func addSignaturesToTransactions(transactions map[common.Hash]*TransactionDescription, signatures map[string]requests.SignatureDetails) error {
 	if len(transactions) == 0 {
 		return errors.New("no transactions to proceed with")
 	}
@@ -82,7 +86,7 @@ func addSignaturesToTransactions(transactions map[common.Hash]*TransactionDescri
 	for hash, desc := range transactions {
 		sigDetails, ok := signatures[hash.String()]
 		if !ok {
-			return fmt.Errorf("missing signature for transaction %s", hash)
+			return fmt.Errorf("missing signature for transaction %s", gocommon.TruncateWithDot(hash.String()))
 		}
 
 		rBytes, _ := hex.DecodeString(sigDetails.R)
@@ -99,30 +103,6 @@ func addSignaturesToTransactions(transactions map[common.Hash]*TransactionDescri
 	}
 
 	return nil
-}
-
-func multiTransactionFromCommand(command *MultiTransactionCommand) *MultiTransaction {
-	toAmount := new(hexutil.Big)
-	if command.ToAmount != nil {
-		toAmount = command.ToAmount
-	}
-	multiTransaction := NewMultiTransaction(
-		/* Timestamp:     */ uint64(time.Now().Unix()),
-		/* FromNetworkID: */ 0,
-		/* ToNetworkID:	  */ 0,
-		/* FromTxHash:    */ common.Hash{},
-		/* ToTxHash:      */ common.Hash{},
-		/* FromAddress:   */ command.FromAddress,
-		/* ToAddress:     */ command.ToAddress,
-		/* FromAsset:     */ command.FromAsset,
-		/* ToAsset:       */ command.ToAsset,
-		/* FromAmount:    */ command.FromAmount,
-		/* ToAmount:      */ toAmount,
-		/* Type:		  */ command.Type,
-		/* CrossTxID:	  */ "",
-	)
-
-	return multiTransaction
 }
 
 func updateDataFromMultiTx(data []*pathprocessor.MultipathProcessorTxArgs, multiTransaction *MultiTransaction) {
@@ -206,7 +186,10 @@ func (tm *TransactionManager) removeMultiTransactionByAddress(address common.Add
 			}
 			counterpartyExists, err := tm.accountsDB.AddressExists(types.Address(addressToCheck))
 			if err != nil {
-				log.Error("Failed to query accounts db for a given address", "address", address, "error", err)
+				logutils.ZapLogger().Error("Failed to query accounts db for a given address",
+					zap.Stringer("address", address),
+					zap.Error(err),
+				)
 				continue
 			}
 
@@ -223,7 +206,7 @@ func (tm *TransactionManager) removeMultiTransactionByAddress(address common.Add
 		for _, id := range ids {
 			err = tm.storage.DeleteMultiTransaction(id)
 			if err != nil {
-				log.Error("Failed to delete multi transaction", "id", id, "error", err)
+				logutils.ZapLogger().Error("Failed to delete multi transaction", zap.Int64("id", int64(id)), zap.Error(err))
 			}
 		}
 	}

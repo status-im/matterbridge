@@ -1,14 +1,27 @@
 package commands
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/params"
+	"github.com/status-im/status-go/services/wallet/wallettypes"
 	"github.com/status-im/status-go/signal"
-	"github.com/status-im/status-go/transactions"
+)
+
+const (
+	Method_EthAccounts         = "eth_accounts"
+	Method_EthRequestAccounts  = "eth_requestAccounts"
+	Method_EthChainId          = "eth_chainId"
+	Method_PersonalSign        = "personal_sign"
+	Method_SignTypedDataV4     = "eth_signTypedData_v4"
+	Method_EthSendTransaction  = "eth_sendTransaction"
+	Method_RequestPermissions  = "wallet_requestPermissions"
+	Method_RevokePermissions   = "wallet_revokePermissions"
+	Method_SwitchEthereumChain = "wallet_switchEthereumChain"
 )
 
 // errors
@@ -26,10 +39,11 @@ type RPCRequest struct {
 	URL     string        `json:"url"`
 	Name    string        `json:"name"`
 	IconURL string        `json:"iconUrl"`
+	ChainID uint64        `json:"chainId"`
 }
 
 type RPCCommand interface {
-	Execute(request RPCRequest) (interface{}, error)
+	Execute(ctx context.Context, request RPCRequest) (interface{}, error)
 }
 
 type RequestAccountsAcceptedArgs struct {
@@ -43,18 +57,32 @@ type SendTransactionAcceptedArgs struct {
 	Hash      types.Hash `json:"hash"`
 }
 
+type SignAcceptedArgs struct {
+	RequestID string `json:"requestId"`
+	Signature string `json:"signature"`
+}
+
 type RejectedArgs struct {
 	RequestID string `json:"requestId"`
 }
 
+type RecallDAppPermissionsArgs struct {
+	URL string `json:"url"`
+}
+
 type ClientSideHandlerInterface interface {
 	RequestShareAccountForDApp(dApp signal.ConnectorDApp) (types.Address, uint64, error)
-	RequestSendTransaction(dApp signal.ConnectorDApp, chainID uint64, txArgs *transactions.SendTxArgs) (types.Hash, error)
-
 	RequestAccountsAccepted(args RequestAccountsAcceptedArgs) error
 	RequestAccountsRejected(args RejectedArgs) error
+	RecallDAppPermissions(args RecallDAppPermissionsArgs) error
+
+	RequestSendTransaction(dApp signal.ConnectorDApp, chainID uint64, txArgs *wallettypes.SendTxArgs) (types.Hash, error)
 	SendTransactionAccepted(args SendTransactionAcceptedArgs) error
 	SendTransactionRejected(args RejectedArgs) error
+
+	RequestSign(dApp signal.ConnectorDApp, challenge, address string, method string) (string, error)
+	SignAccepted(args SignAcceptedArgs) error
+	SignRejected(args RejectedArgs) error
 }
 
 type NetworkManagerInterface interface {

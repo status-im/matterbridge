@@ -10,13 +10,14 @@ import (
 
 	datasyncnode "github.com/status-im/mvds/node"
 
+	gocommon "github.com/status-im/status-go/common"
+	"github.com/status-im/status-go/messaging"
 	datasyncpeer "github.com/status-im/status-go/protocol/datasync/peer"
 
 	"github.com/status-im/status-go/multiaccounts/settings"
 	"github.com/status-im/status-go/protocol/common"
 	"github.com/status-im/status-go/protocol/communities"
 	"github.com/status-im/status-go/protocol/protobuf"
-	"github.com/status-im/status-go/protocol/transport"
 	v1protocol "github.com/status-im/status-go/protocol/v1"
 )
 
@@ -66,7 +67,7 @@ func (m *Messenger) sendUserStatus(ctx context.Context, status UserStatus) error
 		return err
 	}
 
-	contactCodeTopic := transport.ContactCodeTopic(&m.identity.PublicKey)
+	contactCodeTopic := messaging.ContactCodeTopic(&m.identity.PublicKey)
 
 	rawMessage := common.RawMessage{
 		LocalChatID: contactCodeTopic,
@@ -74,6 +75,7 @@ func (m *Messenger) sendUserStatus(ctx context.Context, status UserStatus) error
 		MessageType: protobuf.ApplicationMetadataMessage_STATUS_UPDATE,
 		ResendType:  common.ResendTypeNone, // does this need to be resent?
 		Ephemeral:   statusUpdate.StatusType == protobuf.StatusUpdate_AUTOMATIC,
+		Priority:    &common.LowPriority,
 	}
 
 	_, err = m.sender.SendPublic(ctx, contactCodeTopic, rawMessage)
@@ -177,6 +179,7 @@ func (m *Messenger) sendCurrentUserStatusToCommunity(ctx context.Context, commun
 		ResendType:  common.ResendTypeNone, // does this need to be resent?
 		Ephemeral:   statusUpdate.StatusType == protobuf.StatusUpdate_AUTOMATIC,
 		PubsubTopic: community.PubsubTopic(),
+		Priority:    &common.LowPriority,
 	}
 
 	_, err = m.sender.SendPublic(ctx, rawMessage.LocalChatID, rawMessage)
@@ -192,12 +195,16 @@ func (m *Messenger) broadcastLatestUserStatus() {
 	m.logger.Debug("broadcasting user status")
 	ctx := context.Background()
 	go func() {
-		// Ensure that we are connected before sending a message
-		time.Sleep(5 * time.Second)
-		m.sendCurrentUserStatus(ctx)
-	}()
+		defer gocommon.LogOnPanic()
 
-	go func() {
+		select {
+		// Ensure that we are connected before sending a message
+		case <-time.After(5 * time.Second):
+			m.sendCurrentUserStatus(ctx)
+		case <-m.quit:
+			return
+		}
+
 		for {
 			select {
 			case <-time.After(5 * time.Minute):
@@ -317,6 +324,7 @@ func (m *Messenger) timeoutAutomaticStatusUpdates() {
 	referenceClock := uint64(time.Now().Unix()) - fiveMinutes
 
 	go func() {
+		defer gocommon.LogOnPanic()
 		for {
 			select {
 			case <-time.After(time.Duration(waitDuration) * time.Second):

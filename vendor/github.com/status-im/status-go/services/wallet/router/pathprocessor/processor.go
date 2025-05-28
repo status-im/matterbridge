@@ -1,5 +1,7 @@
 package pathprocessor
 
+//go:generate mockgen -package=mock_pathprocessor -source=processor.go -destination=mock/processor.go
+
 import (
 	"math/big"
 
@@ -9,7 +11,9 @@ import (
 	"github.com/status-im/status-go/account"
 	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/params"
-	"github.com/status-im/status-go/services/wallet/token"
+	"github.com/status-im/status-go/services/wallet/requests"
+	tokenTypes "github.com/status-im/status-go/services/wallet/token/types"
+	"github.com/status-im/status-go/services/wallet/wallettypes"
 )
 
 type PathProcessor interface {
@@ -22,7 +26,7 @@ type PathProcessor interface {
 	// PackTxInputData packs tx for sending
 	PackTxInputData(params ProcessorInputParams) ([]byte, error)
 	// EstimateGas estimates the gas
-	EstimateGas(params ProcessorInputParams) (uint64, error)
+	EstimateGas(params ProcessorInputParams, input []byte) (uint64, error)
 	// CalculateAmountOut calculates the amount out
 	CalculateAmountOut(params ProcessorInputParams) (*big.Int, error)
 	// Send sends the tx, returns the hash and the used nonce (lastUsedNonce is -1 if it's the first tx)
@@ -31,6 +35,8 @@ type PathProcessor interface {
 	GetContractAddress(params ProcessorInputParams) (common.Address, error)
 	// BuildTransaction builds the transaction based on MultipathProcessorTxArgs, returns the transaction and the used nonce (lastUsedNonce is -1 if it's the first tx)
 	BuildTransaction(sendArgs *MultipathProcessorTxArgs, lastUsedNonce int64) (*ethTypes.Transaction, uint64, error)
+	// BuildTransactionV2 builds the transaction based on SendTxArgs, returns the transaction and the used nonce (lastUsedNonce is -1 if it's the first tx)
+	BuildTransactionV2(sendArgs *wallettypes.SendTxArgs, lastUsedNonce int64) (*ethTypes.Transaction, uint64, error)
 }
 
 type PathProcessorClearable interface {
@@ -38,26 +44,41 @@ type PathProcessorClearable interface {
 	Clear()
 }
 
+type ProcessorCommunityTokenParams struct {
+	Name               string
+	Symbol             string
+	TokenURI           string
+	Transferable       bool
+	RemoteSelfDestruct bool
+	Supply             *big.Int
+	OwnerTokenAddress  string
+	MasterTokenAddress string
+}
+
 type ProcessorInputParams struct {
 	FromChain *params.Network
 	ToChain   *params.Network
 	FromAddr  common.Address
 	ToAddr    common.Address
-	FromToken *token.Token
-	ToToken   *token.Token
+	FromToken *tokenTypes.Token
+	ToToken   *tokenTypes.Token
 	AmountIn  *big.Int
 	AmountOut *big.Int
 
 	// extra params
-	BonderFee *big.Int
-	Username  string
-	PublicKey string
-	PackID    *big.Int
+	BonderFee          *big.Int
+	Username           string
+	PublicKey          string
+	PackID             *big.Int
+	SlippagePercentage float32
+
+	// community related params
+	CommunityParams *requests.CommunityRouteInputParams
 
 	// for testing purposes
 	TestsMode                 bool
-	TestEstimationMap         map[string]uint64   // [brifge-name, estimated-value]
-	TestBonderFeeMap          map[string]*big.Int // [token-symbol, bonder-fee]
+	TestEstimationMap         map[string]requests.Estimation // [bridge-name, estimation]
+	TestBonderFeeMap          map[string]*big.Int            // [token-symbol, bonder-fee]
 	TestApprovalGasEstimation uint64
 	TestApprovalL1Fee         uint64
 }

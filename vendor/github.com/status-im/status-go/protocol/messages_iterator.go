@@ -3,22 +3,21 @@ package protocol
 import (
 	"golang.org/x/exp/maps"
 
-	"github.com/status-im/status-go/eth-node/types"
-	"github.com/status-im/status-go/protocol/transport"
+	messagingtypes "github.com/status-im/status-go/messaging/types"
 )
 
 type MessagesIterator interface {
 	HasNext() bool
-	Next() (transport.Filter, []*types.Message)
+	Next() (messagingtypes.ChatFilter, []*messagingtypes.ReceivedMessage)
 }
 
 type DefaultMessagesIterator struct {
-	chatWithMessages map[transport.Filter][]*types.Message
-	keys             []transport.Filter
+	chatWithMessages map[messagingtypes.ChatFilter][]*messagingtypes.ReceivedMessage
+	keys             []messagingtypes.ChatFilter
 	currentIndex     int
 }
 
-func NewDefaultMessagesIterator(chatWithMessages map[transport.Filter][]*types.Message) MessagesIterator {
+func NewDefaultMessagesIterator(chatWithMessages map[messagingtypes.ChatFilter][]*messagingtypes.ReceivedMessage) MessagesIterator {
 	return &DefaultMessagesIterator{
 		chatWithMessages: chatWithMessages,
 		keys:             maps.Keys(chatWithMessages),
@@ -30,11 +29,11 @@ func (it *DefaultMessagesIterator) HasNext() bool {
 	return it.currentIndex < len(it.keys)
 }
 
-func (it *DefaultMessagesIterator) Next() (transport.Filter, []*types.Message) {
+func (it *DefaultMessagesIterator) Next() (messagingtypes.ChatFilter, []*messagingtypes.ReceivedMessage) {
 	if it.HasNext() {
 		key := it.keys[it.currentIndex]
 		it.currentIndex++
 		return key, it.chatWithMessages[key]
 	}
-	return transport.Filter{}, nil
+	return messagingtypes.ChatFilter{}, nil
 }

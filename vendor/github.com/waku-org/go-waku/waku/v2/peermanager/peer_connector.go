@@ -4,7 +4,6 @@ package peermanager
 
 import (
 	"context"
-	"errors"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -19,6 +18,7 @@ import (
 	"github.com/waku-org/go-waku/waku/v2/onlinechecker"
 	wps "github.com/waku-org/go-waku/waku/v2/peerstore"
 	"github.com/waku-org/go-waku/waku/v2/service"
+	"github.com/waku-org/go-waku/waku/v2/utils"
 
 	"go.uber.org/zap"
 
@@ -104,6 +104,7 @@ func (c *PeerConnectionStrategy) Subscribe(ctx context.Context, ch <-chan servic
 	// if running start a goroutine to consume the subscription
 	c.WaitGroup().Add(1)
 	go func() {
+		defer utils.LogOnPanic()
 		defer c.WaitGroup().Done()
 		c.consumeSubscription(subscription{ctx, ch})
 	}()
@@ -187,6 +188,7 @@ func (c *PeerConnectionStrategy) consumeSubscriptions() {
 	for _, subs := range c.subscriptions {
 		c.WaitGroup().Add(1)
 		go func(s subscription) {
+			defer utils.LogOnPanic()
 			defer c.WaitGroup().Done()
 			c.consumeSubscription(s)
 		}(subs)
@@ -207,11 +209,11 @@ func (c *PeerConnectionStrategy) canDialPeer(pi peer.AddrInfo) bool {
 		now := time.Now()
 		if now.Before(tv.nextTry) {
 			c.logger.Debug("Skipping connecting to peer due to backoff strategy",
-				zap.Time("currentTime", now), zap.Time("until", tv.nextTry))
+				logging.UTCTime("currentTime", now), logging.UTCTime("until", tv.nextTry))
 			return false
 		}
 		c.logger.Debug("Proceeding with connecting to peer",
-			zap.Time("currentTime", now), zap.Time("nextTry", tv.nextTry))
+			logging.UTCTime("currentTime", now), logging.UTCTime("nextTry", tv.nextTry))
 	}
 	return true
 }
@@ -228,12 +230,13 @@ func (c *PeerConnectionStrategy) addConnectionBackoff(peerID peer.ID) {
 		cachedPeer = &connCacheData{strat: c.backoff()}
 		cachedPeer.nextTry = time.Now().Add(cachedPeer.strat.Delay())
 		c.logger.Debug("Initializing connectionCache for peer ",
-			logging.HostID("peerID", peerID), zap.Time("until", cachedPeer.nextTry))
+			logging.HostID("peerID", peerID), logging.UTCTime("until", cachedPeer.nextTry))
 		c.cache.Add(peerID, cachedPeer)
 	}
 }
 
 func (c *PeerConnectionStrategy) dialPeers() {
+	defer utils.LogOnPanic()
 	defer c.WaitGroup().Done()
 
 	maxGoRoutines := c.pm.OutPeersTarget
@@ -273,14 +276,15 @@ func (c *PeerConnectionStrategy) dialPeers() {
 }
 
 func (c *PeerConnectionStrategy) dialPeer(pi peer.AddrInfo, sem chan struct{}) {
+	defer utils.LogOnPanic()
 	defer c.WaitGroup().Done()
 	ctx, cancel := context.WithTimeout(c.Context(), c.dialTimeout)
 	defer cancel()
 	err := c.host.Connect(ctx, pi)
-	if err != nil && !errors.Is(err, context.Canceled) {
-		c.addConnectionBackoff(pi.ID)
-		c.host.Peerstore().(wps.WakuPeerstore).AddConnFailure(pi)
-		c.logger.Warn("connecting to peer", logging.HostID("peerID", pi.ID), zap.Error(err))
+	if err != nil {
+		c.pm.HandleDialError(err, pi.ID)
+	} else {
+		c.host.Peerstore().(wps.WakuPeerstore).ResetConnFailures(pi.ID)
 	}
 	<-sem
 }

@@ -3,32 +3,32 @@ package ext
 import (
 	"context"
 	"crypto/ecdsa"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"math/big"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/multiformats/go-multiaddr"
+	"go.uber.org/zap"
+
 	"github.com/status-im/status-go/account"
+	"github.com/status-im/status-go/logutils"
 	"github.com/status-im/status-go/services/browsers"
 	"github.com/status-im/status-go/services/wallet"
 	"github.com/status-im/status-go/services/wallet/bigint"
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/ethereum/go-ethereum/p2p/enode"
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
 
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/images"
-	"github.com/status-im/status-go/mailserver"
 	multiaccountscommon "github.com/status-im/status-go/multiaccounts/common"
 	"github.com/status-im/status-go/multiaccounts/settings"
 	"github.com/status-im/status-go/protocol"
 	"github.com/status-im/status-go/protocol/common"
-	"github.com/status-im/status-go/protocol/common/shard"
 	"github.com/status-im/status-go/protocol/communities"
 	"github.com/status-im/status-go/protocol/communities/token"
 	"github.com/status-im/status-go/protocol/discord"
@@ -37,10 +37,11 @@ import (
 	"github.com/status-im/status-go/protocol/protobuf"
 	"github.com/status-im/status-go/protocol/pushnotificationclient"
 	"github.com/status-im/status-go/protocol/requests"
-	"github.com/status-im/status-go/protocol/transport"
-	"github.com/status-im/status-go/protocol/urls"
 	"github.com/status-im/status-go/protocol/verification"
-	"github.com/status-im/status-go/services/ext/mailservers"
+	"github.com/status-im/status-go/wakuv2"
+
+	messagingtypes "github.com/status-im/status-go/messaging/types"
+	wakutypes "github.com/status-im/status-go/waku/types"
 )
 
 const (
@@ -90,10 +91,10 @@ type MessagesRequest struct {
 
 	// Topic is a regular Whisper topic.
 	// DEPRECATED
-	Topic types.TopicType `json:"topic"`
+	Topic wakutypes.TopicType `json:"topic"`
 
 	// Topics is a list of Whisper topics.
-	Topics []types.TopicType `json:"topics"`
+	Topics []wakutypes.TopicType `json:"topics"`
 
 	// SymKeyID is an ID of a symmetric key to authenticate to MailServer.
 	// It's derived from MailServer password.
@@ -149,17 +150,15 @@ type MessagesResponse struct {
 
 // PublicAPI extends whisper public API.
 type PublicAPI struct {
-	service  *Service
-	eventSub mailservers.EnvelopeEventSubscriber
-	log      log.Logger
+	service *Service
+	logger  *zap.Logger
 }
 
 // NewPublicAPI returns instance of the public API.
-func NewPublicAPI(s *Service, eventSub mailservers.EnvelopeEventSubscriber) *PublicAPI {
+func NewPublicAPI(s *Service) *PublicAPI {
 	return &PublicAPI{
-		service:  s,
-		eventSub: eventSub,
-		log:      log.New("package", "status-go/services/sshext.PublicAPI"),
+		service: s,
+		logger:  logutils.ZapLogger().Named("sshextService"),
 	}
 }
 
@@ -171,12 +170,12 @@ type RetryConfig struct {
 	MaxRetries  int
 }
 
-func WaitForExpiredOrCompleted(requestID types.Hash, events chan types.EnvelopeEvent, timeout time.Duration) (*types.MailServerResponse, error) {
+func WaitForExpiredOrCompleted(requestID types.Hash, events chan wakutypes.EnvelopeEvent, timeout time.Duration) (*wakutypes.MailServerResponse, error) {
 	expired := fmt.Errorf("request %x expired", requestID)
 	after := time.NewTimer(timeout)
 	defer after.Stop()
 	for {
-		var ev types.EnvelopeEvent
+		var ev wakutypes.EnvelopeEvent
 		select {
 		case ev = <-events:
 		case <-after.C:
@@ -186,13 +185,13 @@ func WaitForExpiredOrCompleted(requestID types.Hash, events chan types.EnvelopeE
 			continue
 		}
 		switch ev.Event {
-		case types.EventMailServerRequestCompleted:
-			data, ok := ev.Data.(*types.MailServerResponse)
+		case wakutypes.EventMailServerRequestCompleted:
+			data, ok := ev.Data.(*wakutypes.MailServerResponse)
 			if ok {
 				return data, nil
 			}
 			return nil, errors.New("invalid event data type")
-		case types.EventMailServerRequestExpired:
+		case wakutypes.EventMailServerRequestExpired:
 			return nil, expired
 		}
 	}
@@ -259,16 +258,8 @@ func (api *PublicAPI) SendGroupChatInvitationRejection(ctx Context, invitationRe
 	return api.service.messenger.SendGroupChatInvitationRejection(ctx, invitationRequestID)
 }
 
-func (api *PublicAPI) LoadFilters(parent context.Context, chats []*transport.Filter) ([]*transport.Filter, error) {
-	return api.service.messenger.LoadFilters(chats)
-}
-
 func (api *PublicAPI) SaveChat(parent context.Context, chat *protocol.Chat) error {
 	return api.service.messenger.SaveChat(chat)
-}
-
-func (api *PublicAPI) SaveMessages(parent context.Context, messages []*common.Message) error {
-	return api.service.messenger.SaveMessages(messages)
 }
 
 func (api *PublicAPI) CreateOneToOneChat(parent context.Context, request *requests.CreateOneToOneChat) (*protocol.MessengerResponse, error) {
@@ -287,8 +278,8 @@ func (api *PublicAPI) Chats(parent context.Context) []*protocol.Chat {
 	return api.service.messenger.Chats()
 }
 
-func (api *PublicAPI) ChatsPreview(parent context.Context) []*protocol.ChatPreview {
-	return api.service.messenger.ChatsPreview()
+func (api *PublicAPI) ChatsPreview(parent context.Context, filterType protocol.ChatPreviewFilterType) []*protocol.ChatPreview {
+	return api.service.messenger.ChatsPreview(filterType)
 }
 
 func (api *PublicAPI) Chat(parent context.Context, chatID string) *protocol.Chat {
@@ -297,10 +288,6 @@ func (api *PublicAPI) Chat(parent context.Context, chatID string) *protocol.Chat
 
 func (api *PublicAPI) ActiveChats(parent context.Context) []*protocol.Chat {
 	return api.service.messenger.ActiveChats()
-}
-
-func (api *PublicAPI) DeleteChat(parent context.Context, chatID string) error {
-	return api.service.messenger.DeleteChat(chatID)
 }
 
 func (api *PublicAPI) MuteCommunityCategory(request *requests.MuteCategory) error {
@@ -337,15 +324,8 @@ func (api *PublicAPI) UnmuteChat(parent context.Context, chatID string) error {
 }
 
 func (api *PublicAPI) BlockContact(ctx context.Context, contactID string) (*protocol.MessengerResponse, error) {
-	api.log.Info("blocking contact", "contact", contactID)
+	api.logger.Info("blocking contact", zap.String("contact", contactID))
 	return api.service.messenger.BlockContact(ctx, contactID, false)
-}
-
-// This function is the same as the one above, but used only on the desktop side, since at the end it doesn't set
-// `Added` flag to `false`, but only `Blocked` to `true`
-func (api *PublicAPI) BlockContactDesktop(ctx context.Context, contactID string) (*protocol.MessengerResponse, error) {
-	api.log.Info("blocking contact", "contact", contactID)
-	return api.service.messenger.BlockContactDesktop(ctx, contactID)
 }
 
 func (api *PublicAPI) UnblockContact(parent context.Context, contactID string) (*protocol.MessengerResponse, error) {
@@ -364,13 +344,14 @@ func (api *PublicAPI) RequestContactInfoFromMailserver(pubkey string) (*protocol
 	return api.service.messenger.FetchContact(pubkey, true)
 }
 
-func (api *PublicAPI) RemoveFilters(parent context.Context, chats []*transport.Filter) error {
+func (api *PublicAPI) RemoveFilters(parent context.Context, chats messagingtypes.ChatFilters) error {
 	return api.service.messenger.RemoveFilters(chats)
 }
 
 // EnableInstallation enables an installation for multi-device sync.
 func (api *PublicAPI) EnableInstallation(installationID string) error {
-	return api.service.messenger.EnableInstallation(installationID)
+	_, err := api.service.messenger.EnableInstallation(installationID)
+	return err
 }
 
 // DisableInstallation disables an installation for multi-device sync.
@@ -725,10 +706,6 @@ type ApplicationStatusUpdatesResponse struct {
 	StatusUpdates []protocol.UserStatus `json:"statusUpdates"`
 }
 
-type ApplicationSwitcherCardsResponse struct {
-	SwitcherCards []protocol.SwitcherCard `json:"switcherCards"`
-}
-
 func (api *PublicAPI) ChatMessages(chatID, cursor string, limit int) (*ApplicationMessagesResponse, error) {
 	messages, cursor, err := api.service.messenger.MessageByChatID(chatID, cursor, limit)
 	if err != nil {
@@ -791,25 +768,6 @@ func (api *PublicAPI) StatusUpdates() (*ApplicationStatusUpdatesResponse, error)
 
 	return &ApplicationStatusUpdatesResponse{
 		StatusUpdates: statusUpdates,
-	}, nil
-}
-
-func (api *PublicAPI) UpsertSwitcherCard(request *requests.UpsertSwitcherCard) error {
-	return api.service.messenger.UpsertSwitcherCard(request)
-}
-
-func (api *PublicAPI) DeleteSwitcherCard(id string) error {
-	return api.service.messenger.DeleteSwitcherCard(id)
-}
-
-func (api *PublicAPI) SwitcherCards() (*ApplicationSwitcherCardsResponse, error) {
-	switcherCards, err := api.service.messenger.SwitcherCards()
-	if err != nil {
-		return nil, err
-	}
-
-	return &ApplicationSwitcherCardsResponse{
-		SwitcherCards: switcherCards,
 	}, nil
 }
 
@@ -1053,15 +1011,20 @@ func (api *PublicAPI) VerifiedUntrustworthy(ctx context.Context, request *reques
 }
 
 func (api *PublicAPI) SendPairInstallation(ctx context.Context) (*protocol.MessengerResponse, error) {
-	return api.service.messenger.SendPairInstallation(ctx, nil)
+	return api.service.messenger.SendPairInstallation(ctx, "", nil)
 }
 
 func (api *PublicAPI) SyncDevices(ctx context.Context, name, picture string) error {
 	return api.service.messenger.SyncDevices(ctx, name, picture, nil)
 }
 
-func (api *PublicAPI) EnableAndSyncInstallation(request *requests.EnableAndSyncInstallation) error {
-	return api.service.messenger.EnableAndSyncInstallation(request)
+// Deprecated: Use EnableInstallationAndSync instead
+func (api *PublicAPI) EnableAndSyncInstallation(request *requests.EnableInstallationAndSync) (*protocol.MessengerResponse, error) {
+	return api.service.messenger.EnableInstallationAndSync(request)
+}
+
+func (api *PublicAPI) EnableInstallationAndSync(request *requests.EnableInstallationAndSync) (*protocol.MessengerResponse, error) {
+	return api.service.messenger.EnableInstallationAndSync(request)
 }
 
 func (api *PublicAPI) EnableInstallationAndPair(request *requests.EnableInstallationAndPair) (*protocol.MessengerResponse, error) {
@@ -1258,14 +1221,6 @@ func (api *PublicAPI) EmojiReactionsByChatIDMessageID(chatID string, messageID s
 	return api.service.messenger.EmojiReactionsByChatIDMessageID(chatID, messageID)
 }
 
-func (api *PublicAPI) GetLinkPreviewWhitelist() []urls.Site {
-	return urls.LinkPreviewWhitelist()
-}
-
-func (api *PublicAPI) GetLinkPreviewData(link string) (previewData urls.LinkPreviewData, err error) {
-	return urls.GetLinkPreviewData(link)
-}
-
 // GetTextURLsToUnfurl parses text and returns a deduplicated and (somewhat) normalized
 // slice of URLs. The returned URLs can be used as cache keys by clients.
 // For each URL there's a corresponding metadata which should be used as to plan the unfurling.
@@ -1307,7 +1262,7 @@ func (api *PublicAPI) RequestCommunityInfoFromMailserver(communityID string) (*c
 
 // Deprecated: RequestCommunityInfoFromMailserverWithShard is deprecated in favor of
 // configurable FetchCommunity.
-func (api *PublicAPI) RequestCommunityInfoFromMailserverWithShard(communityID string, shard *shard.Shard) (*communities.Community, error) {
+func (api *PublicAPI) RequestCommunityInfoFromMailserverWithShard(communityID string, shard *wakuv2.Shard) (*communities.Community, error) {
 	request := &protocol.FetchCommunityRequest{
 		CommunityKey:    communityID,
 		Shard:           shard,
@@ -1332,7 +1287,7 @@ func (api *PublicAPI) RequestCommunityInfoFromMailserverAsync(communityID string
 
 // Deprecated: RequestCommunityInfoFromMailserverAsyncWithShard is deprecated in favor of
 // configurable FetchCommunity.
-func (api *PublicAPI) RequestCommunityInfoFromMailserverAsyncWithShard(communityID string, shard *shard.Shard) error {
+func (api *PublicAPI) RequestCommunityInfoFromMailserverAsyncWithShard(communityID string, shard *wakuv2.Shard) error {
 	request := &protocol.FetchCommunityRequest{
 		CommunityKey:    communityID,
 		Shard:           shard,
@@ -1399,16 +1354,29 @@ func (api *PublicAPI) DeleteActivityCenterNotifications(ctx context.Context, ids
 	return err
 }
 
+// FetchNewsMessages fetches news messages from the News Feed
+// and returns a MessengerResponse containing the AC notifications
+func (api *PublicAPI) FetchNewsMessages() (*protocol.MessengerResponse, error) {
+	m := api.service.messenger
+	return m.FetchNewsMessages()
+}
+
+func (api *PublicAPI) ToggleNewsFeedEnabled(value bool) error {
+	m := api.service.messenger
+	return m.ToggleNewsFeedEnabled(value)
+}
+
+func (api *PublicAPI) ToggleNewsRSSEnabled(value bool) error {
+	m := api.service.messenger
+	return m.ToggleNewsRSSEnabled(value)
+}
+
 func (api *PublicAPI) RequestAllHistoricMessages(forceFetchingBackup bool) (*protocol.MessengerResponse, error) {
 	return api.service.messenger.RequestAllHistoricMessages(forceFetchingBackup, false)
 }
 
 func (api *PublicAPI) RequestAllHistoricMessagesWithRetries(forceFetchingBackup bool) (*protocol.MessengerResponse, error) {
 	return api.service.messenger.RequestAllHistoricMessages(forceFetchingBackup, true)
-}
-
-func (api *PublicAPI) DisconnectActiveMailserver() {
-	api.service.messenger.DisconnectActiveMailserver()
 }
 
 // Echo is a method for testing purposes.
@@ -1422,19 +1390,6 @@ func (api *PublicAPI) FillGaps(chatID string, messageIDs []string) error {
 
 func (api *PublicAPI) SyncChatFromSyncedFrom(chatID string) (uint32, error) {
 	return api.service.messenger.SyncChatFromSyncedFrom(chatID)
-}
-
-// BloomFilter returns the current bloom filter bytes
-func (api *PublicAPI) BloomFilter() string {
-	return hexutil.Encode(api.service.messenger.BloomFilter())
-}
-
-func (api *PublicAPI) StartDiscV5() error {
-	return api.service.messenger.StartDiscV5()
-}
-
-func (api *PublicAPI) StopDiscV5() error {
-	return api.service.messenger.StopDiscV5()
 }
 
 func (api *PublicAPI) GetCommunitiesSettings() ([]communities.CommunitySettings, error) {
@@ -1480,41 +1435,51 @@ func (api *PublicAPI) StorePubsubTopicKey(topic string, privKey string) error {
 	return api.service.messenger.StorePubsubTopicKey(topic, p)
 }
 
-func (api *PublicAPI) AddStorePeer(address string) (string, error) {
-	peerID, err := api.service.messenger.AddStorePeer(address)
-	return string(peerID), err
-}
-
-func (api *PublicAPI) AddRelayPeer(address string) (string, error) {
-	peerID, err := api.service.messenger.AddRelayPeer(address)
-	return string(peerID), err
+func (api *PublicAPI) AddRelayPeer(address string) (peer.ID, error) {
+	maddr, err := multiaddr.NewMultiaddr(address)
+	if err != nil {
+		return "", err
+	}
+	return api.service.messenger.AddRelayPeer(maddr)
 }
 
 func (api *PublicAPI) DialPeer(address string) error {
-	return api.service.messenger.DialPeer(address)
+	maddr, err := multiaddr.NewMultiaddr(address)
+	if err != nil {
+		return err
+	}
+	return api.service.messenger.DialPeer(maddr)
 }
 
 func (api *PublicAPI) DialPeerByID(peerID string) error {
-	return api.service.messenger.DialPeerByID(peerID)
+	pID, err := peer.Decode(peerID)
+	if err != nil {
+		return err
+	}
+	return api.service.messenger.DialPeerByID(pID)
 }
 
 func (api *PublicAPI) DropPeer(peerID string) error {
-	return api.service.messenger.DropPeer(peerID)
+	pID, err := peer.Decode(peerID)
+	if err != nil {
+		return err
+	}
+	return api.service.messenger.DropPeer(pID)
 }
 
-func (api *PublicAPI) Peers() map[string]types.WakuV2Peer {
+func (api *PublicAPI) Peers() wakutypes.PeerStats {
 	return api.service.messenger.Peers()
 }
 
-func (api *PublicAPI) RelayPeersByTopic(topic string) (*types.PeerList, error) {
+func (api *PublicAPI) RelayPeersByTopic(topic string) (*wakutypes.PeerList, error) {
 	return api.service.messenger.RelayPeersByTopic(topic)
 }
 
-func (api *PublicAPI) ListenAddresses() ([]string, error) {
+func (api *PublicAPI) ListenAddresses() ([]multiaddr.Multiaddr, error) {
 	return api.service.messenger.ListenAddresses()
 }
 
-func (api *PublicAPI) Enr() (string, error) {
+func (api *PublicAPI) Enr() (*enode.Node, error) {
 	return api.service.messenger.ENR()
 }
 
@@ -1692,8 +1657,8 @@ func (api *PublicAPI) ChatMentionReplaceWithPublicKey(chatID, text string) (stri
 // 2. user input "c", call this function with text "abc"
 // whatever, we should ensure ChatMentionOnChangeText know(invoked) the latest full text.
 // ChatMentionOnChangeText will maintain state of fulltext and diff between previous/latest full text internally.
-func (api *PublicAPI) ChatMentionOnChangeText(chatID, text string) (*protocol.ChatMentionContext, error) {
-	return api.service.messenger.GetMentionsManager().OnChangeText(chatID, text)
+func (api *PublicAPI) ChatMentionOnChangeText(chatID, text string, callID uint64) (*protocol.ChatMentionContext, error) {
+	return api.service.messenger.GetMentionsManager().OnChangeText(chatID, text, callID)
 }
 
 // ChatMentionSelectMention select mention from mention suggestion list
@@ -1811,12 +1776,37 @@ func (api *PublicAPI) SetStoreConfirmationForMessagesSent(request *requests.SetS
 	return api.service.messenger.SetStoreConfirmationForMessagesSent(request)
 }
 
+// Deprecated: Use SetLogLevel from status.go instead. BTW, mobile don't use this anymore.
 func (api *PublicAPI) SetLogLevel(request *requests.SetLogLevel) error {
 	return api.service.messenger.SetLogLevel(request)
 }
 
+// Deprecated: Use SetLogNamespaces from status.go instead. BTW, mobile don't use this anymore.
+func (api *PublicAPI) SetLogNamespaces(request *requests.SetLogNamespaces) error {
+	return api.service.messenger.SetLogNamespaces(request)
+}
+
+// Deprecated: Use SetLogEnabled from status.go instead. BTW, mobile don't use this anymore.
+func (api *PublicAPI) SetLogEnabled(enabled bool) error {
+	return api.service.messenger.SetLogEnabled(enabled)
+}
+
 func (api *PublicAPI) SetMaxLogBackups(request *requests.SetMaxLogBackups) error {
 	return api.service.messenger.SetMaxLogBackups(request)
+}
+
+func (api *PublicAPI) LogTest() error {
+	l1 := logutils.ZapLogger().Named("test1")
+	l2 := l1.Named("test2")
+	l3 := l2.Named("test3")
+
+	for level := zap.DebugLevel; level <= zap.ErrorLevel; level++ {
+		for _, logger := range []*zap.Logger{l1, l2, l3} {
+			logger.Check(level, "test message").Write(zap.String("level", level.String()))
+		}
+	}
+
+	return l1.Sync()
 }
 
 func (api *PublicAPI) SetCustomNodes(request *requests.SetCustomNodes) error {
@@ -1838,74 +1828,4 @@ func (api *PublicAPI) GetCommunityMemberAllMessages(request *requests.CommunityM
 // Delete a specific community member messages or all community member messages (based on provided parameters)
 func (api *PublicAPI) DeleteCommunityMemberMessages(request *requests.DeleteCommunityMemberMessages) (*protocol.MessengerResponse, error) {
 	return api.service.messenger.DeleteCommunityMemberMessages(request)
-}
-
-// -----
-// HELPER
-// -----
-
-// MakeMessagesRequestPayload makes a specific payload for MailServer
-// to request historic messages.
-// DEPRECATED
-func MakeMessagesRequestPayload(r MessagesRequest) ([]byte, error) {
-	cursor, err := hex.DecodeString(r.Cursor)
-	if err != nil {
-		return nil, fmt.Errorf("invalid cursor: %v", err)
-	}
-
-	if len(cursor) > 0 && len(cursor) != mailserver.CursorLength {
-		return nil, fmt.Errorf("invalid cursor size: expected %d but got %d", mailserver.CursorLength, len(cursor))
-	}
-
-	payload := mailserver.MessagesRequestPayload{
-		Lower: r.From,
-		Upper: r.To,
-		// We need to pass bloom filter for
-		// backward compatibility
-		Bloom:  createBloomFilter(r),
-		Topics: topicsToByteArray(r.Topics),
-		Limit:  r.Limit,
-		Cursor: cursor,
-		// Client must tell the MailServer if it supports batch responses.
-		// This can be removed in the future.
-		Batch: true,
-	}
-
-	return rlp.EncodeToBytes(payload)
-}
-
-func topicsToByteArray(topics []types.TopicType) [][]byte {
-
-	var response [][]byte
-	for idx := range topics {
-		response = append(response, topics[idx][:])
-	}
-
-	return response
-}
-
-func createBloomFilter(r MessagesRequest) []byte {
-	if len(r.Topics) > 0 {
-		return topicsToBloom(r.Topics...)
-	}
-	return types.TopicToBloom(r.Topic)
-}
-
-func topicsToBloom(topics ...types.TopicType) []byte {
-	i := new(big.Int)
-	for _, topic := range topics {
-		bloom := types.TopicToBloom(topic)
-		i.Or(i, new(big.Int).SetBytes(bloom[:]))
-	}
-
-	combined := make([]byte, types.BloomFilterSize)
-	data := i.Bytes()
-	copy(combined[types.BloomFilterSize-len(data):], data[:])
-
-	return combined
-}
-
-// TopicsToBloom squashes all topics into a single bloom filter.
-func TopicsToBloom(topics ...types.TopicType) []byte {
-	return topicsToBloom(topics...)
 }

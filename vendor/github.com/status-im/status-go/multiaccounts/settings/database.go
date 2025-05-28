@@ -8,10 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ethereum/go-ethereum/log"
-
 	"github.com/status-im/status-go/common/dbsetup"
 	"github.com/status-im/status-go/eth-node/types"
+	"github.com/status-im/status-go/logutils"
 	"github.com/status-im/status-go/multiaccounts/errors"
 	"github.com/status-im/status-go/nodecfg"
 	"github.com/status-im/status-go/params"
@@ -142,16 +141,18 @@ INSERT INTO settings (
   profile_pictures_show_to,
   profile_pictures_visibility,
   url_unfurling_mode,
-  omit_transfers_history_scan,
   mnemonic_was_not_shown,
   wallet_token_preferences_group_by_community,
   wallet_collectible_preferences_group_by_collection,
   wallet_collectible_preferences_group_by_community,
   test_networks_enabled,
-  fleet
+  fleet,
+  auto_refresh_tokens_enabled,
+  news_feed_last_fetched_timestamp,
+  backup_fetched
 ) VALUES (
 ?,?,?,?,?,?,?,?,?,?,?,?,?,?,
-?,?,?,?,?,?,?,?,?,'id',?,?,?,?,?,?,?,?,?,?,?)`,
+?,?,?,?,?,?,?,?,?,'id',?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		s.Address,
 		s.Currency,
 		s.CurrentNetwork,
@@ -179,13 +180,16 @@ INSERT INTO settings (
 		s.ProfilePicturesShowTo,
 		s.ProfilePicturesVisibility,
 		s.URLUnfurlingMode,
-		s.OmitTransfersHistoryScan,
 		s.MnemonicWasNotShown,
 		s.TokenGroupByCommunity,
 		s.CollectibleGroupByCollection,
 		s.CollectibleGroupByCommunity,
 		s.TestNetworksEnabled,
 		s.Fleet,
+		s.AutoRefreshTokensEnabled,
+		// Default the news feed last fetched timestamp to now
+		time.Now().Unix(),
+		s.BackupFetched,
 	)
 	if err != nil {
 		return err
@@ -372,7 +376,11 @@ func (db *Database) SetSettingLastSynced(setting SettingField, clock uint64) err
 }
 
 func (db *Database) GetSettings() (Settings, error) {
-	var s Settings
+	var (
+		s                            Settings
+		lastTokensUpdate             sql.NullTime
+		newsFeedLastFetchedTimestamp sql.NullTime
+	)
 	err := db.db.QueryRow(`
 	SELECT
 		address, anon_metrics_should_send, chaos_mode, currency, current_network,
@@ -380,17 +388,17 @@ func (db *Database) GetSettings() (Settings, error) {
 		hide_home_tooltip, installation_id, key_uid, keycard_instance_uid, keycard_paired_on, keycard_pairing,
 		last_updated, latest_derived_path, link_preview_request_enabled, link_previews_enabled_sites, log_level,
 		mnemonic, mnemonic_removed, name, networks, notifications_enabled, push_notifications_server_enabled,
-		push_notifications_from_contacts_only, remote_push_notifications_enabled, send_push_notifications,
-		push_notifications_block_mentions, photo_path, pinned_mailservers, preferred_name, preview_privacy, public_key,
+		push_notifications_from_contacts_only, remote_push_notifications_enabled, news_notifications_enabled, messenger_notifications_enabled,
+		send_push_notifications, push_notifications_block_mentions, photo_path, pinned_mailservers, preferred_name, preview_privacy, public_key,
 		remember_syncing_choice, signing_phrase, stickers_packs_installed, stickers_packs_pending, stickers_recent_stickers,
 		syncing_on_mobile_network, default_sync_period, use_mailservers, messages_from_contacts_only, usernames, appearance,
 		profile_pictures_show_to, profile_pictures_visibility, wallet_root_address, wallet_set_up_passed, wallet_visible_tokens,
 		waku_bloom_filter_mode, webview_allow_permission_requests, current_user_status, send_status_updates, gif_recents,
 		gif_favorites, opensea_enabled, last_backup, backup_enabled, telemetry_server_url, auto_message_enabled, gif_api_key,
-		test_networks_enabled, mutual_contact_enabled, profile_migration_needed, is_goerli_enabled, wallet_token_preferences_group_by_community, url_unfurling_mode,
-		omit_transfers_history_scan, mnemonic_was_not_shown, wallet_show_community_asset_when_sending_tokens, wallet_display_assets_below_balance,
-		wallet_display_assets_below_balance_threshold, wallet_collectible_preferences_group_by_collection, wallet_collectible_preferences_group_by_community, 
-		peer_syncing_enabled
+		test_networks_enabled, mutual_contact_enabled, profile_migration_needed, wallet_token_preferences_group_by_community, url_unfurling_mode,
+		mnemonic_was_not_shown, wallet_show_community_asset_when_sending_tokens, wallet_display_assets_below_balance,
+		wallet_display_assets_below_balance_threshold, wallet_collectible_preferences_group_by_collection, wallet_collectible_preferences_group_by_community,
+		peer_syncing_enabled, auto_refresh_tokens_enabled, last_tokens_update, news_feed_enabled, news_feed_last_fetched_timestamp, news_rss_enabled
 	FROM
 		settings
 	WHERE
@@ -426,6 +434,8 @@ func (db *Database) GetSettings() (Settings, error) {
 		&s.PushNotificationsServerEnabled,
 		&s.PushNotificationsFromContactsOnly,
 		&s.RemotePushNotificationsEnabled,
+		&s.NewsNotificationsEnabled,
+		&s.MessengerNotificationsEnabled,
 		&s.SendPushNotifications,
 		&s.PushNotificationsBlockMentions,
 		&s.PhotoPath,
@@ -464,10 +474,8 @@ func (db *Database) GetSettings() (Settings, error) {
 		&s.TestNetworksEnabled,
 		&s.MutualContactEnabled,
 		&s.ProfileMigrationNeeded,
-		&s.IsGoerliEnabled,
 		&s.TokenGroupByCommunity,
 		&s.URLUnfurlingMode,
-		&s.OmitTransfersHistoryScan,
 		&s.MnemonicWasNotShown,
 		&s.ShowCommunityAssetWhenSendingTokens,
 		&s.DisplayAssetsBelowBalance,
@@ -475,7 +483,24 @@ func (db *Database) GetSettings() (Settings, error) {
 		&s.CollectibleGroupByCollection,
 		&s.CollectibleGroupByCommunity,
 		&s.PeerSyncingEnabled,
+		&s.AutoRefreshTokensEnabled,
+		&lastTokensUpdate,
+		&s.NewsFeedEnabled,
+		&newsFeedLastFetchedTimestamp,
+		&s.NewsRSSEnabled,
 	)
+
+	if err != nil {
+		return s, err
+	}
+
+	if lastTokensUpdate.Valid {
+		s.LastTokensUpdate = lastTokensUpdate.Time
+	}
+
+	if newsFeedLastFetchedTimestamp.Valid {
+		s.NewsFeedLastFetchedTimestamp = newsFeedLastFetchedTimestamp.Time
+	}
 
 	return s, err
 }
@@ -755,14 +780,6 @@ func (db *Database) GetTestNetworksEnabled() (result bool, err error) {
 	return result, err
 }
 
-func (db *Database) GetIsGoerliEnabled() (result bool, err error) {
-	err = db.makeSelectRow(IsGoerliEnabled).Scan(&result)
-	if err == sql.ErrNoRows {
-		return result, nil
-	}
-	return result, err
-}
-
 func (db *Database) SetPeerSyncingEnabled(value bool) error {
 	return db.SaveSettingField(PeerSyncingEnabled, value)
 }
@@ -848,11 +865,67 @@ func (db *Database) postChangesToSubscribers(change *SyncSettingField) {
 		select {
 		case s <- change:
 		default:
-			log.Warn("settings changes subscription channel full, dropping message")
+			logutils.ZapLogger().Warn("settings changes subscription channel full, dropping message")
 		}
 	}
 }
 
 func (db *Database) MnemonicWasShown() error {
 	return db.SaveSettingField(MnemonicWasNotShown, false)
+}
+
+func (db *Database) AutoRefreshTokensEnabled() (result bool, err error) {
+	err = db.makeSelectRow(AutoRefreshTokensEnabled).Scan(&result)
+	if err == sql.ErrNoRows {
+		return result, nil
+	}
+	return result, err
+}
+
+func (db *Database) LastTokensUpdate() (result time.Time, err error) {
+	var lastTokensUpdate sql.NullTime
+	err = db.makeSelectRow(LastTokensUpdate).Scan(&lastTokensUpdate)
+	if err == sql.ErrNoRows {
+		return result, nil
+	}
+	if lastTokensUpdate.Valid {
+		result = lastTokensUpdate.Time
+	}
+	return
+}
+
+func (db *Database) NewsFeedLastFetchedTimestamp() (result time.Time, err error) {
+	var newsFeedLastFetchedTimestamp sql.NullTime
+	err = db.makeSelectRow(NewsFeedLastFetchedTimestamp).Scan(&newsFeedLastFetchedTimestamp)
+	if err == sql.ErrNoRows {
+		return result, nil
+	}
+	if newsFeedLastFetchedTimestamp.Valid {
+		result = newsFeedLastFetchedTimestamp.Time
+	}
+	return
+}
+
+func (db *Database) NewsFeedEnabled() (result bool, err error) {
+	err = db.makeSelectRow(NewsFeedEnabled).Scan(&result)
+	if err == sql.ErrNoRows {
+		return result, nil
+	}
+	return result, err
+}
+
+func (db *Database) NewsNotificationsEnabled() (result bool, err error) {
+	err = db.makeSelectRow(NewsNotificationsEnabled).Scan(&result)
+	if err == sql.ErrNoRows {
+		return result, nil
+	}
+	return result, err
+}
+
+func (db *Database) NewsRSSEnabled() (result bool, err error) {
+	err = db.makeSelectRow(NewsRSSEnabled).Scan(&result)
+	if err == sql.ErrNoRows {
+		return result, nil
+	}
+	return result, err
 }

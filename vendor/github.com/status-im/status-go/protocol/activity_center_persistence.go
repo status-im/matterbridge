@@ -12,7 +12,37 @@ import (
 )
 
 const allFieldsForTableActivityCenterNotification = `id, timestamp, notification_type, chat_id, read, dismissed, accepted, message, author,
-    reply_message, community_id, membership_status, contact_verification_status, token_data, deleted, updated_at`
+	reply_message, community_id, membership_status, contact_verification_status, token_data, deleted, updated_at, news_title, news_description, news_content, news_image_url, news_link, news_link_label`
+
+const selectActivityCenterNotificationsQuery = `SELECT
+			a.id,
+			a.timestamp,
+			a.notification_type,
+			a.chat_id,
+			a.community_id,
+			a.membership_status,
+			a.read,
+			a.accepted,
+			a.dismissed,
+			a.deleted,
+			a.message,
+			c.last_message,
+			a.reply_message,
+			a.contact_verification_status,
+			c.name,
+			a.author,
+			a.token_data,
+			substr('0000000000000000000000000000000000000000000000000000000000000000' || a.timestamp, -64, 64) || hex(a.id) as cursor,
+			a.updated_at,
+			a.installation_id,
+			a.news_title,
+			a.news_description,
+			a.news_content,
+			a.news_image_url,
+			a.news_link,
+			a.news_link_label
+		FROM activity_center_notifications a
+		LEFT JOIN chats c ON c.id = a.chat_id `
 
 var emptyNotifications = make([]*ActivityCenterNotification, 0)
 
@@ -60,10 +90,6 @@ func (db sqlitePersistence) DeleteActivityCenterNotificationForMessage(chatID st
 	}
 
 	for _, notification := range notifications {
-		if notification.LastMessage != nil && notification.LastMessage.ID == messageID {
-			withNotification(notification)
-		}
-
 		if notification.Message != nil && notification.Message.ID == messageID {
 			withNotification(notification)
 		}
@@ -152,9 +178,16 @@ func (db sqlitePersistence) SaveActivityCenterNotification(notification *Activit
 			dismissed,
 			token_data,
 			deleted,
-		    updated_at
+			updated_at,
+			installation_id,
+			news_title,
+			news_description,
+			news_content,
+			news_image_url,
+			news_link,
+			news_link_label
 		)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		`,
 		notification.ID,
 		notification.Timestamp,
@@ -172,6 +205,13 @@ func (db sqlitePersistence) SaveActivityCenterNotification(notification *Activit
 		encodedTokenData,
 		notification.Deleted,
 		notification.UpdatedAt,
+		notification.InstallationID,
+		notification.NewsTitle,
+		notification.NewsDescription,
+		notification.NewsContent,
+		notification.NewsImageURL,
+		notification.NewsLink,
+		notification.NewsLinkLabel,
 	)
 	if err != nil {
 		return 0, err
@@ -199,6 +239,12 @@ func (db sqlitePersistence) parseRowFromTableActivityCenterNotification(rows *sq
 		var replyMessageBytes []byte
 		var tokenDataBytes []byte
 		var author sql.NullString
+		var newsTitle sql.NullString
+		var newsDescription sql.NullString
+		var newsContent sql.NullString
+		var newsImageUrl sql.NullString
+		var newsLink sql.NullString
+		var newsLinkLabel sql.NullString
 		notification := &ActivityCenterNotification{}
 		err := rows.Scan(
 			&notification.ID,
@@ -217,6 +263,12 @@ func (db sqlitePersistence) parseRowFromTableActivityCenterNotification(rows *sq
 			&tokenDataBytes,
 			&notification.Deleted,
 			&notification.UpdatedAt,
+			&newsTitle,
+			&newsDescription,
+			&newsContent,
+			&newsImageUrl,
+			&newsLink,
+			&newsLinkLabel,
 		)
 		if err != nil {
 			return nil, err
@@ -232,6 +284,30 @@ func (db sqlitePersistence) parseRowFromTableActivityCenterNotification(rows *sq
 
 		if author.Valid {
 			notification.Author = author.String
+		}
+
+		if newsTitle.Valid {
+			notification.NewsTitle = newsTitle.String
+		}
+
+		if newsDescription.Valid {
+			notification.NewsDescription = newsDescription.String
+		}
+
+		if newsContent.Valid {
+			notification.NewsContent = newsContent.String
+		}
+
+		if newsImageUrl.Valid {
+			notification.NewsImageURL = newsImageUrl.String
+		}
+
+		if newsLink.Valid {
+			notification.NewsLink = newsLink.String
+		}
+
+		if newsLinkLabel.Valid {
+			notification.NewsLinkLabel = newsLinkLabel.String
 		}
 
 		if len(tokenDataBytes) > 0 {
@@ -264,7 +340,9 @@ func (db sqlitePersistence) parseRowFromTableActivityCenterNotification(rows *sq
 	return notifications, nil
 }
 
-func (db sqlitePersistence) unmarshalActivityCenterNotificationRow(row *sql.Row) (*ActivityCenterNotification, error) {
+func scanActivityCenterNotification(scanner interface {
+	Scan(dest ...any) error
+}) (string, *ActivityCenterNotification, error) {
 	var chatID sql.NullString
 	var communityID sql.NullString
 	var lastMessageBytes []byte
@@ -273,8 +351,16 @@ func (db sqlitePersistence) unmarshalActivityCenterNotificationRow(row *sql.Row)
 	var tokenDataBytes []byte
 	var name sql.NullString
 	var author sql.NullString
+	var installationID sql.NullString
+	var newsTitle sql.NullString
+	var newsDescription sql.NullString
+	var newsContent sql.NullString
+	var newsImageUrl sql.NullString
+	var newsLink sql.NullString
+	var newsLinkLabel sql.NullString
+	cursor := ""
 	notification := &ActivityCenterNotification{}
-	err := row.Scan(
+	err := scanner.Scan(
 		&notification.ID,
 		&notification.Timestamp,
 		&notification.Type,
@@ -292,10 +378,19 @@ func (db sqlitePersistence) unmarshalActivityCenterNotificationRow(row *sql.Row)
 		&name,
 		&author,
 		&tokenDataBytes,
-		&notification.UpdatedAt)
+		&cursor,
+		&notification.UpdatedAt,
+		&installationID,
+		&newsTitle,
+		&newsDescription,
+		&newsContent,
+		&newsImageUrl,
+		&newsLink,
+		&newsLinkLabel,
+	)
 
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 
 	if chatID.Valid {
@@ -314,10 +409,38 @@ func (db sqlitePersistence) unmarshalActivityCenterNotificationRow(row *sql.Row)
 		notification.Author = author.String
 	}
 
+	if installationID.Valid {
+		notification.InstallationID = installationID.String
+	}
+
+	if newsTitle.Valid {
+		notification.NewsTitle = newsTitle.String
+	}
+
+	if newsDescription.Valid {
+		notification.NewsDescription = newsDescription.String
+	}
+
+	if newsContent.Valid {
+		notification.NewsContent = newsContent.String
+	}
+
+	if newsImageUrl.Valid {
+		notification.NewsImageURL = newsImageUrl.String
+	}
+
+	if newsLink.Valid {
+		notification.NewsLink = newsLink.String
+	}
+
+	if newsLinkLabel.Valid {
+		notification.NewsLinkLabel = newsLinkLabel.String
+	}
+
 	if len(tokenDataBytes) > 0 {
 		err = json.Unmarshal(tokenDataBytes, &notification.TokenData)
 		if err != nil {
-			return nil, err
+			return "", nil, err
 		}
 	}
 
@@ -325,7 +448,7 @@ func (db sqlitePersistence) unmarshalActivityCenterNotificationRow(row *sql.Row)
 	if lastMessageBytes != nil {
 		lastMessage := common.NewMessage()
 		if err = json.Unmarshal(lastMessageBytes, lastMessage); err != nil {
-			return nil, err
+			return "", nil, err
 		}
 		notification.LastMessage = lastMessage
 	}
@@ -334,7 +457,7 @@ func (db sqlitePersistence) unmarshalActivityCenterNotificationRow(row *sql.Row)
 	if messageBytes != nil {
 		message := common.NewMessage()
 		if err = json.Unmarshal(messageBytes, message); err != nil {
-			return nil, err
+			return "", nil, err
 		}
 		notification.Message = message
 	}
@@ -343,106 +466,37 @@ func (db sqlitePersistence) unmarshalActivityCenterNotificationRow(row *sql.Row)
 	if replyMessageBytes != nil {
 		replyMessage := common.NewMessage()
 		if err = json.Unmarshal(replyMessageBytes, replyMessage); err != nil {
-			return nil, err
+			return "", nil, err
 		}
 		notification.ReplyMessage = replyMessage
 	}
 
-	return notification, nil
+	return cursor, notification, nil
+}
+
+func (db sqlitePersistence) unmarshalActivityCenterNotificationRow(row *sql.Row) (*ActivityCenterNotification, error) {
+	_, notification, err := scanActivityCenterNotification(row)
+	return notification, err
 }
 
 func (db sqlitePersistence) unmarshalActivityCenterNotificationRows(rows *sql.Rows) (string, []*ActivityCenterNotification, error) {
-	var notifications []*ActivityCenterNotification
+	defer rows.Close()
+	var result []*ActivityCenterNotification
 	latestCursor := ""
 	for rows.Next() {
-		var chatID sql.NullString
-		var communityID sql.NullString
-		var lastMessageBytes []byte
-		var messageBytes []byte
-		var replyMessageBytes []byte
-		var tokenDataBytes []byte
-		var name sql.NullString
-		var author sql.NullString
-		notification := &ActivityCenterNotification{}
-		err := rows.Scan(
-			&notification.ID,
-			&notification.Timestamp,
-			&notification.Type,
-			&chatID,
-			&communityID,
-			&notification.MembershipStatus,
-			&notification.Read,
-			&notification.Accepted,
-			&notification.Dismissed,
-			&messageBytes,
-			&lastMessageBytes,
-			&replyMessageBytes,
-			&notification.ContactVerificationStatus,
-			&name,
-			&author,
-			&tokenDataBytes,
-			&latestCursor,
-			&notification.UpdatedAt)
+		cursor, notification, err := scanActivityCenterNotification(rows)
+		latestCursor = cursor
 		if err != nil {
-			return "", nil, err
+			return latestCursor, nil, err
 		}
-
-		if chatID.Valid {
-			notification.ChatID = chatID.String
-		}
-
-		if communityID.Valid {
-			notification.CommunityID = communityID.String
-		}
-
-		if name.Valid {
-			notification.Name = name.String
-		}
-
-		if author.Valid {
-			notification.Author = author.String
-		}
-
-		if len(tokenDataBytes) > 0 {
-			tokenData := &ActivityTokenData{}
-			if err = json.Unmarshal(tokenDataBytes, &tokenData); err != nil {
-				return "", nil, err
-			}
-			notification.TokenData = tokenData
-		}
-
-		// Restore last message
-		if lastMessageBytes != nil {
-			lastMessage := common.NewMessage()
-			if err = json.Unmarshal(lastMessageBytes, lastMessage); err != nil {
-				return "", nil, err
-			}
-			notification.LastMessage = lastMessage
-		}
-
-		// Restore message
-		if messageBytes != nil {
-			message := common.NewMessage()
-			if err = json.Unmarshal(messageBytes, message); err != nil {
-				return "", nil, err
-			}
-			notification.Message = message
-		}
-
-		// Restore reply message
-		if replyMessageBytes != nil {
-			replyMessage := common.NewMessage()
-			if err = json.Unmarshal(replyMessageBytes, replyMessage); err != nil {
-				return "", nil, err
-			}
-			notification.ReplyMessage = replyMessage
-		}
-
-		notifications = append(notifications, notification)
+		result = append(result, notification)
 	}
 
-	return latestCursor, notifications, nil
+	if err := rows.Err(); err != nil {
+		return latestCursor, nil, err
+	}
 
+	return latestCursor, result, nil
 }
 
 type activityCenterQueryParams struct {
@@ -523,33 +577,9 @@ func (db sqlitePersistence) prepareQueryConditionsAndArgs(params activityCenterQ
 func (db sqlitePersistence) buildActivityCenterQuery(tx *sql.Tx, params activityCenterQueryParams) (string, []*ActivityCenterNotification, error) {
 	args, conditionsString := db.prepareQueryConditionsAndArgs(params)
 
-	query := fmt.Sprintf( // nolint: gosec
-		`
-	SELECT
-	a.id,
-	a.timestamp,
-	a.notification_type,
-	a.chat_id,
-	a.community_id,
-	a.membership_status,
-	a.read,
-	a.accepted,
-	a.dismissed,
-	a.message,
-	c.last_message,
-	a.reply_message,
-	a.contact_verification_status,
-	c.name,
-	a.author,
-	a.token_data,
-	substr('0000000000000000000000000000000000000000000000000000000000000000' || a.timestamp, -64, 64) || hex(a.id) as cursor,
-	a.updated_at
-	FROM activity_center_notifications a
-	LEFT JOIN chats c
-	ON
-	c.id = a.chat_id
-	%s
-	ORDER BY cursor DESC`, conditionsString)
+	query := fmt.Sprintf(selectActivityCenterNotificationsQuery+`
+		%s
+		ORDER BY cursor DESC`, conditionsString)
 
 	if params.limit != 0 {
 		args = append(args, params.limit)
@@ -645,30 +675,7 @@ func (db sqlitePersistence) GetActivityCenterNotificationsByID(ids []types.HexBy
 	inVector := strings.Repeat("?, ", len(ids)-1) + "?"
 	// nolint: gosec
 	rows, err := db.db.Query(
-		`
-		SELECT
-		a.id,
-		a.timestamp,
-		a.notification_type,
-		a.chat_id,
-		a.community_id,
-		a.membership_status,
-		a.read,
-		a.accepted,
-		a.dismissed,
-		a.message,
-		c.last_message,
-		a.reply_message,
-		a.contact_verification_status,
-		c.name,
-		a.author,
-		a.token_data,
-		substr('0000000000000000000000000000000000000000000000000000000000000000' || a.timestamp, -64, 64) || hex(a.id) as cursor,
-		a.updated_at
-		FROM activity_center_notifications a
-		LEFT JOIN chats c
-		ON
-		c.id = a.chat_id
+		selectActivityCenterNotificationsQuery+`
 		WHERE a.id IN (`+inVector+`) AND NOT a.deleted`, idsArgs...)
 
 	if err != nil {
@@ -683,33 +690,33 @@ func (db sqlitePersistence) GetActivityCenterNotificationsByID(ids []types.HexBy
 	return notifications, nil
 }
 
+func (db sqlitePersistence) GetActivityCenterNotificationByTypeAuthorAndChatID(acType ActivityCenterType, author string, chatID string) (*ActivityCenterNotification, error) {
+	if len(author) == 0 {
+		return nil, nil
+	}
+	if len(chatID) == 0 {
+		return nil, nil
+	}
+	// nolint: gosec
+	query := selectActivityCenterNotificationsQuery + `
+		WHERE a.notification_type = ?
+			AND a.author = ?
+			AND a.chat_id = ?
+		ORDER BY a.timestamp DESC
+		LIMIT 1`
+
+	row := db.db.QueryRow(query, acType, author, chatID)
+	notification, err := db.unmarshalActivityCenterNotificationRow(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return notification, err
+}
+
 // GetActivityCenterNotificationByID returns a notification by its ID even it's deleted logically
 func (db sqlitePersistence) GetActivityCenterNotificationByID(id types.HexBytes) (*ActivityCenterNotification, error) {
-	row := db.db.QueryRow(`
-		SELECT
-		a.id,
-		a.timestamp,
-		a.notification_type,
-		a.chat_id,
-		a.community_id,
-		a.membership_status,
-		a.read,
-		a.accepted,
-		a.dismissed,
-		a.deleted,
-		a.message,
-		c.last_message,
-		a.reply_message,
-		a.contact_verification_status,
-		c.name,
-		a.author,
-		a.token_data,
-		a.updated_at
-		FROM activity_center_notifications a
-		LEFT JOIN chats c
-		ON
-		c.id = a.chat_id
-		WHERE a.id = ?`, id)
+	query := selectActivityCenterNotificationsQuery + `WHERE a.id = ?`
+	row := db.db.QueryRow(query, id)
 
 	notification, err := db.unmarshalActivityCenterNotificationRow(row)
 	if err == sql.ErrNoRows {
@@ -1319,28 +1326,7 @@ func (db sqlitePersistence) ActiveContactRequestNotification(contactID string) (
 	// contact request per contact, but to avoid relying on the unpredictable
 	// behavior of the DB engine for sorting, we sort by notification.Timestamp
 	// DESC.
-	query := `
-		SELECT
-			a.id,
-			a.timestamp,
-			a.notification_type,
-			a.chat_id,
-			a.community_id,
-			a.membership_status,
-			a.read,
-			a.accepted,
-			a.dismissed,
-			a.deleted,
-			a.message,
-			c.last_message,
-			a.reply_message,
-			a.contact_verification_status,
-			c.name,
-			a.author,
-			a.token_data,
-			a.updated_at
-		FROM activity_center_notifications a
-		LEFT JOIN chats c ON c.id = a.chat_id
+	query := selectActivityCenterNotificationsQuery + `
 		WHERE a.author = ?
 		    AND NOT a.deleted
 			AND NOT a.dismissed

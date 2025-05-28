@@ -2,6 +2,7 @@ package commands
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -9,8 +10,9 @@ import (
 	"time"
 
 	"github.com/status-im/status-go/eth-node/types"
+	persistence "github.com/status-im/status-go/services/connector/database"
+	"github.com/status-im/status-go/services/wallet/wallettypes"
 	"github.com/status-im/status-go/signal"
-	"github.com/status-im/status-go/transactions"
 )
 
 var (
@@ -20,8 +22,11 @@ var (
 	ErrEmptyAccountsShared                    = fmt.Errorf("empty accounts were shared by wallet")
 	ErrRequestAccountsRejectedByUser          = fmt.Errorf("request accounts was rejected by user")
 	ErrSendTransactionRejectedByUser          = fmt.Errorf("send transaction was rejected by user")
+	ErrSignRejectedByUser                     = fmt.Errorf("sign was rejected by user")
 	ErrEmptyRequestID                         = fmt.Errorf("empty requestID")
 	ErrAnotherConnectorOperationIsAwaitingFor = fmt.Errorf("another connector operation is awaiting for user input")
+	ErrEmptyUrl                               = fmt.Errorf("empty URL")
+	ErrDAppDoesNotHavePermissions             = fmt.Errorf("dApp does not have permissions")
 )
 
 type MessageType int
@@ -29,6 +34,7 @@ type MessageType int
 const (
 	RequestAccountsAccepted MessageType = iota
 	SendTransactionAccepted
+	SignAccepted
 	Rejected
 )
 
@@ -38,12 +44,14 @@ type Message struct {
 }
 
 type ClientSideHandler struct {
+	Db               *sql.DB
 	responseChannel  chan Message
 	isRequestRunning int32
 }
 
-func NewClientSideHandler() *ClientSideHandler {
+func NewClientSideHandler(db *sql.DB) *ClientSideHandler {
 	return &ClientSideHandler{
+		Db:               db,
 		responseChannel:  make(chan Message, 1), // Buffer of 1 to avoid blocking
 		isRequestRunning: 0,
 	}
@@ -95,7 +103,52 @@ func (c *ClientSideHandler) RequestShareAccountForDApp(dApp signal.ConnectorDApp
 	}
 }
 
-func (c *ClientSideHandler) RequestSendTransaction(dApp signal.ConnectorDApp, chainID uint64, txArgs *transactions.SendTxArgs) (types.Hash, error) {
+func (c *ClientSideHandler) RequestAccountsAccepted(args RequestAccountsAcceptedArgs) error {
+	if args.RequestID == "" {
+		return ErrEmptyRequestID
+	}
+
+	c.responseChannel <- Message{Type: RequestAccountsAccepted, Data: args}
+	return nil
+}
+
+func (c *ClientSideHandler) RequestAccountsRejected(args RejectedArgs) error {
+	if args.RequestID == "" {
+		return ErrEmptyRequestID
+	}
+
+	c.responseChannel <- Message{Type: Rejected, Data: args}
+	return nil
+}
+
+func (c *ClientSideHandler) RecallDAppPermissions(args RecallDAppPermissionsArgs) error {
+	if args.URL == "" {
+		return ErrEmptyUrl
+	}
+
+	dApp, err := persistence.SelectDAppByUrl(c.Db, args.URL)
+	if err != nil {
+		return err
+	}
+
+	if dApp == nil {
+		return ErrDAppDoesNotHavePermissions
+	}
+
+	err = persistence.DeleteDApp(c.Db, dApp.URL)
+	if err != nil {
+		return err
+	}
+
+	signal.SendConnectorDAppPermissionRevoked(signal.ConnectorDApp{
+		URL:     dApp.URL,
+		Name:    dApp.Name,
+		IconURL: dApp.IconURL,
+	})
+	return nil
+}
+
+func (c *ClientSideHandler) RequestSendTransaction(dApp signal.ConnectorDApp, chainID uint64, txArgs *wallettypes.SendTxArgs) (types.Hash, error) {
 	if !c.setRequestRunning() {
 		return types.Hash{}, ErrAnotherConnectorOperationIsAwaitingFor
 	}
@@ -132,20 +185,6 @@ func (c *ClientSideHandler) RequestSendTransaction(dApp signal.ConnectorDApp, ch
 	}
 }
 
-func (c *ClientSideHandler) RequestAccountsAccepted(args RequestAccountsAcceptedArgs) error {
-	c.responseChannel <- Message{Type: RequestAccountsAccepted, Data: args}
-	return nil
-}
-
-func (c *ClientSideHandler) RequestAccountsRejected(args RejectedArgs) error {
-	if args.RequestID == "" {
-		return ErrEmptyRequestID
-	}
-
-	c.responseChannel <- Message{Type: Rejected, Data: args}
-	return nil
-}
-
 func (c *ClientSideHandler) SendTransactionAccepted(args SendTransactionAcceptedArgs) error {
 	if args.RequestID == "" {
 		return ErrEmptyRequestID
@@ -156,6 +195,56 @@ func (c *ClientSideHandler) SendTransactionAccepted(args SendTransactionAccepted
 }
 
 func (c *ClientSideHandler) SendTransactionRejected(args RejectedArgs) error {
+	if args.RequestID == "" {
+		return ErrEmptyRequestID
+	}
+
+	c.responseChannel <- Message{Type: Rejected, Data: args}
+	return nil
+}
+
+func (c *ClientSideHandler) RequestSign(dApp signal.ConnectorDApp, challenge, address string, method string) (string, error) {
+	if !c.setRequestRunning() {
+		return "", ErrAnotherConnectorOperationIsAwaitingFor
+	}
+	defer c.clearRequestRunning()
+
+	requestID := c.generateRequestID(dApp)
+	signal.SendConnectorSign(dApp, requestID, challenge, address, method)
+
+	timeout := time.After(WalletResponseMaxInterval)
+
+	for {
+		select {
+		case msg := <-c.responseChannel:
+			switch msg.Type {
+			case SignAccepted:
+				response := msg.Data.(SignAcceptedArgs)
+				if response.RequestID == requestID {
+					return response.Signature, nil
+				}
+			case Rejected:
+				response := msg.Data.(RejectedArgs)
+				if response.RequestID == requestID {
+					return "", ErrSignRejectedByUser
+				}
+			}
+		case <-timeout:
+			return "", ErrWalletResponseTimeout
+		}
+	}
+}
+
+func (c *ClientSideHandler) SignAccepted(args SignAcceptedArgs) error {
+	if args.RequestID == "" {
+		return ErrEmptyRequestID
+	}
+
+	c.responseChannel <- Message{Type: SignAccepted, Data: args}
+	return nil
+}
+
+func (c *ClientSideHandler) SignRejected(args RejectedArgs) error {
 	if args.RequestID == "" {
 		return ErrEmptyRequestID
 	}

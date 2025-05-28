@@ -114,9 +114,9 @@ const (
 	AccountPartiallyOperable AccountOperable = "partially" // an account is partially operable if it is not a keycard account and there is created keystore file for the address it is derived from
 	AccountFullyOperable     AccountOperable = "fully"     // an account is fully operable if it is not a keycard account and there is a keystore file for it
 
-	ProdPreferredChainIDsDefault        = "1:10:42161"
+	ProdPreferredChainIDsDefault        = "1:10:42161:8453"
 	TestPreferredChainIDsDefault        = "5:420:421613"
-	TestSepoliaPreferredChainIDsDefault = "11155111:11155420:421614"
+	TestSepoliaPreferredChainIDsDefault = "11155111:11155420:421614:84532:1660990954"
 )
 
 // Returns true if an account is a wallet account that logged in user has a control over, otherwise returns false.
@@ -973,7 +973,7 @@ func (db *Database) updateKeypairClock(tx *sql.Tx, keyUID string, clock uint64) 
 	return err
 }
 
-func (db *Database) saveOrUpdateAccounts(tx *sql.Tx, accounts []*Account, updateKeypairClock, isGoerliEnabled bool) (err error) {
+func (db *Database) saveOrUpdateAccounts(tx *sql.Tx, accounts []*Account, updateKeypairClock bool) (err error) {
 	if tx == nil {
 		return errDbTransactionIsNil
 	}
@@ -1006,11 +1006,7 @@ func (db *Database) saveOrUpdateAccounts(tx *sql.Tx, accounts []*Account, update
 			}
 
 			if acc.TestPreferredChainIDs == "" {
-				if isGoerliEnabled {
-					acc.TestPreferredChainIDs = TestPreferredChainIDsDefault
-				} else {
-					acc.TestPreferredChainIDs = TestSepoliaPreferredChainIDsDefault
-				}
+				acc.TestPreferredChainIDs = TestSepoliaPreferredChainIDsDefault
 			}
 		}
 
@@ -1102,10 +1098,6 @@ func (db *Database) SaveOrUpdateAccounts(accounts []*Account, updateKeypairClock
 	if len(accounts) == 0 {
 		return errors.New("no provided accounts to save/update")
 	}
-	isGoerliEnabled, err := db.GetIsGoerliEnabled()
-	if err != nil {
-		return err
-	}
 
 	tx, err := db.db.Begin()
 	if err != nil {
@@ -1118,7 +1110,7 @@ func (db *Database) SaveOrUpdateAccounts(accounts []*Account, updateKeypairClock
 		}
 		_ = tx.Rollback()
 	}()
-	err = db.saveOrUpdateAccounts(tx, accounts, updateKeypairClock, isGoerliEnabled)
+	err = db.saveOrUpdateAccounts(tx, accounts, updateKeypairClock)
 	return err
 }
 
@@ -1129,11 +1121,6 @@ func (db *Database) SaveOrUpdateAccounts(accounts []*Account, updateKeypairClock
 func (db *Database) SaveOrUpdateKeypair(keypair *Keypair) error {
 	if keypair == nil {
 		return errDbPassedParameterIsNil
-	}
-
-	isGoerliEnabled, err := db.GetIsGoerliEnabled()
-	if err != nil {
-		return err
 	}
 
 	tx, err := db.db.Begin()
@@ -1162,6 +1149,12 @@ func (db *Database) SaveOrUpdateKeypair(keypair *Keypair) error {
 				return ErrKeypairDifferentAccountsKeyUID
 			}
 		}
+	} else if dbKeypair.Removed {
+		// If the key pair beind added was removed in the past, then all its accounts must be removed before adding it again.
+		err = db.deleteAccountsForKeyUID(tx, keypair.KeyUID)
+		if err != nil {
+			return err
+		}
 	}
 
 	_, err = tx.Exec(`
@@ -1185,7 +1178,7 @@ func (db *Database) SaveOrUpdateKeypair(keypair *Keypair) error {
 	if err != nil {
 		return err
 	}
-	return db.saveOrUpdateAccounts(tx, keypair.Accounts, false, isGoerliEnabled)
+	return db.saveOrUpdateAccounts(tx, keypair.Accounts, false)
 }
 
 func (db *Database) UpdateKeypairName(keyUID string, name string, clock uint64, updateChatAccountName bool) error {
@@ -1599,6 +1592,15 @@ func (db *Database) MoveWalletAccount(fromPosition int64, toPosition int64, cloc
 	return db.setClockOfLastAccountsPositionChange(tx, clock)
 }
 
+func (db *Database) deleteAccountsForKeyUID(tx *sql.Tx, keyUID string) error {
+	if tx == nil {
+		return errDbTransactionIsNil
+	}
+
+	_, err := tx.Exec("DELETE FROM keypairs_accounts WHERE key_uid = ?", keyUID)
+	return err
+}
+
 func (db *Database) CheckAndDeleteExpiredKeypairsAndAccounts(time uint64) error {
 	tx, err := db.db.Begin()
 	if err != nil {
@@ -1728,7 +1730,7 @@ func (db *Database) ResolveSuggestedPathForKeypair(keyUID string) (suggestedPath
 	}()
 
 	var kp *Keypair
-	kp, err = db.getKeypairByKeyUID(tx, keyUID, true)
+	kp, err = db.getKeypairByKeyUID(tx, keyUID, false)
 	if err != nil {
 		if err == ErrDbKeypairNotFound {
 			return fmt.Sprintf("%s0", statusWalletRootPath), nil

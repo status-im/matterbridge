@@ -1,6 +1,7 @@
 package node
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"database/sql"
 	"encoding/json"
@@ -10,40 +11,38 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/status-im/status-go/protocol/common/shard"
+	"go.uber.org/zap"
+
 	"github.com/status-im/status-go/server"
 	"github.com/status-im/status-go/signal"
 	"github.com/status-im/status-go/transactions"
+	"github.com/status-im/status-go/wakuv2"
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/event"
-	"github.com/ethereum/go-ethereum/p2p/enode"
 	gethrpc "github.com/ethereum/go-ethereum/rpc"
 
 	"github.com/status-im/status-go/appmetrics"
 	"github.com/status-im/status-go/common"
-	gethbridge "github.com/status-im/status-go/eth-node/bridge/geth"
 	"github.com/status-im/status-go/eth-node/crypto"
-	"github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/logutils"
-	"github.com/status-im/status-go/mailserver"
 	"github.com/status-im/status-go/multiaccounts/accounts"
 	"github.com/status-im/status-go/multiaccounts/settings"
 	"github.com/status-im/status-go/params"
 	"github.com/status-im/status-go/rpc"
 	accountssvc "github.com/status-im/status-go/services/accounts"
 	"github.com/status-im/status-go/services/accounts/settingsevent"
+	appgeneral "github.com/status-im/status-go/services/app-general"
 	appmetricsservice "github.com/status-im/status-go/services/appmetrics"
 	"github.com/status-im/status-go/services/browsers"
 	"github.com/status-im/status-go/services/chat"
 	"github.com/status-im/status-go/services/communitytokens"
 	"github.com/status-im/status-go/services/connector"
 	"github.com/status-im/status-go/services/ens"
-	"github.com/status-im/status-go/services/ext"
+	"github.com/status-im/status-go/services/eth"
 	"github.com/status-im/status-go/services/gif"
 	localnotifications "github.com/status-im/status-go/services/local-notifications"
 	"github.com/status-im/status-go/services/mailservers"
-	"github.com/status-im/status-go/services/peer"
 	"github.com/status-im/status-go/services/permissions"
 	"github.com/status-im/status-go/services/personal"
 	"github.com/status-im/status-go/services/rpcfilters"
@@ -52,16 +51,12 @@ import (
 	"github.com/status-im/status-go/services/stickers"
 	"github.com/status-im/status-go/services/subscriptions"
 	"github.com/status-im/status-go/services/updates"
-	"github.com/status-im/status-go/services/wakuext"
 	"github.com/status-im/status-go/services/wakuv2ext"
 	"github.com/status-im/status-go/services/wallet"
 	"github.com/status-im/status-go/services/wallet/thirdparty"
-	"github.com/status-im/status-go/services/wallet/transfer"
 	"github.com/status-im/status-go/services/web3provider"
 	"github.com/status-im/status-go/timesource"
-	"github.com/status-im/status-go/waku"
-	wakucommon "github.com/status-im/status-go/waku/common"
-	"github.com/status-im/status-go/wakuv2"
+	wakuv2common "github.com/status-im/status-go/wakuv2/common"
 )
 
 var (
@@ -73,21 +68,19 @@ var (
 )
 
 func (b *StatusNode) initServices(config *params.NodeConfig, mediaServer *server.MediaServer) error {
-	accountsFeed := &event.Feed{}
-	settingsFeed := &event.Feed{}
 	accDB, err := accounts.NewDB(b.appDB)
 	if err != nil {
 		return err
 	}
 
-	setSettingsNotifier(accDB, settingsFeed)
+	setSettingsNotifier(accDB, &b.settingsFeed)
 
 	services := []common.StatusService{}
-	services = appendIf(config.UpstreamConfig.Enabled, services, b.rpcFiltersService())
+	services = append(services, b.rpcFiltersService())
 	services = append(services, b.subscriptionService())
 	services = append(services, b.rpcStatsService())
 	services = append(services, b.appmetricsService())
-	services = append(services, b.peerService())
+	services = append(services, b.appgeneralService())
 	services = append(services, b.personalService())
 	services = append(services, b.statusPublicService())
 	services = append(services, b.pendingTrackerService(&b.walletFeed))
@@ -95,7 +88,7 @@ func (b *StatusNode) initServices(config *params.NodeConfig, mediaServer *server
 	services = append(services, b.CommunityTokensService())
 	services = append(services, b.stickersService(accDB))
 	services = append(services, b.updatesService())
-	services = appendIf(b.appDB != nil && b.multiaccountsDB != nil, services, b.accountsService(accountsFeed, accDB, mediaServer))
+	services = appendIf(b.appDB != nil && b.multiaccountsDB != nil, services, b.accountsService(&b.accountsFeed, accDB, mediaServer))
 	services = appendIf(config.BrowsersConfig.Enabled, services, b.browsersService())
 	services = appendIf(config.PermissionsConfig.Enabled, services, b.permissionsService())
 	services = appendIf(config.MailserversConfig.Enabled, services, b.mailserversService())
@@ -107,7 +100,7 @@ func (b *StatusNode) initServices(config *params.NodeConfig, mediaServer *server
 	// Wallet Service is used by wakuExtSrvc/wakuV2ExtSrvc
 	// Keep this initialization before the other two
 	if config.WalletConfig.Enabled {
-		walletService := b.walletService(accDB, b.appDB, accountsFeed, settingsFeed, &b.walletFeed, config.WalletConfig.StatusProxyStageName)
+		walletService := b.walletService(accDB, b.appDB, &b.accountsFeed, &b.networksFeed, &b.walletFeed, config.WalletConfig.StatusProxyStageName)
 		services = append(services, walletService)
 	}
 
@@ -117,26 +110,6 @@ func (b *StatusNode) initServices(config *params.NodeConfig, mediaServer *server
 	// by a certain account and check community entry permissions.
 	// We handle circular dependency between the two by delaying ininitalization of the CommunityCollectibleInfoProvider
 	// in the CollectiblesManager.
-	if config.WakuConfig.Enabled {
-		wakuService, err := b.wakuService(&config.WakuConfig, &config.ClusterConfig)
-		if err != nil {
-			return err
-		}
-
-		services = append(services, wakuService)
-
-		wakuext, err := b.wakuExtService(config)
-		if err != nil {
-			return err
-		}
-
-		b.wakuExtSrvc = wakuext
-
-		services = append(services, wakuext)
-
-		b.SetWalletCommunityInfoProvider(wakuext)
-	}
-
 	if config.WakuV2Config.Enabled {
 		telemetryServerURL := ""
 		if accDB.DB() != nil {
@@ -173,13 +146,11 @@ func (b *StatusNode) initServices(config *params.NodeConfig, mediaServer *server
 	}
 	services = append(services, lns)
 
-	b.peerSrvc.SetDiscoverer(b)
+	services = append(services, b.ethService())
 
 	for i := range services {
 		b.RegisterLifecycle(services[i])
 	}
-
-	b.services = services
 
 	return nil
 }
@@ -187,7 +158,6 @@ func (b *StatusNode) initServices(config *params.NodeConfig, mediaServer *server
 func (b *StatusNode) RegisterLifecycle(s common.StatusService) {
 	b.addPublicMethods(s.APIs())
 	b.gethNode.RegisterAPIs(s.APIs())
-	b.gethNode.RegisterProtocols(s.Protocols())
 	b.gethNode.RegisterLifecycle(s)
 }
 
@@ -201,32 +171,14 @@ func (b *StatusNode) addPublicMethods(apis []gethrpc.API) {
 	}
 }
 
-func (b *StatusNode) nodeBridge() types.Node {
-	return gethbridge.NewNodeBridge(b.gethNode, b.wakuSrvc, b.wakuV2Srvc)
-}
-
-func (b *StatusNode) wakuExtService(config *params.NodeConfig) (*wakuext.Service, error) {
-	if b.gethNode == nil {
-		return nil, errors.New("geth node not initialized")
-	}
-
-	if b.wakuExtSrvc == nil {
-		b.wakuExtSrvc = wakuext.New(*config, b.nodeBridge(), b.rpcClient, ext.EnvelopeSignalHandler{}, b.db)
-	}
-
-	b.wakuExtSrvc.SetP2PServer(b.gethNode.Server())
-	return b.wakuExtSrvc, nil
-}
-
 func (b *StatusNode) wakuV2ExtService(config *params.NodeConfig) (*wakuv2ext.Service, error) {
 	if b.gethNode == nil {
 		return nil, errors.New("geth node not initialized")
 	}
 	if b.wakuV2ExtSrvc == nil {
-		b.wakuV2ExtSrvc = wakuv2ext.New(*config, b.nodeBridge(), b.rpcClient, ext.EnvelopeSignalHandler{}, b.db)
+		b.wakuV2ExtSrvc = wakuv2ext.New(*config, b.wakuV2Srvc, b.rpcClient)
 	}
 
-	b.wakuV2ExtSrvc.SetP2PServer(b.gethNode.Server())
 	return b.wakuV2ExtSrvc, nil
 }
 
@@ -253,14 +205,6 @@ func (b *StatusNode) EnsService() *ens.Service {
 	return b.ensSrvc
 }
 
-func (b *StatusNode) WakuService() *waku.Waku {
-	return b.wakuSrvc
-}
-
-func (b *StatusNode) WakuExtService() *wakuext.Service {
-	return b.wakuExtSrvc
-}
-
 func (b *StatusNode) WakuV2ExtService() *wakuv2ext.Service {
 	return b.wakuV2ExtSrvc
 }
@@ -268,62 +212,13 @@ func (b *StatusNode) WakuV2Service() *wakuv2.Waku {
 	return b.wakuV2Srvc
 }
 
-func (b *StatusNode) wakuService(wakuCfg *params.WakuConfig, clusterCfg *params.ClusterConfig) (*waku.Waku, error) {
-	if b.wakuSrvc == nil {
-		cfg := &waku.Config{
-			MaxMessageSize:         wakucommon.DefaultMaxMessageSize,
-			BloomFilterMode:        wakuCfg.BloomFilterMode,
-			FullNode:               wakuCfg.FullNode,
-			SoftBlacklistedPeerIDs: wakuCfg.SoftBlacklistedPeerIDs,
-			MinimumAcceptedPoW:     params.WakuMinimumPoW,
-			EnableConfirmations:    wakuCfg.EnableConfirmations,
-		}
-
-		if wakuCfg.MaxMessageSize > 0 {
-			cfg.MaxMessageSize = wakuCfg.MaxMessageSize
-		}
-		if wakuCfg.MinimumPoW > 0 {
-			cfg.MinimumAcceptedPoW = wakuCfg.MinimumPoW
-		}
-
-		w := waku.New(cfg, logutils.ZapLogger())
-
-		if wakuCfg.EnableRateLimiter {
-			r := wakuRateLimiter(wakuCfg, clusterCfg)
-			w.RegisterRateLimiter(r)
-		}
-
-		if timesource := b.timeSource(); timesource != nil {
-			w.SetTimeSource(timesource.Now)
-		}
-
-		// enable mail service
-		if wakuCfg.EnableMailServer {
-			if err := registerWakuMailServer(w, wakuCfg); err != nil {
-				return nil, fmt.Errorf("failed to register WakuMailServer: %v", err)
-			}
-		}
-
-		if wakuCfg.LightClient {
-			emptyBloomFilter := make([]byte, 64)
-			if err := w.SetBloomFilter(emptyBloomFilter); err != nil {
-				return nil, err
-			}
-		}
-		b.wakuSrvc = w
-	}
-	return b.wakuSrvc, nil
-
-}
-
 func (b *StatusNode) wakuV2Service(nodeConfig *params.NodeConfig) (*wakuv2.Waku, error) {
 	if b.wakuV2Srvc == nil {
 		cfg := &wakuv2.Config{
-			MaxMessageSize:                         wakucommon.DefaultMaxMessageSize,
+			MaxMessageSize:                         wakuv2common.DefaultMaxMessageSize,
 			Host:                                   nodeConfig.WakuV2Config.Host,
 			Port:                                   nodeConfig.WakuV2Config.Port,
 			LightClient:                            nodeConfig.WakuV2Config.LightClient,
-			Rendezvous:                             nodeConfig.Rendezvous,
 			WakuNodes:                              nodeConfig.ClusterConfig.WakuNodes,
 			EnableStore:                            nodeConfig.WakuV2Config.EnableStore,
 			StoreCapacity:                          nodeConfig.WakuV2Config.StoreCapacity,
@@ -333,11 +228,12 @@ func (b *StatusNode) wakuV2Service(nodeConfig *params.NodeConfig) (*wakuv2.Waku,
 			Nameserver:                             nodeConfig.WakuV2Config.Nameserver,
 			UDPPort:                                nodeConfig.WakuV2Config.UDPPort,
 			AutoUpdate:                             nodeConfig.WakuV2Config.AutoUpdate,
-			DefaultShardPubsubTopic:                shard.DefaultShardPubsubTopic(),
+			DefaultShardPubsubTopic:                wakuv2.DefaultShardPubsubTopic(),
 			TelemetryServerURL:                     nodeConfig.WakuV2Config.TelemetryServerURL,
 			ClusterID:                              nodeConfig.ClusterConfig.ClusterID,
 			EnableMissingMessageVerification:       nodeConfig.WakuV2Config.EnableMissingMessageVerification,
 			EnableStoreConfirmationForMessagesSent: nodeConfig.WakuV2Config.EnableStoreConfirmationForMessagesSent,
+			UseThrottledPublish:                    true,
 		}
 
 		// Configure peer exchange and discv5 settings based on node type
@@ -377,7 +273,7 @@ func (b *StatusNode) wakuV2Service(nodeConfig *params.NodeConfig) (*wakuv2.Waku,
 			}
 		}
 
-		w, err := wakuv2.New(nodeKey, nodeConfig.ClusterConfig.Fleet, cfg, logutils.ZapLogger(), b.appDB, b.timeSource(), signal.SendHistoricMessagesRequestFailed, signal.SendPeerStats)
+		w, err := wakuv2.New(nodeKey, cfg, logutils.ZapLogger(), b.appDB, b.timeSource(), signal.SendHistoricMessagesRequestFailed, signal.SendPeerStats)
 
 		if err != nil {
 			return nil, err
@@ -396,35 +292,6 @@ func setSettingsNotifier(db *accounts.Database, feed *event.Feed) {
 			Value:   val,
 		})
 	})
-}
-
-func wakuRateLimiter(wakuCfg *params.WakuConfig, clusterCfg *params.ClusterConfig) *wakucommon.PeerRateLimiter {
-	enodes := append(
-		parseNodes(clusterCfg.StaticNodes),
-		parseNodes(clusterCfg.TrustedMailServers)...,
-	)
-	var (
-		ips     []string
-		peerIDs []enode.ID
-	)
-	for _, item := range enodes {
-		ips = append(ips, item.IP().String())
-		peerIDs = append(peerIDs, item.ID())
-	}
-	return wakucommon.NewPeerRateLimiter(
-		&wakucommon.PeerRateLimiterConfig{
-			PacketLimitPerSecIP:     wakuCfg.PacketRateLimitIP,
-			PacketLimitPerSecPeerID: wakuCfg.PacketRateLimitPeerID,
-			BytesLimitPerSecIP:      wakuCfg.BytesRateLimitIP,
-			BytesLimitPerSecPeerID:  wakuCfg.BytesRateLimitPeerID,
-			WhitelistedIPs:          ips,
-			WhitelistedPeerIDs:      peerIDs,
-		},
-		&wakucommon.MetricsRateLimiterHandler{},
-		&wakucommon.DropPeerRateLimiterHandler{
-			Tolerance: wakuCfg.RateLimitTolerance,
-		},
-	)
 }
 
 func (b *StatusNode) connectorService() *connector.Service {
@@ -498,7 +365,7 @@ func (b *StatusNode) pendingTrackerService(walletFeed *event.Feed) *transactions
 
 func (b *StatusNode) CommunityTokensService() *communitytokens.Service {
 	if b.communityTokensSrvc == nil {
-		b.communityTokensSrvc = communitytokens.NewService(b.rpcClient, b.gethAccountManager, b.pendingTracker, b.config, b.appDB, &b.walletFeed, b.transactor)
+		b.communityTokensSrvc = communitytokens.NewService(b.rpcClient, b.gethAccountManager, b.config, b.appDB, &b.walletFeed, b.transactor)
 	}
 	return b.communityTokensSrvc
 }
@@ -562,8 +429,19 @@ func (b *StatusNode) appmetricsService() common.StatusService {
 	return b.appMetricsSrvc
 }
 
+func (b *StatusNode) appgeneralService() *appgeneral.Service {
+	if b.appGeneralSrvc == nil {
+		b.appGeneralSrvc = appgeneral.New()
+	}
+	return b.appGeneralSrvc
+}
+
 func (b *StatusNode) WalletService() *wallet.Service {
 	return b.walletSrvc
+}
+
+func (b *StatusNode) AccountsFeed() *event.Feed {
+	return &b.accountsFeed
 }
 
 func (b *StatusNode) SetWalletCommunityInfoProvider(provider thirdparty.CommunityInfoProvider) {
@@ -572,12 +450,11 @@ func (b *StatusNode) SetWalletCommunityInfoProvider(provider thirdparty.Communit
 	}
 }
 
-func (b *StatusNode) walletService(accountsDB *accounts.Database, appDB *sql.DB, accountsFeed *event.Feed, settingsFeed *event.Feed, walletFeed *event.Feed, statusProxyStageName string) *wallet.Service {
+func (b *StatusNode) walletService(accountsDB *accounts.Database, appDB *sql.DB, accountsFeed *event.Feed, networksFeed *event.Feed, walletFeed *event.Feed, statusProxyStageName string) *wallet.Service {
 	if b.walletSrvc == nil {
 		b.walletSrvc = wallet.NewService(
-			b.walletDB, accountsDB, appDB, b.rpcClient, accountsFeed, settingsFeed, b.gethAccountManager, b.transactor, b.config,
-			b.ensService(b.timeSourceNow()),
-			b.stickersService(accountsDB),
+			b.walletDB, accountsDB, appDB, b.rpcClient, accountsFeed, networksFeed, b.gethAccountManager, b.transactor, b.config,
+			b.ensService(b.timeSourceNow()).API().EnsResolver(),
 			b.pendingTracker,
 			walletFeed,
 			b.httpServer,
@@ -590,7 +467,7 @@ func (b *StatusNode) walletService(accountsDB *accounts.Database, appDB *sql.DB,
 func (b *StatusNode) localNotificationsService(network uint64) (*localnotifications.Service, error) {
 	var err error
 	if b.localNotificationsSrvc == nil {
-		b.localNotificationsSrvc, err = localnotifications.NewService(b.appDB, transfer.NewDB(b.walletDB), network)
+		b.localNotificationsSrvc, err = localnotifications.NewService(b.appDB)
 		if err != nil {
 			return nil, err
 		}
@@ -598,18 +475,11 @@ func (b *StatusNode) localNotificationsService(network uint64) (*localnotificati
 	return b.localNotificationsSrvc, nil
 }
 
-func (b *StatusNode) peerService() *peer.Service {
-	if b.peerSrvc == nil {
-		b.peerSrvc = peer.New()
+func (b *StatusNode) ethService() *eth.Service {
+	if b.ethSrvc == nil {
+		b.ethSrvc = eth.NewService(b.rpcClient)
 	}
-	return b.peerSrvc
-}
-
-func registerWakuMailServer(wakuService *waku.Waku, config *params.WakuConfig) (err error) {
-	var mailServer mailserver.WakuMailServer
-	wakuService.RegisterMailServer(&mailServer)
-
-	return mailServer.Init(wakuService, config)
+	return b.ethSrvc
 }
 
 func appendIf(condition bool, services []common.StatusService, service common.StatusService) []common.StatusService {
@@ -635,7 +505,7 @@ func (b *StatusNode) StopLocalNotifications() error {
 	if b.localNotificationsSrvc.IsStarted() {
 		err := b.localNotificationsSrvc.Stop()
 		if err != nil {
-			b.log.Error("LocalNotifications service stop failed on StopLocalNotifications", "error", err)
+			b.logger.Error("LocalNotifications service stop failed on StopLocalNotifications", zap.Error(err))
 			return nil
 		}
 	}
@@ -656,16 +526,9 @@ func (b *StatusNode) StartLocalNotifications() error {
 		err := b.localNotificationsSrvc.Start()
 
 		if err != nil {
-			b.log.Error("LocalNotifications service start failed on StartLocalNotifications", "error", err)
+			b.logger.Error("LocalNotifications service start failed on StartLocalNotifications", zap.Error(err))
 			return nil
 		}
-	}
-
-	err := b.localNotificationsSrvc.SubscribeWallet(&b.walletFeed)
-
-	if err != nil {
-		b.log.Error("LocalNotifications service could not subscribe to wallet on StartLocalNotifications", "error", err)
-		return nil
 	}
 
 	return nil
@@ -688,6 +551,13 @@ func (b *StatusNode) timeSource() *timesource.NTPTimeSource {
 
 	if b.timeSourceSrvc == nil {
 		b.timeSourceSrvc = timesource.Default()
+		go func() {
+			defer common.LogOnPanic()
+			err := b.timeSourceSrvc.Start(context.Background())
+			if err != nil {
+				panic("could not obtain timesource: " + err.Error())
+			}
+		}()
 	}
 	return b.timeSourceSrvc
 }
@@ -697,12 +567,6 @@ func (b *StatusNode) timeSourceNow() func() time.Time {
 }
 
 func (b *StatusNode) Cleanup() error {
-	if b.wakuSrvc != nil {
-		if err := b.wakuSrvc.DeleteKeyPairs(); err != nil {
-			return fmt.Errorf("%s: %v", ErrWakuClearIdentitiesFailure, err)
-		}
-	}
-
 	if b.Config() != nil && b.Config().WalletConfig.Enabled {
 		if b.walletSrvc != nil {
 			if b.walletSrvc.IsStarted() {

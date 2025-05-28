@@ -14,7 +14,7 @@ import (
 	"github.com/libp2p/go-msgio/pbio"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/waku-org/go-waku/logging"
-	"github.com/waku-org/go-waku/waku/v2/peerstore"
+	"github.com/waku-org/go-waku/waku/v2/peermanager"
 	"github.com/waku-org/go-waku/waku/v2/protocol"
 	"github.com/waku-org/go-waku/waku/v2/protocol/filter/pb"
 	"github.com/waku-org/go-waku/waku/v2/protocol/relay"
@@ -37,8 +37,9 @@ type (
 		metrics Metrics
 		log     *zap.Logger
 		*service.CommonService
-		subscriptions *SubscribersMap
-
+		subscriptions    *SubscribersMap
+		pm               *peermanager.PeerManager
+		limiter          *utils.RateLimiter
 		maxSubscriptions int
 	}
 )
@@ -55,12 +56,14 @@ func NewWakuFilterFullNode(timesource timesource.Timesource, reg prometheus.Regi
 		opt(params)
 	}
 
+	wf.limiter = utils.NewRateLimiter(params.limitR, params.limitB)
 	wf.CommonService = service.NewCommonService()
 	wf.metrics = newMetrics(reg)
 	wf.subscriptions = NewSubscribersMap(params.Timeout)
 	wf.maxSubscriptions = params.MaxSubscribers
 	if params.pm != nil {
 		params.pm.RegisterWakuProtocol(FilterSubscribeID_v20beta1, FilterSubscribeENRField)
+		wf.pm = params.pm
 	}
 	return wf
 }
@@ -91,7 +94,14 @@ func (wf *WakuFilterFullNode) start(sub *relay.Subscription) error {
 
 func (wf *WakuFilterFullNode) onRequest(ctx context.Context) func(network.Stream) {
 	return func(stream network.Stream) {
-		logger := wf.log.With(logging.HostID("peer", stream.Conn().RemotePeer()))
+		peerID := stream.Conn().RemotePeer()
+		logger := wf.log.With(logging.HostID("peer", peerID))
+
+		if !wf.limiter.Allow(peerID) {
+			wf.metrics.RecordError(rateLimitFailure)
+			wf.reply(ctx, stream, &pb.FilterSubscribeRequest{RequestId: "N/A"}, http.StatusTooManyRequests, "filter request rejected due rate limit exceeded")
+			return
+		}
 
 		reader := pbio.NewDelimitedReader(stream, math.MaxInt32)
 
@@ -216,6 +226,7 @@ func (wf *WakuFilterFullNode) unsubscribeAll(ctx context.Context, stream network
 }
 
 func (wf *WakuFilterFullNode) filterListener(ctx context.Context) {
+	defer utils.LogOnPanic()
 	defer wf.WaitGroup().Done()
 
 	// This function is invoked for each message received
@@ -237,6 +248,7 @@ func (wf *WakuFilterFullNode) filterListener(ctx context.Context) {
 			logger.Debug("pushing message to light node")
 			wf.WaitGroup().Add(1)
 			go func(subscriber peer.ID) {
+				defer utils.LogOnPanic()
 				defer wf.WaitGroup().Done()
 				start := time.Now()
 				err := wf.pushMessage(ctx, logger, subscriber, envelope)
@@ -274,8 +286,8 @@ func (wf *WakuFilterFullNode) pushMessage(ctx context.Context, logger *zap.Logge
 			wf.metrics.RecordError(pushTimeoutFailure)
 		} else {
 			wf.metrics.RecordError(dialFailure)
-			if ps, ok := wf.h.Peerstore().(peerstore.WakuPeerstore); ok {
-				ps.AddConnFailure(peer.AddrInfo{ID: peerID})
+			if wf.pm != nil {
+				wf.pm.HandleDialError(err, peerID)
 			}
 		}
 		logger.Error("opening peer stream", zap.Error(err))

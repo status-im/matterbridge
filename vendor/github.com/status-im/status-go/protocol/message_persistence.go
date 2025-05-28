@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -36,6 +37,8 @@ LEFT JOIN bridge_messages bm
 ON        m1.id = bm.user_messages_id
 LEFT JOIN bridge_messages bm_response
 ON        m2.id = bm_response.user_messages_id
+LEFT JOIN pin_messages pm
+ON 	      m1.id = pm.message_id AND pm.pinned = 1
 `
 
 var basicInsertDiscordMessageAuthorQuery = `INSERT OR REPLACE INTO discord_message_authors(id,name,discriminator,nickname,avatar_url, avatar_image_payload) VALUES (?,?,?,?,?,?)`
@@ -115,7 +118,8 @@ func (db sqlitePersistence) tableUserMessagesAllFields() string {
 		contact_verification_status,
 		mentioned,
 		replied,
-    discord_message_id`
+    	discord_message_id,
+		payment_requests`
 }
 
 // keep the same order as in tableUserMessagesScanAllFields
@@ -134,6 +138,7 @@ func (db sqlitePersistence) tableUserMessagesAllFieldsJoin() string {
     		m1.seen,
     		m1.outgoing_status,
 		m1.parsed_text,
+		pm.pinned_by,
 		m1.sticker_pack,
 		m1.sticker_hash,
 		m1.image_payload,
@@ -148,6 +153,7 @@ func (db sqlitePersistence) tableUserMessagesAllFieldsJoin() string {
 		m1.links,
 		m1.unfurled_links,
 		m1.unfurled_status_links,
+		m1.payment_requests,
 		m1.command_id,
 		m1.command_value,
 		m1.command_from,
@@ -243,6 +249,7 @@ func (db sqlitePersistence) tableUserMessagesScanAllFields(row scanner, message 
 	var serializedLinks []byte
 	var serializedUnfurledLinks []byte
 	var serializedUnfurledStatusLinks []byte
+	var serializedPaymentRequests []byte
 	var alias sql.NullString
 	var identicon sql.NullString
 	var communityID sql.NullString
@@ -254,6 +261,7 @@ func (db sqlitePersistence) tableUserMessagesScanAllFields(row scanner, message 
 	var deletedForMe sql.NullBool
 	var contactRequestState sql.NullInt64
 	var contactVerificationState sql.NullInt64
+	var pinnedBy sql.NullString
 
 	sticker := &protobuf.StickerMessage{}
 	command := &common.CommandParameters{}
@@ -289,6 +297,7 @@ func (db sqlitePersistence) tableUserMessagesScanAllFields(row scanner, message 
 		&message.Seen,
 		&message.OutgoingStatus,
 		&message.ParsedText,
+		&pinnedBy,
 		&sticker.Pack,
 		&sticker.Hash,
 		&image.Payload,
@@ -303,6 +312,7 @@ func (db sqlitePersistence) tableUserMessagesScanAllFields(row scanner, message 
 		&serializedLinks,
 		&serializedUnfurledLinks,
 		&serializedUnfurledStatusLinks,
+		&serializedPaymentRequests,
 		&command.ID,
 		&command.Value,
 		&command.From,
@@ -401,6 +411,10 @@ func (db sqlitePersistence) tableUserMessagesScanAllFields(row scanner, message 
 		message.ContactVerificationState = common.ContactVerificationState(contactVerificationState.Int64)
 	}
 
+	if pinnedBy.Valid {
+		message.PinnedBy = pinnedBy.String
+	}
+
 	if quotedText.Valid {
 		if quotedDeleted.Bool || quotedDeletedForMe.Bool {
 			message.QuotedMessage = &common.QuotedMessage{
@@ -472,6 +486,13 @@ func (db sqlitePersistence) tableUserMessagesScanAllFields(row scanner, message 
 			return err
 		}
 		message.UnfurledStatusLinks = &links
+	}
+
+	if serializedPaymentRequests != nil {
+		err := json.Unmarshal(serializedPaymentRequests, &message.PaymentRequests)
+		if err != nil {
+			return err
+		}
 	}
 
 	if attachment.Id != "" {
@@ -581,6 +602,14 @@ func (db sqlitePersistence) tableUserMessagesAllValues(message *common.Message) 
 		}
 	}
 
+	var serializedPaymentRequests []byte
+	if len(message.PaymentRequests) != 0 {
+		serializedPaymentRequests, err = json.Marshal(message.PaymentRequests)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return []interface{}{
 		message.ID,
 		message.WhisperTimestamp,
@@ -638,6 +667,7 @@ func (db sqlitePersistence) tableUserMessagesAllValues(message *common.Message) 
 		message.Mentioned,
 		message.Replied,
 		discordMessage.Id,
+		serializedPaymentRequests,
 	}, nil
 }
 
@@ -1179,7 +1209,6 @@ func (db sqlitePersistence) PinnedMessageByChatIDs(chatIDs []string, currCursor 
  			SELECT
  				%s,
  				pm.clock_value as pinnedAt,
- 				pm.pinned_by as pinnedBy,
                                 %s
  			FROM
  				pin_messages pm
@@ -1230,6 +1259,7 @@ func (db sqlitePersistence) PinnedMessageByChatIDs(chatIDs []string, currCursor 
  			WHERE
  				pm.pinned = 1
  				AND NOT(m1.hide) AND m1.local_chat_id IN %s %s
+				AND m1.deleted = 0
  			ORDER BY cursor DESC
  			%s
  		`, allFields, cursorField, "(?"+strings.Repeat(",?", len(chatIDs)-1)+")", cursorWhere, limitStr),
@@ -1305,26 +1335,49 @@ func (db sqlitePersistence) MessageByChatIDs(chatIDs []string, currCursor string
 	return result, newCursor, nil
 }
 
-func (db sqlitePersistence) OldestMessageWhisperTimestampByChatID(chatID string) (timestamp uint64, hasAnyMessage bool, err error) {
-	var whisperTimestamp uint64
-	err = db.db.QueryRow(
-		`
-			SELECT
-				whisper_timestamp
-			FROM
-				user_messages m1
-			WHERE
-				m1.local_chat_id = ?
-			ORDER BY substr('0000000000000000000000000000000000000000000000000000000000000000' || m1.clock_value, -64, 64) || m1.id ASC
-			LIMIT 1
-		`, chatID).Scan(&whisperTimestamp)
-	if err == sql.ErrNoRows {
-		return 0, false, nil
+func (db sqlitePersistence) OldestMessageWhisperTimestampByChatIDs(chatIDs []string) (map[string]uint64, error) {
+	if len(chatIDs) == 0 {
+		return nil, nil
 	}
+
+	args := make([]any, len(chatIDs))
+	for i, id := range chatIDs {
+		args[i] = id
+	}
+
+	inVector := strings.Repeat("?, ", len(chatIDs)-1) + "?"
+	//nolint:gosec
+	query := fmt.Sprintf(`
+    SELECT
+        m1.local_chat_id,
+        m1.whisper_timestamp,
+        MIN(substr('0000000000000000000000000000000000000000000000000000000000000000' || m1.clock_value, -64, 64) || m1.id)
+    FROM user_messages m1
+    WHERE m1.local_chat_id IN (%s)
+    GROUP BY m1.local_chat_id
+`, inVector)
+
+	rows, err := db.db.Query(query, args...)
 	if err != nil {
-		return 0, false, err
+		return nil, err
 	}
-	return whisperTimestamp, true, nil
+	defer rows.Close()
+
+	result := make(map[string]uint64)
+	for rows.Next() {
+		var chatID string
+		var whisperTimestamp uint64
+		var cursor string
+		if err := rows.Scan(&chatID, &whisperTimestamp, &cursor); err != nil {
+			return nil, err
+		}
+		result[chatID] = whisperTimestamp
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return result, nil
 }
 
 // EmojiReactionsByChatID returns the emoji reactions for the queried messages, up to a maximum of 100, as it's a potentially unbound number.
@@ -1580,11 +1633,6 @@ func (db sqlitePersistence) SaveMessages(messages []*common.Message) (err error)
 			if err != nil {
 				return
 			}
-			// handle replies
-			err = db.findAndUpdateReplies(tx, msg.GetBridgeMessage().MessageID, msg.ID)
-			if err != nil {
-				return
-			}
 			parentMessageID := msg.GetBridgeMessage().ParentMessageID
 			if parentMessageID != "" {
 				err = db.findAndUpdateRepliedTo(tx, parentMessageID, msg.ID)
@@ -1721,17 +1769,41 @@ func (db sqlitePersistence) SavePinMessage(message *common.PinMessage) (inserted
 
 func (db sqlitePersistence) DeleteMessage(id string) error {
 	_, err := db.db.Exec(`DELETE FROM user_messages WHERE id = ?`, id)
+
+	if err != nil {
+		return err
+	}
+
+	_, err = db.db.Exec("DELETE FROM pin_messages WHERE message_id = ?", id)
+
 	return err
 }
 
-func (db sqlitePersistence) DeleteMessages(ids []string) error {
+func (db sqlitePersistence) DeleteMessages(ids []string) (err error) {
 	idsArgs := make([]interface{}, 0, len(ids))
 	for _, id := range ids {
 		idsArgs = append(idsArgs, id)
 	}
 	inVector := strings.Repeat("?, ", len(ids)-1) + "?"
 
-	_, err := db.db.Exec("DELETE FROM user_messages WHERE id IN ("+inVector+")", idsArgs...) // nolint: gosec
+	tx, err := db.db.BeginTx(context.Background(), &sql.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err == nil {
+			err = tx.Commit()
+			return
+		}
+		err = errors.Join(err, tx.Rollback())
+	}()
+
+	_, err = tx.Exec("DELETE FROM user_messages WHERE id IN ("+inVector+")", idsArgs...) // nolint: gosec
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec("DELETE FROM pin_messages WHERE message_id IN ("+inVector+")", idsArgs...) // nolint: gosec
 
 	return err
 }
@@ -2901,18 +2973,17 @@ func getPinnedMessagesAndCursorsFromScanRows(db sqlitePersistence, rows *sql.Row
 	for rows.Next() {
 		var (
 			pinnedAt uint64
-			pinnedBy string
 			cursor   string
 		)
 		message := common.NewMessage()
-		if err := db.tableUserMessagesScanAllFields(rows, message, &pinnedAt, &pinnedBy, &cursor); err != nil {
+		if err := db.tableUserMessagesScanAllFields(rows, message, &pinnedAt, &cursor); err != nil {
 			return nil, nil, err
 		}
 		if msg, ok := messageIdx[message.ID]; !ok {
 			pinnedMessage := &common.PinnedMessage{
 				Message:  message,
 				PinnedAt: pinnedAt,
-				PinnedBy: pinnedBy,
+				PinnedBy: message.PinnedBy,
 			}
 			messageIdx[message.ID] = pinnedMessage
 			messages = append(messages, pinnedMessage)
@@ -2972,46 +3043,8 @@ func (db sqlitePersistence) GetCommunityMemberMessagesToDelete(member string, co
 	return result, nil
 }
 
-// Finds status messages id which are replies for bridgeMessageID
-func (db sqlitePersistence) findStatusMessageIdsReplies(tx *sql.Tx, bridgeMessageID string) ([]string, error) {
-	rows, err := tx.Query(`SELECT user_messages_id FROM bridge_messages WHERE parent_message_id = ?`, bridgeMessageID)
-	if err != nil {
-		return []string{}, err
-	}
-	defer rows.Close()
-
-	var statusMessageIDs []string
-	for rows.Next() {
-		var statusMessageID string
-		err = rows.Scan(&statusMessageID)
-		if err != nil {
-			return []string{}, err
-		}
-		statusMessageIDs = append(statusMessageIDs, statusMessageID)
-	}
-	return statusMessageIDs, nil
-}
-
 func (db sqlitePersistence) FindStatusMessageIDForBridgeMessageID(messageID string) (string, error) {
 	rows, err := db.db.Query(`SELECT user_messages_id FROM bridge_messages WHERE message_id = ?`, messageID)
-	if err != nil {
-		return "", err
-	}
-	defer rows.Close()
-
-	if rows.Next() {
-		var statusMessageID string
-		err = rows.Scan(&statusMessageID)
-		if err != nil {
-			return "", err
-		}
-		return statusMessageID, nil
-	}
-	return "", nil
-}
-
-func (db sqlitePersistence) findStatusMessageIDForBridgeMessageID(tx *sql.Tx, messageID string) (string, error) {
-	rows, err := tx.Query(`SELECT user_messages_id FROM bridge_messages WHERE message_id = ?`, messageID)
 	if err != nil {
 		return "", err
 	}
@@ -3062,28 +3095,8 @@ func (db sqlitePersistence) updateBridgeMessageContent(tx *sql.Tx, bridgeMessage
 	return err
 }
 
-// Finds if there are any messages that are replies to that message (in case replies were received earlier)
-func (db sqlitePersistence) findAndUpdateReplies(tx *sql.Tx, bridgeMessageID string, statusMessageID string) error {
-	replyMessageIds, err := db.findStatusMessageIdsReplies(tx, bridgeMessageID)
-	if err != nil {
-		return err
-	}
-	if len(replyMessageIds) == 0 {
-		return nil
-	}
-	return db.updateStatusMessagesWithResponse(tx, replyMessageIds, statusMessageID)
-}
-
 func (db sqlitePersistence) findAndUpdateRepliedTo(tx *sql.Tx, discordParentMessageID string, statusMessageID string) error {
-	// Finds status messages id which are replies for bridgeMessageID
-	repliedMessageID, err := db.findStatusMessageIDForBridgeMessageID(tx, discordParentMessageID)
-	if err != nil {
-		return err
-	}
-	if repliedMessageID == "" {
-		return nil
-	}
-	return db.updateStatusMessagesWithResponse(tx, []string{statusMessageID}, repliedMessageID)
+	return db.updateStatusMessagesWithResponse(tx, []string{statusMessageID}, discordParentMessageID)
 }
 
 func (db sqlitePersistence) GetCommunityMemberAllMessages(member string, communityID string) ([]*common.Message, error) {

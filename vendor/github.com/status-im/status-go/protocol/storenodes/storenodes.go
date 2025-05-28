@@ -6,8 +6,12 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/libp2p/go-libp2p/core/peer"
+
+	"github.com/waku-org/go-waku/waku/v2/utils"
+
 	"github.com/status-im/status-go/eth-node/types"
-	"github.com/status-im/status-go/services/mailservers"
+	wakutypes "github.com/status-im/status-go/waku/types"
 )
 
 var (
@@ -39,25 +43,26 @@ type storenodesData struct {
 	storenodes []Storenode
 }
 
-// GetStorenodeByCommunnityID returns the active storenode for a community
-func (m *CommunityStorenodes) GetStorenodeByCommunnityID(communityID string) (mailservers.Mailserver, error) {
+// GetStorenodeByCommunityID returns the active storenode for a community
+func (m *CommunityStorenodes) GetStorenodeByCommunityID(communityID string) (wakutypes.Mailserver, error) {
 	m.storenodesByCommunityIDMutex.RLock()
 	defer m.storenodesByCommunityIDMutex.RUnlock()
 
 	msData, ok := m.storenodesByCommunityID[communityID]
 	if !ok || len(msData.storenodes) == 0 {
-		return mailservers.Mailserver{}, ErrNotFound
+		return wakutypes.Mailserver{}, ErrNotFound
 	}
 	return toMailserver(msData.storenodes[0]), nil
 }
 
-func (m *CommunityStorenodes) IsCommunityStoreNode(id string) bool {
+func (m *CommunityStorenodes) IsCommunityStoreNode(peerID peer.ID) bool {
 	m.storenodesByCommunityIDMutex.RLock()
 	defer m.storenodesByCommunityIDMutex.RUnlock()
 
 	for _, data := range m.storenodesByCommunityID {
 		for _, snode := range data.storenodes {
-			if snode.StorenodeID == id {
+			commStorenodeID, err := utils.GetPeerID(snode.Address)
+			if err == nil && commStorenodeID == peerID {
 				return true
 			}
 		}

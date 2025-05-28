@@ -10,18 +10,22 @@ import (
 	"strings"
 	"time"
 
+	"go.uber.org/zap"
+
 	eth "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/event"
-	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/p2p"
 	ethrpc "github.com/ethereum/go-ethereum/rpc"
+	ethTypes "github.com/status-im/status-go/eth-node/types"
 
+	"github.com/status-im/status-go/logutils"
 	"github.com/status-im/status-go/rpc"
 	"github.com/status-im/status-go/services/rpcfilters"
 	"github.com/status-im/status-go/services/wallet/bigint"
 	"github.com/status-im/status-go/services/wallet/common"
 	wallet_common "github.com/status-im/status-go/services/wallet/common"
+	"github.com/status-im/status-go/services/wallet/responses"
+	"github.com/status-im/status-go/services/wallet/routeexecution/storage"
 	"github.com/status-im/status-go/services/wallet/walletevent"
 )
 
@@ -61,35 +65,46 @@ type TxIdentity struct {
 	Hash    eth.Hash       `json:"hash"`
 }
 
+type TxDetails struct {
+	SendDetails      *responses.SendDetails             `json:"sendDetails"`
+	SentTransactions []*responses.RouterSentTransaction `json:"sentTransactions"`
+}
+
 type PendingTxUpdatePayload struct {
 	TxIdentity
+	TxDetails
 	Deleted bool `json:"deleted"`
 }
 
 type StatusChangedPayload struct {
 	TxIdentity
+	TxDetails
 	Status TxStatus `json:"status"`
 }
 
 // PendingTxTracker implements StatusService in common/status_node_service.go
 type PendingTxTracker struct {
-	db        *sql.DB
-	rpcClient rpc.ClientInterface
+	db                    *sql.DB
+	routeExecutionStorage *storage.DB
+	trackedTxDB           *DB
+	rpcClient             rpc.ClientInterface
 
 	rpcFilter *rpcfilters.Service
 	eventFeed *event.Feed
 
 	taskRunner *ConditionalRepeater
-	log        log.Logger
+	logger     *zap.Logger
 }
 
 func NewPendingTxTracker(db *sql.DB, rpcClient rpc.ClientInterface, rpcFilter *rpcfilters.Service, eventFeed *event.Feed, checkInterval time.Duration) *PendingTxTracker {
 	tm := &PendingTxTracker{
-		db:        db,
-		rpcClient: rpcClient,
-		eventFeed: eventFeed,
-		rpcFilter: rpcFilter,
-		log:       log.New("package", "status-go/transactions.PendingTxTracker"),
+		db:                    db,
+		routeExecutionStorage: storage.NewDB(db),
+		trackedTxDB:           NewDB(db),
+		rpcClient:             rpcClient,
+		eventFeed:             eventFeed,
+		rpcFilter:             rpcFilter,
+		logger:                logutils.ZapLogger().Named("PendingTxTracker"),
 	}
 	tm.taskRunner = NewConditionalRepeater(checkInterval, func(ctx context.Context) bool {
 		return tm.fetchAndUpdateDB(ctx)
@@ -107,10 +122,10 @@ func (tm *PendingTxTracker) fetchAndUpdateDB(ctx context.Context) bool {
 
 	txs, err := tm.GetAllPending()
 	if err != nil {
-		tm.log.Error("Failed to get pending transactions", "error", err)
+		tm.logger.Error("Failed to get pending transactions", zap.Error(err))
 		return WorkDone
 	}
-	tm.log.Debug("Checking for PT status", "count", len(txs))
+	tm.logger.Debug("Checking for PT status", zap.Int("count", len(txs)))
 
 	txsMap := make(map[common.ChainID][]eth.Hash)
 	for _, tx := range txs {
@@ -121,26 +136,26 @@ func (tm *PendingTxTracker) fetchAndUpdateDB(ctx context.Context) bool {
 	doneCount := 0
 	// Batch request for each chain
 	for chainID, txs := range txsMap {
-		tm.log.Debug("Processing PTs", "chainID", chainID, "count", len(txs))
-		batchRes, err := fetchBatchTxStatus(ctx, tm.rpcClient, chainID, txs, tm.log)
+		tm.logger.Debug("Processing PTs", zap.Stringer("chainID", chainID), zap.Int("count", len(txs)))
+		batchRes, err := fetchBatchTxStatus(ctx, tm.rpcClient, chainID, txs, tm.logger)
 		if err != nil {
-			tm.log.Error("Failed to batch fetch pending transactions status for", "chainID", chainID, "error", err)
+			tm.logger.Error("Failed to batch fetch pending transactions status for", zap.Stringer("chainID", chainID), zap.Error(err))
 			continue
 		}
 		if len(batchRes) == 0 {
-			tm.log.Debug("No change to PTs status", "chainID", chainID)
+			tm.logger.Debug("No change to PTs status", zap.Stringer("chainID", chainID))
 			continue
 		}
-		tm.log.Debug("PTs done", "chainID", chainID, "count", len(batchRes))
+		tm.logger.Debug("PTs done", zap.Stringer("chainID", chainID), zap.Int("count", len(batchRes)))
 		doneCount += len(batchRes)
 
 		updateRes, err := tm.updateDBStatus(ctx, chainID, batchRes)
 		if err != nil {
-			tm.log.Error("Failed to update pending transactions status for", "chainID", chainID, "error", err)
+			tm.logger.Error("Failed to update pending transactions status for", zap.Stringer("chainID", chainID), zap.Error(err))
 			continue
 		}
 
-		tm.log.Debug("Emit notifications for PTs", "chainID", chainID, "count", len(updateRes))
+		tm.logger.Debug("Emit notifications for PTs", zap.Stringer("chainID", chainID), zap.Int("count", len(updateRes)))
 		tm.emitNotifications(chainID, updateRes)
 	}
 
@@ -148,7 +163,7 @@ func (tm *PendingTxTracker) fetchAndUpdateDB(ctx context.Context) bool {
 		res = WorkDone
 	}
 
-	tm.log.Debug("Done PTs iteration", "count", doneCount, "completed", res)
+	tm.logger.Debug("Done PTs iteration", zap.Int("count", doneCount), zap.Bool("completed", res))
 
 	return res
 }
@@ -167,10 +182,10 @@ func (nr *nullableReceipt) UnmarshalJSON(data []byte) error {
 
 // fetchBatchTxStatus returns not pending transactions (confirmed or errored)
 // it excludes the still pending or errored request from the result
-func fetchBatchTxStatus(ctx context.Context, rpcClient rpc.ClientInterface, chainID common.ChainID, hashes []eth.Hash, log log.Logger) ([]txStatusRes, error) {
+func fetchBatchTxStatus(ctx context.Context, rpcClient rpc.ClientInterface, chainID common.ChainID, hashes []eth.Hash, logger *zap.Logger) ([]txStatusRes, error) {
 	chainClient, err := rpcClient.AbstractEthClient(chainID)
 	if err != nil {
-		log.Error("Failed to get chain client", "error", err)
+		logger.Error("Failed to get chain client", zap.Error(err))
 		return nil, err
 	}
 
@@ -188,7 +203,7 @@ func fetchBatchTxStatus(ctx context.Context, rpcClient rpc.ClientInterface, chai
 
 	err = chainClient.BatchCallContext(reqCtx, batch)
 	if err != nil {
-		log.Error("Transactions request fail", "error", err)
+		logger.Error("Transactions request fail", zap.Error(err))
 		return nil, err
 	}
 
@@ -196,18 +211,18 @@ func fetchBatchTxStatus(ctx context.Context, rpcClient rpc.ClientInterface, chai
 	for i, b := range batch {
 		err := b.Error
 		if err != nil {
-			log.Error("Failed to get transaction", "error", err, "hash", hashes[i])
+			logger.Error("Failed to get transaction", zap.Stringer("hash", hashes[i]), zap.Error(err))
 			continue
 		}
 
 		if b.Result == nil {
-			log.Error("Transaction not found", "hash", hashes[i])
+			logger.Error("Transaction not found", zap.Stringer("hash", hashes[i]))
 			continue
 		}
 
 		receiptWrapper, ok := b.Result.(*nullableReceipt)
 		if !ok {
-			log.Error("Failed to cast transaction receipt", "hash", hashes[i])
+			logger.Error("Failed to cast transaction receipt", zap.Stringer("hash", hashes[i]))
 			continue
 		}
 
@@ -236,6 +251,20 @@ func fetchBatchTxStatus(ctx context.Context, rpcClient rpc.ClientInterface, chai
 
 // updateDBStatus returns entries that were updated only
 func (tm *PendingTxTracker) updateDBStatus(ctx context.Context, chainID common.ChainID, statuses []txStatusRes) ([]txStatusRes, error) {
+	for _, br := range statuses {
+		err := tm.trackedTxDB.UpdateTxStatus(
+			TxIdentity{
+				ChainID: chainID,
+				Hash:    br.hash,
+			},
+			br.Status,
+		)
+		if err != nil {
+			tm.logger.Error("Failed to update trackedTx status", zap.Stringer("hash", br.hash), zap.Error(err))
+			continue
+		}
+	}
+
 	res := make([]txStatusRes, 0, len(statuses))
 	tx, err := tm.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -267,9 +296,9 @@ func (tm *PendingTxTracker) updateDBStatus(ctx context.Context, chainID common.C
 		err = row.Scan(&autoDel)
 		if err != nil {
 			if err == sql.ErrNoRows {
-				tm.log.Warn("Missing entry while checking for auto_delete", "hash", br.hash)
+				tm.logger.Warn("Missing entry while checking for auto_delete", zap.Stringer("hash", br.hash))
 			} else {
-				tm.log.Error("Failed to retrieve auto_delete for pending transaction", "error", err, "hash", br.hash)
+				tm.logger.Error("Failed to retrieve auto_delete for pending transaction", zap.Stringer("hash", br.hash), zap.Error(err))
 			}
 			continue
 		}
@@ -277,7 +306,7 @@ func (tm *PendingTxTracker) updateDBStatus(ctx context.Context, chainID common.C
 		if autoDel {
 			notifyFn, err := tm.DeleteBySQLTx(tx, chainID, br.hash)
 			if err != nil && err != ErrStillPending {
-				tm.log.Error("Failed to delete pending transaction", "error", err, "hash", br.hash)
+				tm.logger.Error("Failed to delete pending transaction", zap.Stringer("hash", br.hash), zap.Error(err))
 				continue
 			}
 			notifyFunctions = append(notifyFunctions, notifyFn)
@@ -287,17 +316,17 @@ func (tm *PendingTxTracker) updateDBStatus(ctx context.Context, chainID common.C
 
 			res, err := updateStmt.ExecContext(ctx, txStatus, chainID, br.hash)
 			if err != nil {
-				tm.log.Error("Failed to update pending transaction status", "error", err, "hash", br.hash)
+				tm.logger.Error("Failed to update pending transaction status", zap.Stringer("hash", br.hash), zap.Error(err))
 				continue
 			}
 			affected, err := res.RowsAffected()
 			if err != nil {
-				tm.log.Error("Failed to get updated rows", "error", err, "hash", br.hash)
+				tm.logger.Error("Failed to get updated rows", zap.Stringer("hash", br.hash), zap.Error(err))
 				continue
 			}
 
 			if affected == 0 {
-				tm.log.Warn("Missing entry to update for", "hash", br.hash)
+				tm.logger.Warn("Missing entry to update for", zap.Stringer("hash", br.hash))
 				continue
 			}
 		}
@@ -317,6 +346,37 @@ func (tm *PendingTxTracker) updateDBStatus(ctx context.Context, chainID common.C
 	return res, nil
 }
 
+func (tm *PendingTxTracker) updateTxDetails(txDetails *TxDetails, chainID uint64, txHash ethTypes.Hash) {
+	if txDetails == nil {
+		txDetails = &TxDetails{}
+	}
+	txDetails.SendDetails = &responses.SendDetails{}
+	routeData, err := tm.routeExecutionStorage.GetRouteDataByHash(chainID, txHash)
+	if err != nil {
+		tm.logger.Warn("Missing tx data ", zap.Stringer("hash", txHash), zap.Error(err))
+	}
+	if routeData != nil {
+		if routeData.RouteInputParams != nil {
+			txDetails.SendDetails.UpdateFields(*routeData.RouteInputParams, 0, 0)
+		}
+
+		for _, pd := range routeData.PathsData {
+			if pd.IsApprovalPlaced() && pd.ApprovalTxData.SentHash == txHash {
+				txDetails.SentTransactions = append(txDetails.SentTransactions, responses.NewRouterSentTransaction(
+					pd.ApprovalTxData.TxArgs,
+					pd.ApprovalTxData.SentHash,
+					true))
+			}
+			if pd.IsTxPlaced() && pd.TxData.SentHash == txHash {
+				txDetails.SentTransactions = append(txDetails.SentTransactions, responses.NewRouterSentTransaction(
+					pd.TxData.TxArgs,
+					pd.TxData.SentHash,
+					false))
+			}
+		}
+	}
+}
+
 func (tm *PendingTxTracker) emitNotifications(chainID common.ChainID, changes []txStatusRes) {
 	if tm.eventFeed != nil {
 		for _, change := range changes {
@@ -328,9 +388,11 @@ func (tm *PendingTxTracker) emitNotifications(chainID common.ChainID, changes []
 				Status: change.Status,
 			}
 
+			tm.updateTxDetails(&payload.TxDetails, chainID.ToUint(), ethTypes.Hash(change.hash))
+
 			jsonPayload, err := json.Marshal(payload)
 			if err != nil {
-				tm.log.Error("Failed to marshal pending transaction status", "error", err, "hash", change.hash)
+				tm.logger.Error("Failed to marshal pending transaction status", zap.Stringer("hash", change.hash), zap.Error(err))
 				continue
 			}
 			tm.eventFeed.Send(walletevent.Event{
@@ -344,7 +406,7 @@ func (tm *PendingTxTracker) emitNotifications(chainID common.ChainID, changes []
 
 // PendingTransaction called with autoDelete = false will keep the transaction in the database until it is confirmed by the caller using Delete
 func (tm *PendingTxTracker) TrackPendingTransaction(chainID common.ChainID, hash eth.Hash, from eth.Address, to eth.Address, trType PendingTrxType, autoDelete AutoDeleteType, additionalData string) error {
-	err := tm.addPending(&PendingTransaction{
+	err := tm.addPendingAndNotify(&PendingTransaction{
 		ChainID:        chainID,
 		Hash:           hash,
 		From:           from,
@@ -378,11 +440,6 @@ func (tm *PendingTxTracker) APIs() []ethrpc.API {
 			Public:    true,
 		},
 	}
-}
-
-// Protocols returns a new protocols list. In this case, there are none.
-func (tm *PendingTxTracker) Protocols() []p2p.Protocol {
-	return []p2p.Protocol{}
 }
 
 func (tm *PendingTxTracker) Stop() error {
@@ -525,26 +582,9 @@ func (tm *PendingTxTracker) GetPendingEntry(chainID common.ChainID, hash eth.Has
 	return trs[0], nil
 }
 
-func (tm *PendingTxTracker) CountPendingTxsFromNonce(chainID common.ChainID, address eth.Address, nonce uint64) (pendingTx uint64, err error) {
-	err = tm.db.QueryRow(`
-		SELECT
-			COUNT(nonce)
-		FROM
-			pending_transactions
-		WHERE
-			network_id = ?
-		AND
-			from_address = ?
-		AND
-			nonce >= ?`,
-		chainID, address, nonce).
-		Scan(&pendingTx)
-	return
-}
-
 // StoreAndTrackPendingTx store the details of a pending transaction and track it until it is mined
 func (tm *PendingTxTracker) StoreAndTrackPendingTx(transaction *PendingTransaction) error {
-	err := tm.addPending(transaction)
+	err := tm.addPendingAndNotify(transaction)
 	if err != nil {
 		return err
 	}
@@ -555,6 +595,18 @@ func (tm *PendingTxTracker) StoreAndTrackPendingTx(transaction *PendingTransacti
 }
 
 func (tm *PendingTxTracker) addPending(transaction *PendingTransaction) error {
+	err := tm.trackedTxDB.PutTx(TrackedTx{
+		ID: TxIdentity{
+			ChainID: transaction.ChainID,
+			Hash:    transaction.Hash,
+		},
+		Status:    Pending,
+		Timestamp: transaction.Timestamp,
+	})
+	if err != nil {
+		return err
+	}
+
 	var notifyFn func()
 	tx, err := tm.db.Begin()
 	if err != nil {
@@ -635,6 +687,12 @@ func (tm *PendingTxTracker) addPending(transaction *PendingTransaction) error {
 		transaction.AutoDelete,
 		transaction.Nonce,
 	)
+	return err
+}
+
+func (tm *PendingTxTracker) addPendingAndNotify(transaction *PendingTransaction) error {
+	err := tm.addPending(transaction)
+
 	// Notify listeners of new pending transaction (used in activity history)
 	if err == nil {
 		tm.notifyPendingTransactionListeners(PendingTxUpdatePayload{
@@ -657,9 +715,11 @@ func (tm *PendingTxTracker) addPending(transaction *PendingTransaction) error {
 }
 
 func (tm *PendingTxTracker) notifyPendingTransactionListeners(payload PendingTxUpdatePayload, addresses []eth.Address, timestamp uint64) {
+	tm.updateTxDetails(&payload.TxDetails, payload.ChainID.ToUint(), ethTypes.Hash(payload.Hash))
+
 	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
-		tm.log.Error("Failed to marshal PendingTxUpdatePayload", "error", err, "hash", payload.Hash)
+		tm.logger.Error("Failed to marshal PendingTxUpdatePayload", zap.Stringer("hash", payload.Hash), zap.Error(err))
 		return
 	}
 

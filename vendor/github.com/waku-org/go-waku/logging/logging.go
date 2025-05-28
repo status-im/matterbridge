@@ -74,6 +74,18 @@ func (t timestamp) String() string {
 	return time.Unix(0, int64(t)).Format(time.RFC3339)
 }
 
+func Timep(key string, time *int64) zapcore.Field {
+	if time == nil {
+		return zap.String(key, "-")
+	} else {
+		return Time(key, *time)
+	}
+}
+
+func Epoch(key string, time time.Time) zap.Field {
+	return zap.String(key, fmt.Sprintf("%d", time.UnixNano()))
+}
+
 // History Query Filters
 type historyFilters []*pb.ContentFilter
 
@@ -152,4 +164,8 @@ func UDPAddr(key string, ip net.IP, port int) zap.Field {
 func Uint64(key string, value uint64) zap.Field {
 	valueStr := fmt.Sprintf("%v", value)
 	return zap.String(key, valueStr)
+}
+
+func UTCTime(key string, t time.Time) zap.Field {
+	return zap.Time(key, t.UTC())
 }

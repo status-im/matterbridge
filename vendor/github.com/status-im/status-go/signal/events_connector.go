@@ -1,10 +1,16 @@
 package signal
 
+import (
+	"github.com/status-im/status-go/eth-node/types"
+)
+
 const (
 	EventConnectorSendRequestAccounts   = "connector.sendRequestAccounts"
 	EventConnectorSendTransaction       = "connector.sendTransaction"
+	EventConnectorSign                  = "connector.sign"
 	EventConnectorDAppPermissionGranted = "connector.dAppPermissionGranted"
 	EventConnectorDAppPermissionRevoked = "connector.dAppPermissionRevoked"
+	EventConnectorDAppChainIdSwitched   = "connector.dAppChainIdSwitched"
 )
 
 type ConnectorDApp struct {
@@ -27,6 +33,25 @@ type ConnectorSendTransactionSignal struct {
 	TxArgs    string `json:"txArgs"`
 }
 
+type ConnectorSendDappPermissionGrantedSignal struct {
+	ConnectorDApp
+	Chains        []uint64      `json:"chains"`
+	SharedAccount types.Address `json:"sharedAccount"`
+}
+
+type ConnectorSignSignal struct {
+	ConnectorDApp
+	RequestID string `json:"requestId"`
+	Challenge string `json:"challenge"`
+	Address   string `json:"address"`
+	Method    string `json:"method"`
+}
+
+type ConnectorDAppChainIdSwitchedSignal struct {
+	URL     string `json:"url"`
+	ChainId string `json:"chainId"`
+}
+
 func SendConnectorSendRequestAccounts(dApp ConnectorDApp, requestID string) {
 	send(EventConnectorSendRequestAccounts, ConnectorSendRequestAccountsSignal{
 		ConnectorDApp: dApp,
@@ -43,10 +68,28 @@ func SendConnectorSendTransaction(dApp ConnectorDApp, chainID uint64, txArgs str
 	})
 }
 
-func SendConnectorDAppPermissionGranted(dApp ConnectorDApp) {
-	send(EventConnectorDAppPermissionGranted, dApp)
+func SendConnectorSign(dApp ConnectorDApp, requestID, challenge, address string, method string) {
+	send(EventConnectorSign, ConnectorSignSignal{
+		ConnectorDApp: dApp,
+		RequestID:     requestID,
+		Challenge:     challenge,
+		Address:       address,
+		Method:        method,
+	})
+}
+
+func SendConnectorDAppPermissionGranted(dApp ConnectorDApp, account types.Address, chains []uint64) {
+	send(EventConnectorDAppPermissionGranted, ConnectorSendDappPermissionGrantedSignal{
+		ConnectorDApp: dApp,
+		Chains:        chains,
+		SharedAccount: account,
+	})
 }
 
 func SendConnectorDAppPermissionRevoked(dApp ConnectorDApp) {
 	send(EventConnectorDAppPermissionRevoked, dApp)
+}
+
+func SendConnectorDAppChainIdSwitched(payload ConnectorDAppChainIdSwitchedSignal) {
+	send(EventConnectorDAppChainIdSwitched, payload)
 }
