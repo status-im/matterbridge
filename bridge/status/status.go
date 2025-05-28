@@ -37,6 +37,7 @@ import (
 	"github.com/status-im/status-go/protocol/identity/alias"
 	"github.com/status-im/status-go/protocol/protobuf"
 	"github.com/status-im/status-go/protocol/requests"
+	"github.com/status-im/status-go/services/mailservers"
 	statussentry "github.com/status-im/status-go/pkg/sentry"
 	statusversion "github.com/status-im/status-go/pkg/version"
 
@@ -401,6 +402,7 @@ func (b *Bstatus) Connect() error {
 		status.WithDatabase(appDB),
 		status.WithWalletDatabase(walletDB),
 		status.WithCustomLogger(logger),
+		status.WithMailserversDatabase(mailservers.NewDB(appDB)),
 		status.WithClusterConfig(b.nodeConfig.ClusterConfig),
 		status.WithCheckingForBackupDisabled(),
 		status.WithAutoMessageDisabled(),
