@@ -11,7 +11,7 @@ ENV GOPATH=/go
 
 RUN go mod tidy
 RUN go mod vendor
-RUN go build -o /bin/matterbridge
+RUN go build -ldflags=-checklinkname=0 -o /bin/matterbridge
 
 FROM gcr.io/distroless/static-debian11
 
