@@ -11,6 +11,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/status-im/status-go/messaging"
+	messagingtypes "github.com/status-im/status-go/messaging/types"
+	"github.com/status-im/status-go/protocol/encryption"
+	"github.com/status-im/status-go/timesource"
+	types2 "github.com/status-im/status-go/waku/types"
+	"github.com/status-im/status-go/wakuv2"
+	wakuv2common "github.com/status-im/status-go/wakuv2/common"
+
 	"github.com/42wim/matterbridge/bridge"
 	"github.com/42wim/matterbridge/bridge/config"
 	"github.com/42wim/matterbridge/version"
@@ -39,7 +48,6 @@ import (
 	"github.com/status-im/status-go/protocol/requests"
 	"github.com/status-im/status-go/services/mailservers"
 	statussentry "github.com/status-im/status-go/pkg/sentry"
-	statusversion "github.com/status-im/status-go/pkg/version"
 
 	"github.com/status-im/status-go/common/dbsetup"
 	"github.com/status-im/status-go/walletdatabase"
@@ -81,14 +89,11 @@ func New(cfg *bridge.Config) bridge.Bridger {
 
 // Generate a sane configuration for a Status Node
 func (b *Bstatus) generateNodeConfig() (*params.NodeConfig, error) {
-	options := []params.Option{
-		b.withListenAddr(),
-	}
 	configFiles := []string{b.statusNodeConfigFile}
 	config, err := params.NewNodeConfigWithDefaultsAndFiles(
 		b.statusDataDir,
 		params.MainNetworkID,
-		options,
+		nil,
 		configFiles,
 	)
 	if err != nil {
@@ -146,19 +151,6 @@ func (b *Bstatus) getOrGenerateSettings(nodeConfig *params.NodeConfig, appDB *sq
 	}
 
 	return s, nil
-}
-
-func (b *Bstatus) withListenAddr() params.Option {
-	if addr := b.GetString("ListenAddr"); addr != "" {
-		b.statusListenAddr = addr
-	}
-	if port := b.GetInt("ListenPort"); port != 0 {
-		b.statusListenPort = port
-	}
-	return func(c *params.NodeConfig) error {
-		c.ListenAddr = fmt.Sprintf("%s:%d", b.statusListenAddr, b.statusListenPort)
-		return nil
-	}
 }
 
 // Main loop for fetching Status messages and relaying them to the bridge
@@ -398,6 +390,45 @@ func (b *Bstatus) Connect() error {
 		return errors.Wrap(err, "Failed to start status node")
 	}
 
+	ts := timesource.Default()
+
+	wakuConfig := buildWakuConfig(b.statusListenAddr, b.statusListenPort, b.statusListenPort)
+	nopCb1 := func([]byte, peer.AddrInfo, error) {}
+	nopCb2 := func(types2.ConnStatus) {}
+	waku, err := wakuv2.New(nil, wakuConfig, logger, appDB, ts, nopCb1, nopCb2)
+	if err != nil {
+		return errors.Wrap(err, "failed to create waku")
+	}
+
+	err = waku.Start()
+	if err != nil {
+		return errors.Wrap(err, "failed to start waku")
+	}
+	defer func() {
+		err := waku.Stop()
+		if err != nil {
+			logger.Error("failed to stop waku", zap.Error(err))
+		}
+	}()
+
+	encryptionProtocol := encryption.New(
+		appDB,
+		installationID,
+		logger,
+	)
+
+	messagingCore, err := messaging.NewCore(
+		waku,
+		b.privateKey,
+		appDB,
+		status.NewMessagingPersistence(appDB),
+		encryptionProtocol,
+		messaging.WithLogger(logger.Named("messaging")),
+	)
+	if err != nil {
+		return errors.Wrap(err, "Failed to initialize messaging")
+	}
+
 	options := []status.Option{
 		status.WithDatabase(appDB),
 		status.WithWalletDatabase(walletDB),
@@ -409,17 +440,16 @@ func (b *Bstatus) Connect() error {
 		status.WithMultiAccounts(multiaccountsDB),
 		status.WithAccount(&multiAcc),
 		status.WithCommunityTokensService(b.statusNode.CommunityTokensService()),
-		status.WithAccountManager(backend.AccountManager()),
+		status.WithAccountsManager(backend.AccountsManager()),
 	}
 
 	messenger, err := status.NewMessenger(
-		"status bridge messenger",
 		b.privateKey,
-		b.statusNode.WakuV2Service(),
+		messagingCore.API(),
 		installationID,
-		statusversion.Version(),
 		options...,
 	)
+
 	if err != nil {
 		return errors.Wrap(err, "Failed to create Messenger")
 	}
@@ -444,12 +474,6 @@ func (b *Bstatus) Connect() error {
 	go b.fetchMessagesLoop()
 
 	return nil
-}
-
-type BridgeTimeSource struct{}
-
-func (t *BridgeTimeSource) GetCurrentTime() uint64 {
-	return uint64(time.Now().Unix()) * 1000
 }
 
 func (b *Bstatus) JoinChannel(channel config.ChannelInfo) error {
@@ -497,4 +521,33 @@ func (b *Bstatus) Disconnect() error {
 		return errors.Wrap(err, "Failed to stop Status node")
 	}
 	return nil
+}
+
+func buildWakuConfig(address string, port int, udpPort int) *wakuv2.Config {
+	wakuFleet := params.FleetStatusProd
+	cfg := &wakuv2.Config{
+		MaxMessageSize:                         wakuv2common.DefaultMaxMessageSize,
+		Host:                                   address,
+		Port:                                   port,
+		LightClient:                            false,
+		EnablePeerExchangeClient:               false,
+		EnablePeerExchangeServer:               true,
+		EnableDiscV5:                           true,
+		WakuNodes:                              params.DefaultWakuNodes(wakuFleet),
+		EnableStore:                            false,
+		StoreCapacity:                          0,
+		StoreSeconds:                           0,
+		DiscoveryLimit:                         20,
+		DiscV5BootstrapNodes:                   params.DefaultDiscV5Nodes(wakuFleet),
+		Nameserver:                             "",
+		UDPPort:                                udpPort,
+		AutoUpdate:                             true,
+		DefaultShardPubsubTopic:                messagingtypes.DefaultShardPubsubTopic(),
+		ClusterID:                              16,
+		EnableMissingMessageVerification:       false,
+		EnableStoreConfirmationForMessagesSent: false,
+		UseThrottledPublish:                    true,
+	}
+
+	return cfg
 }
