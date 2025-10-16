@@ -135,6 +135,8 @@
 // 1743690310_add_news_feed_setting.up.sql (72B)
 // 1744737285_add_settings_news_feed_last_fetched_timestamp.up.sql (197B)
 // 1744905192_add_news_rss_setting.up.sql (71B)
+// 1752869164_drop_telemetry_server_url.up.sql (55B)
+// 1753221199_add_add_backup_path_setting.up.sql (64B)
 // doc.go (94B)
 
 package migrations
@@ -2903,6 +2905,46 @@ func _1744905192_add_news_rss_settingUpSql() (*asset, error) {
 	return a, nil
 }
 
+var __1752869164_drop_telemetry_server_urlUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x72\xf4\x09\x71\x0d\x52\x08\x71\x74\xf2\x71\x55\x28\x4e\x2d\x29\xc9\xcc\x4b\x2f\x56\x70\x09\xf2\x0f\x50\x70\xf6\xf7\x09\xf5\xf5\x53\x28\x49\xcd\x49\xcd\x4d\x2d\x29\xaa\x8c\x2f\x4e\x2d\x2a\x4b\x2d\x8a\x2f\x2d\xca\xb1\xe6\x02\x04\x00\x00\xff\xff\x98\xba\xb3\x89\x37\x00\x00\x00")
+
+func _1752869164_drop_telemetry_server_urlUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1752869164_drop_telemetry_server_urlUpSql,
+		"1752869164_drop_telemetry_server_url.up.sql",
+	)
+}
+
+func _1752869164_drop_telemetry_server_urlUpSql() (*asset, error) {
+	bytes, err := _1752869164_drop_telemetry_server_urlUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1752869164_drop_telemetry_server_url.up.sql", size: 55, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0xea, 0x31, 0xd6, 0xdc, 0x9b, 0x75, 0x38, 0x65, 0x50, 0x9e, 0xa4, 0xcc, 0x49, 0xee, 0xb8, 0xf7, 0x8b, 0x3f, 0x3a, 0x73, 0x64, 0xec, 0x6f, 0x67, 0x1e, 0x55, 0xfb, 0xf0, 0x3b, 0x77, 0xcc, 0x22}}
+	return a, nil
+}
+
+var __1753221199_add_add_backup_path_settingUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x72\xf4\x09\x71\x0d\x52\x08\x71\x74\xf2\x71\x55\x28\x4e\x2d\x29\xc9\xcc\x4b\x2f\x56\x70\x74\x71\x51\x70\xf6\xf7\x09\xf5\xf5\x53\x48\x4a\x4c\xce\x2e\x2d\x88\x2f\x48\x2c\xc9\x50\x08\x73\x0c\x72\xf6\x70\x0c\x52\x70\x71\x75\x73\x0c\xf5\x09\x51\x50\x57\xb7\xe6\x02\x04\x00\x00\xff\xff\x92\x77\x80\x68\x40\x00\x00\x00")
+
+func _1753221199_add_add_backup_path_settingUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1753221199_add_add_backup_path_settingUpSql,
+		"1753221199_add_add_backup_path_setting.up.sql",
+	)
+}
+
+func _1753221199_add_add_backup_path_settingUpSql() (*asset, error) {
+	bytes, err := _1753221199_add_add_backup_path_settingUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1753221199_add_add_backup_path_setting.up.sql", size: 64, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x7a, 0xd8, 0x39, 0x24, 0x79, 0x7d, 0x8d, 0xd9, 0x85, 0xbb, 0xbc, 0xc8, 0x59, 0x7d, 0x92, 0xe2, 0xd0, 0x51, 0x37, 0xe3, 0xe1, 0x34, 0x14, 0xed, 0x48, 0x45, 0x65, 0xe, 0x67, 0x94, 0x2f, 0xed}}
+	return a, nil
+}
+
 var _docGo = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x2c\xcb\x41\x0e\x02\x31\x08\x05\xd0\x7d\x4f\xf1\x2f\x00\xe8\xca\xc4\xc4\xc3\xa0\x43\x08\x19\x5b\xc6\x96\xfb\xc7\x4d\xdf\xfe\x5d\xfa\x39\xd5\x0d\xeb\xf7\x6d\x4d\xc4\xf3\xe9\x36\x6c\x6a\x19\x3c\xe9\x1d\xe3\xd0\x52\x50\xcf\xa3\xa2\xdb\xeb\xfe\xb8\x6d\xa0\xeb\x74\xf4\xf0\xa9\x15\x39\x16\x28\xc1\x2c\x7b\xb0\x27\x58\xda\x3f\x00\x00\xff\xff\x57\xd4\xd5\x90\x5e\x00\x00\x00")
 
 func docGoBytes() ([]byte, error) {
@@ -3149,7 +3191,9 @@ var _bindata = map[string]func() (*asset, error){
 	"1743690310_add_news_feed_setting.up.sql":                                  _1743690310_add_news_feed_settingUpSql,
 	"1744737285_add_settings_news_feed_last_fetched_timestamp.up.sql":          _1744737285_add_settings_news_feed_last_fetched_timestampUpSql,
 	"1744905192_add_news_rss_setting.up.sql":                                   _1744905192_add_news_rss_settingUpSql,
-	"doc.go":                                                                   docGo,
+	"1752869164_drop_telemetry_server_url.up.sql":                              _1752869164_drop_telemetry_server_urlUpSql,
+	"1753221199_add_add_backup_path_setting.up.sql":                            _1753221199_add_add_backup_path_settingUpSql,
+	"doc.go": docGo,
 }
 
 // AssetDebug is true if the assets were built with the debug flag enabled.
@@ -3333,7 +3377,9 @@ var _bintree = &bintree{nil, map[string]*bintree{
 	"1743690310_add_news_feed_setting.up.sql":                                  {_1743690310_add_news_feed_settingUpSql, map[string]*bintree{}},
 	"1744737285_add_settings_news_feed_last_fetched_timestamp.up.sql":          {_1744737285_add_settings_news_feed_last_fetched_timestampUpSql, map[string]*bintree{}},
 	"1744905192_add_news_rss_setting.up.sql":                                   {_1744905192_add_news_rss_settingUpSql, map[string]*bintree{}},
-	"doc.go":                                                                   {docGo, map[string]*bintree{}},
+	"1752869164_drop_telemetry_server_url.up.sql":                              {_1752869164_drop_telemetry_server_urlUpSql, map[string]*bintree{}},
+	"1753221199_add_add_backup_path_setting.up.sql":                            {_1753221199_add_add_backup_path_settingUpSql, map[string]*bintree{}},
+	"doc.go": {docGo, map[string]*bintree{}},
 }}
 
 // RestoreAsset restores an asset under the given directory.

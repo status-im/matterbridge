@@ -19,6 +19,7 @@ import (
 	types "github.com/ethereum/go-ethereum/core/types"
 	rpc "github.com/ethereum/go-ethereum/rpc"
 	circuitbreaker "github.com/status-im/status-go/circuitbreaker"
+	rpcstatus "github.com/status-im/status-go/healthmanager/rpcstatus"
 	rpclimiter "github.com/status-im/status-go/rpc/chain/rpclimiter"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -241,6 +242,20 @@ func (mr *MockClientInterfaceMockRecorder) GetBaseFeeFromBlock(ctx, blockNumber 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetBaseFeeFromBlock", reflect.TypeOf((*MockClientInterface)(nil).GetBaseFeeFromBlock), ctx, blockNumber)
 }
 
+// GetConnectionStatus mocks base method.
+func (m *MockClientInterface) GetConnectionStatus() rpcstatus.StatusType {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetConnectionStatus")
+	ret0, _ := ret[0].(rpcstatus.StatusType)
+	return ret0
+}
+
+// GetConnectionStatus indicates an expected call of GetConnectionStatus.
+func (mr *MockClientInterfaceMockRecorder) GetConnectionStatus() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetConnectionStatus", reflect.TypeOf((*MockClientInterface)(nil).GetConnectionStatus))
+}
+
 // GetLimiter mocks base method.
 func (m *MockClientInterface) GetLimiter() rpclimiter.RequestLimiter {
 	m.ctrl.T.Helper()
@@ -253,20 +268,6 @@ func (m *MockClientInterface) GetLimiter() rpclimiter.RequestLimiter {
 func (mr *MockClientInterfaceMockRecorder) GetLimiter() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLimiter", reflect.TypeOf((*MockClientInterface)(nil).GetLimiter))
-}
-
-// GetWalletNotifier mocks base method.
-func (m *MockClientInterface) GetWalletNotifier() func(uint64, string) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetWalletNotifier")
-	ret0, _ := ret[0].(func(uint64, string))
-	return ret0
-}
-
-// GetWalletNotifier indicates an expected call of GetWalletNotifier.
-func (mr *MockClientInterfaceMockRecorder) GetWalletNotifier() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetWalletNotifier", reflect.TypeOf((*MockClientInterface)(nil).GetWalletNotifier))
 }
 
 // HeaderByHash mocks base method.
@@ -297,20 +298,6 @@ func (m *MockClientInterface) HeaderByNumber(ctx context.Context, number *big.In
 func (mr *MockClientInterfaceMockRecorder) HeaderByNumber(ctx, number any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HeaderByNumber", reflect.TypeOf((*MockClientInterface)(nil).HeaderByNumber), ctx, number)
-}
-
-// IsConnected mocks base method.
-func (m *MockClientInterface) IsConnected() bool {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IsConnected")
-	ret0, _ := ret[0].(bool)
-	return ret0
-}
-
-// IsConnected indicates an expected call of IsConnected.
-func (mr *MockClientInterfaceMockRecorder) IsConnected() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsConnected", reflect.TypeOf((*MockClientInterface)(nil).IsConnected))
 }
 
 // NetworkID mocks base method.
@@ -446,18 +433,6 @@ func (mr *MockClientInterfaceMockRecorder) SendTransaction(ctx, tx any) *gomock.
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SendTransaction", reflect.TypeOf((*MockClientInterface)(nil).SendTransaction), ctx, tx)
 }
 
-// SetIsConnected mocks base method.
-func (m *MockClientInterface) SetIsConnected(arg0 bool) {
-	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "SetIsConnected", arg0)
-}
-
-// SetIsConnected indicates an expected call of SetIsConnected.
-func (mr *MockClientInterfaceMockRecorder) SetIsConnected(arg0 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetIsConnected", reflect.TypeOf((*MockClientInterface)(nil).SetIsConnected), arg0)
-}
-
 // SetLimiter mocks base method.
 func (m *MockClientInterface) SetLimiter(arg0 rpclimiter.RequestLimiter) {
 	m.ctrl.T.Helper()
@@ -468,18 +443,6 @@ func (m *MockClientInterface) SetLimiter(arg0 rpclimiter.RequestLimiter) {
 func (mr *MockClientInterfaceMockRecorder) SetLimiter(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetLimiter", reflect.TypeOf((*MockClientInterface)(nil).SetLimiter), arg0)
-}
-
-// SetWalletNotifier mocks base method.
-func (m *MockClientInterface) SetWalletNotifier(notifier func(uint64, string)) {
-	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "SetWalletNotifier", notifier)
-}
-
-// SetWalletNotifier indicates an expected call of SetWalletNotifier.
-func (mr *MockClientInterfaceMockRecorder) SetWalletNotifier(notifier any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetWalletNotifier", reflect.TypeOf((*MockClientInterface)(nil).SetWalletNotifier), notifier)
 }
 
 // StorageAt mocks base method.

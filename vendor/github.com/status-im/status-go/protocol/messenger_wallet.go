@@ -9,13 +9,13 @@ import (
 	"go.uber.org/zap"
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
-	"github.com/status-im/status-go/account"
+	accsmanagement "github.com/status-im/status-go/accounts-management"
 	gocommon "github.com/status-im/status-go/common"
 	"github.com/status-im/status-go/constants"
 	"github.com/status-im/status-go/eth-node/types"
+	messagingtypes "github.com/status-im/status-go/messaging/types"
 	"github.com/status-im/status-go/multiaccounts/accounts"
 	walletsettings "github.com/status-im/status-go/multiaccounts/settings_wallet"
-	"github.com/status-im/status-go/protocol/common"
 	"github.com/status-im/status-go/protocol/encryption/multidevice"
 	"github.com/status-im/status-go/protocol/protobuf"
 )
@@ -212,7 +212,7 @@ func (m *Messenger) deleteKeystoreFileForAddress(address types.Address) error {
 
 		if !kp.MigratedToKeycard() {
 			err = m.accountsManager.DeleteAccount(address)
-			var e *account.ErrCannotLocateKeyFile
+			var e *accsmanagement.ErrCannotLocateKeyFile
 			if err != nil && !errors.As(err, &e) {
 				return err
 			}
@@ -221,7 +221,7 @@ func (m *Messenger) deleteKeystoreFileForAddress(address types.Address) error {
 				lastAcccountOfKeypairWithTheSameKey := len(kp.Accounts) == 1
 				if lastAcccountOfKeypairWithTheSameKey {
 					err = m.accountsManager.DeleteAccount(types.Address(ethcommon.HexToAddress(kp.DerivedFrom)))
-					var e *account.ErrCannotLocateKeyFile
+					var e *accsmanagement.ErrCannotLocateKeyFile
 					if err != nil && !errors.As(err, &e) {
 						return err
 					}
@@ -250,7 +250,7 @@ func (m *Messenger) deleteKeystoreFilesForKeypair(keypair *accounts.Keypair) (er
 			continue
 		}
 		err = m.accountsManager.DeleteAccount(acc.Address)
-		var e *account.ErrCannotLocateKeyFile
+		var e *accsmanagement.ErrCannotLocateKeyFile
 		if err != nil && !errors.As(err, &e) {
 			return err
 		}
@@ -258,7 +258,7 @@ func (m *Messenger) deleteKeystoreFilesForKeypair(keypair *accounts.Keypair) (er
 
 	if anyAccountFullyOrPartiallyOperable && keypair.Type != accounts.KeypairTypeKey {
 		err = m.accountsManager.DeleteAccount(types.Address(ethcommon.HexToAddress(keypair.DerivedFrom)))
-		var e *account.ErrCannotLocateKeyFile
+		var e *accsmanagement.ErrCannotLocateKeyFile
 		if err != nil && !errors.As(err, &e) {
 			return err
 		}
@@ -513,11 +513,11 @@ func (m *Messenger) syncTokenPreferences(rawMessageHandler RawMessageHandler) er
 		return err
 	}
 
-	rawMessage := common.RawMessage{
+	rawMessage := messagingtypes.RawMessage{
 		LocalChatID: chat.ID,
 		Payload:     encodedMessage,
 		MessageType: protobuf.ApplicationMetadataMessage_SYNC_TOKEN_PREFERENCES,
-		ResendType:  common.ResendTypeDataSync,
+		ResendType:  messagingtypes.ResendTypeDataSync,
 	}
 
 	_, err = rawMessageHandler(ctx, rawMessage)
@@ -610,11 +610,11 @@ func (m *Messenger) syncCollectiblePreferences(rawMessageHandler RawMessageHandl
 		return err
 	}
 
-	rawMessage := common.RawMessage{
+	rawMessage := messagingtypes.RawMessage{
 		LocalChatID: chat.ID,
 		Payload:     encodedMessage,
 		MessageType: protobuf.ApplicationMetadataMessage_SYNC_COLLECTIBLE_PREFERENCES,
-		ResendType:  common.ResendTypeDataSync,
+		ResendType:  messagingtypes.ResendTypeDataSync,
 	}
 
 	_, err = rawMessageHandler(ctx, rawMessage)
@@ -657,11 +657,11 @@ func (m *Messenger) syncAccountsPositions(rawMessageHandler RawMessageHandler) e
 		return err
 	}
 
-	rawMessage := common.RawMessage{
+	rawMessage := messagingtypes.RawMessage{
 		LocalChatID: chat.ID,
 		Payload:     encodedMessage,
 		MessageType: protobuf.ApplicationMetadataMessage_SYNC_ACCOUNTS_POSITIONS,
-		ResendType:  common.ResendTypeDataSync,
+		ResendType:  messagingtypes.ResendTypeDataSync,
 	}
 
 	_, err = rawMessageHandler(ctx, rawMessage)
@@ -685,11 +685,11 @@ func (m *Messenger) syncWalletAccount(acc *accounts.Account, rawMessageHandler R
 		return err
 	}
 
-	rawMessage := common.RawMessage{
+	rawMessage := messagingtypes.RawMessage{
 		LocalChatID: chat.ID,
 		Payload:     encodedMessage,
 		MessageType: protobuf.ApplicationMetadataMessage_SYNC_ACCOUNT,
-		ResendType:  common.ResendTypeDataSync,
+		ResendType:  messagingtypes.ResendTypeDataSync,
 	}
 
 	_, err = rawMessageHandler(ctx, rawMessage)
@@ -705,9 +705,9 @@ func (m *Messenger) syncKeypair(keypair *accounts.Keypair, rawMessageHandler Raw
 	defer cancel()
 
 	_, chat := m.getLastClockWithRelatedChat()
-	rawMessage := common.RawMessage{
+	rawMessage := messagingtypes.RawMessage{
 		LocalChatID: chat.ID,
-		ResendType:  common.ResendTypeDataSync,
+		ResendType:  messagingtypes.ResendTypeDataSync,
 		MessageType: protobuf.ApplicationMetadataMessage_SYNC_KEYPAIR,
 	}
 

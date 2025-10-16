@@ -10,7 +10,6 @@ import (
 
 	"github.com/status-im/status-go/common"
 	"github.com/status-im/status-go/logutils"
-	"github.com/status-im/status-go/pkg/security"
 	"github.com/status-im/status-go/services/wallet/thirdparty"
 )
 
@@ -204,7 +203,8 @@ func (f *ProxyFetcher) FetchPrices(ctx context.Context) error {
 }
 
 func (f *ProxyFetcher) fetchData(ctx context.Context, endpoint string, etag string) ([]byte, string, bool) {
-	url := f.client.BuildURL(f.config.ProxyURL, endpoint)
+	baseUrl := GetMarketProxyHost(f.config.UrlOverride.Reveal(), f.config.StageName)
+	url := f.client.BuildURL(baseUrl, endpoint)
 
 	options := []thirdparty.RequestOption{}
 
@@ -216,8 +216,8 @@ func (f *ProxyFetcher) fetchData(ctx context.Context, endpoint string, etag stri
 	}
 
 	options = append(options, thirdparty.WithCredentials(&thirdparty.BasicCreds{
-		User:     security.NewSensitiveString(f.config.User),
-		Password: security.NewSensitiveString(f.config.Password),
+		User:     f.config.User,
+		Password: f.config.Password,
 	}))
 
 	body, newEtag, err := f.client.DoGetRequestWithEtag(ctx, url, nil, etag, options...)

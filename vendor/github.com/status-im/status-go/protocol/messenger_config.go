@@ -2,32 +2,27 @@ package protocol
 
 import (
 	"database/sql"
-	"encoding/json"
 	"time"
 
-	"github.com/ethereum/go-ethereum/event"
-
-	"github.com/status-im/status-go/account"
+	"github.com/status-im/status-go/accounts-management/generator"
 	messagingtypes "github.com/status-im/status-go/messaging/types"
+	"github.com/status-im/status-go/pkg/pubsub"
 	"github.com/status-im/status-go/rpc"
 	"github.com/status-im/status-go/server"
 	"github.com/status-im/status-go/services/browsers"
-	"github.com/status-im/status-go/wakuv2"
 
 	"go.uber.org/zap"
 
-	"github.com/status-im/status-go/appdatabase/migrations"
+	ethtypes "github.com/status-im/status-go/eth-node/types"
 	"github.com/status-im/status-go/multiaccounts"
-	"github.com/status-im/status-go/multiaccounts/accounts"
-	"github.com/status-im/status-go/multiaccounts/settings"
 	"github.com/status-im/status-go/params"
 	"github.com/status-im/status-go/protocol/anonmetrics"
 	"github.com/status-im/status-go/protocol/common"
 	"github.com/status-im/status-go/protocol/communities"
 	"github.com/status-im/status-go/protocol/discord"
+	"github.com/status-im/status-go/protocol/ens"
 	"github.com/status-im/status-go/protocol/protobuf"
 	"github.com/status-im/status-go/protocol/pushnotificationclient"
-	"github.com/status-im/status-go/protocol/pushnotificationserver"
 	"github.com/status-im/status-go/protocol/wakusync"
 	"github.com/status-im/status-go/services/mailservers"
 	"github.com/status-im/status-go/services/wallet"
@@ -71,6 +66,11 @@ type MessengerSignalsHandler interface {
 	SendCuratedCommunitiesUpdate(response *communities.KnownCommunitiesResponse)
 }
 
+type AccountsManager interface {
+	GetVerifiedWalletAccount(address ethtypes.Address, password string) (*generator.Account, error)
+	DeleteAccount(address ethtypes.Address) error
+}
+
 type config struct {
 	// systemMessagesTranslations holds translations for system-messages
 	systemMessagesTranslations *systemMessageTranslationsMap
@@ -88,24 +88,23 @@ type config struct {
 	clusterConfig          params.ClusterConfig
 	browserDatabase        *browsers.Database
 	torrentConfig          *params.TorrentConfig
-	walletConfig           *params.WalletConfig
 	walletService          *wallet.Service
 	communityTokensService communities.CommunityTokensServiceInterface
 	httpServer             *server.MediaServer
 	rpcClient              *rpc.Client
 	tokenManager           communities.TokenManager
 	collectiblesManager    communities.CollectiblesManager
-	accountsManager        account.Manager
+	accountsManager        AccountsManager
+	signer                 communities.MessageSigner
 
-	verifyTransactionClient  EthClient
-	verifyENSURL             string
-	verifyENSContractAddress string
+	verifyTransactionClient EthClient
+	ensVerifier             *ens.Verifier
 
 	anonMetricsClientConfig *anonmetrics.ClientConfig
 	anonMetricsServerConfig *anonmetrics.ServerConfig
 
-	pushNotificationServerConfig *pushnotificationserver.Config
 	pushNotificationClientConfig *pushnotificationclient.Config
+	pushNotificationServer       PushNotificationServer
 
 	logger *zap.Logger
 
@@ -113,16 +112,12 @@ type config struct {
 
 	messengerSignalsHandler MessengerSignalsHandler
 
-	telemetryServerURL  string
-	telemetrySendPeriod time.Duration
-	wakuService         *wakuv2.Waku
-
 	messageResendMinDelay time.Duration
 	messageResendMaxCount int
 
 	communityManagerOptions []communities.ManagerOption
 
-	accountsFeed *event.Feed
+	accountsPublisher *pubsub.Publisher
 
 	onlineChecker func() bool
 }
@@ -185,37 +180,6 @@ func WithWalletDatabase(db *sql.DB) Option {
 	}
 }
 
-func WithToplevelDatabaseMigrations() Option {
-	return func(c *config) error {
-		c.afterDbCreatedHooks = append(c.afterDbCreatedHooks, func(c *config) error {
-			return migrations.Migrate(c.appDb, nil)
-		})
-		return nil
-	}
-}
-
-func WithAppSettings(s settings.Settings, nc params.NodeConfig) Option {
-	return func(c *config) error {
-		c.afterDbCreatedHooks = append(c.afterDbCreatedHooks, func(c *config) error {
-			if s.Networks == nil {
-				networks := new(json.RawMessage)
-				if err := networks.UnmarshalJSON([]byte("net")); err != nil {
-					return err
-				}
-
-				s.Networks = networks
-			}
-
-			sDB, err := accounts.NewDB(c.appDb)
-			if err != nil {
-				return err
-			}
-			return sDB.CreateSettings(s, nc)
-		})
-		return nil
-	}
-}
-
 func WithMultiAccounts(ma *multiaccounts.Database) Option {
 	return func(c *config) error {
 		c.multiAccount = ma
@@ -240,12 +204,6 @@ func WithAccount(acc *multiaccounts.Account) Option {
 func WithBrowserDatabase(bd *browsers.Database) Option {
 	return func(c *config) error {
 		c.browserDatabase = bd
-		if c.browserDatabase == nil {
-			c.afterDbCreatedHooks = append(c.afterDbCreatedHooks, func(c *config) error {
-				c.browserDatabase = browsers.NewDB(c.appDb)
-				return nil
-			})
-		}
 		return nil
 	}
 }
@@ -260,21 +218,6 @@ func WithAnonMetricsClientConfig(anonMetricsClientConfig *anonmetrics.ClientConf
 func WithAnonMetricsServerConfig(anonMetricsServerConfig *anonmetrics.ServerConfig) Option {
 	return func(c *config) error {
 		c.anonMetricsServerConfig = anonMetricsServerConfig
-		return nil
-	}
-}
-
-func WithTelemetry(serverURL string, sendPeriod time.Duration) Option {
-	return func(c *config) error {
-		c.telemetryServerURL = serverURL
-		c.telemetrySendPeriod = sendPeriod
-		return nil
-	}
-}
-
-func WithPushNotificationServerConfig(pushNotificationServerConfig *pushnotificationserver.Config) Option {
-	return func(c *config) error {
-		c.pushNotificationServerConfig = pushNotificationServerConfig
 		return nil
 	}
 }
@@ -296,6 +239,13 @@ func WithDatasync() func(c *config) error {
 func WithPushNotifications() func(c *config) error {
 	return func(c *config) error {
 		c.featureFlags.PushNotifications = true
+		return nil
+	}
+}
+
+func WithPushNotificationServer(server PushNotificationServer) func(c *config) error {
+	return func(c *config) error {
+		c.pushNotificationServer = server
 		return nil
 	}
 }
@@ -328,14 +278,6 @@ func WithSignalsHandler(h MessengerSignalsHandler) Option {
 	}
 }
 
-func WithENSVerificationConfig(url, address string) Option {
-	return func(c *config) error {
-		c.verifyENSURL = url
-		c.verifyENSContractAddress = address
-		return nil
-	}
-}
-
 func WithClusterConfig(cc params.ClusterConfig) Option {
 	return func(c *config) error {
 		c.clusterConfig = cc
@@ -364,13 +306,6 @@ func WithRPCClient(r *rpc.Client) Option {
 	}
 }
 
-func WithWalletConfig(wc *params.WalletConfig) Option {
-	return func(c *config) error {
-		c.walletConfig = wc
-		return nil
-	}
-}
-
 func WithMessageCSV(enabled bool) Option {
 	return func(c *config) error {
 		c.outputMessagesCSV = enabled
@@ -392,13 +327,6 @@ func WithCommunityTokensService(s communities.CommunityTokensServiceInterface) O
 	}
 }
 
-func WithWakuService(s *wakuv2.Waku) Option {
-	return func(c *config) error {
-		c.wakuService = s
-		return nil
-	}
-}
-
 func WithTokenManager(tokenManager communities.TokenManager) Option {
 	return func(c *config) error {
 		c.tokenManager = tokenManager
@@ -413,16 +341,23 @@ func WithCollectiblesManager(collectiblesManager communities.CollectiblesManager
 	}
 }
 
-func WithAccountManager(accountManager account.Manager) Option {
+func WithAccountsManager(accountsManager AccountsManager) Option {
 	return func(c *config) error {
-		c.accountsManager = accountManager
+		c.accountsManager = accountsManager
 		return nil
 	}
 }
 
-func WithAccountsFeed(feed *event.Feed) Option {
+func WithMessageSigner(signer communities.MessageSigner) Option {
 	return func(c *config) error {
-		c.accountsFeed = feed
+		c.signer = signer
+		return nil
+	}
+}
+
+func WithAccountsPublisher(publisher *pubsub.Publisher) Option {
+	return func(c *config) error {
+		c.accountsPublisher = publisher
 		return nil
 	}
 }
@@ -430,6 +365,13 @@ func WithAccountsFeed(feed *event.Feed) Option {
 func WithNewsFeed() func(c *config) error {
 	return func(c *config) error {
 		c.featureFlags.EnableNewsFeed = true
+		return nil
+	}
+}
+
+func WithENSVerifier(ensVerifier *ens.Verifier) func(c *config) error {
+	return func(c *config) error {
+		c.ensVerifier = ensVerifier
 		return nil
 	}
 }

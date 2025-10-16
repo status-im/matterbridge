@@ -14,7 +14,6 @@ import (
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/messaging"
 	messagingtypes "github.com/status-im/status-go/messaging/types"
-	"github.com/status-im/status-go/wakuv2"
 
 	"go.uber.org/zap"
 
@@ -85,7 +84,7 @@ func (m *StoreNodeRequestManager) FetchCommunity(ctx context.Context, community 
 		zap.Any("community", community),
 		zap.Any("config", cfg))
 
-	requestCommunity := func(communityID string, shard *wakuv2.Shard) (*communities.Community, StoreNodeRequestStats, error) {
+	requestCommunity := func(communityID string, shard *messagingtypes.Shard) (*communities.Community, StoreNodeRequestStats, error) {
 		channel, err := m.subscribeToRequest(ctx, storeNodeCommunityRequest, communityID, shard, cfg)
 		if err != nil {
 			return nil, StoreNodeRequestStats{}, fmt.Errorf("failed to create a request for community: %w", err)
@@ -103,7 +102,7 @@ func (m *StoreNodeRequestManager) FetchCommunity(ctx context.Context, community 
 	communityShard := community.Shard
 	if communityShard == nil {
 		id := messaging.CommunityShardInfoTopic(community.CommunityID)
-		fetchedShard, err := m.subscribeToRequest(ctx, storeNodeShardRequest, id, wakuv2.DefaultNonProtectedShard(), cfg)
+		fetchedShard, err := m.subscribeToRequest(ctx, storeNodeShardRequest, id, messagingtypes.DefaultNonProtectedShard(), cfg)
 		if err != nil {
 			return nil, StoreNodeRequestStats{}, fmt.Errorf("failed to create a shard info request: %w", err)
 		}
@@ -125,34 +124,6 @@ func (m *StoreNodeRequestManager) FetchCommunity(ctx context.Context, community 
 
 	// request community with on shard
 	return requestCommunity(community.CommunityID, communityShard)
-}
-
-// FetchCommunities makes a FetchCommunity for each element in given `communities` list.
-// For each successfully fetched community, a `CommunityFound` event will be emitted. Ability to subscribe
-// to results is not provided, because it's not needed and would complicate the code. `FetchCommunity` can
-// be called directly if such functionality is needed.
-//
-// This function intentionally doesn't fetch multiple content topics in a single store node request. For now
-// FetchCommunities is only used for regular (once in 2 minutes) fetching of curated communities. If one of
-// those content topics is spammed with to many envelopes, then on each iteration we will have to fetch all
-// of this spam first to get the envelopes in other content topics. To avoid this we keep independent requests
-// for each content topic.
-func (m *StoreNodeRequestManager) FetchCommunities(ctx context.Context, communities []communities.CommunityShard, opts []StoreNodeRequestOption) error {
-	m.logger.Info("requesting communities from store node", zap.Any("communities", communities))
-
-	// when fetching multiple communities we don't wait for the response
-	opts = append(opts, WithWaitForResponseOption(false))
-
-	var outErr error
-
-	for _, community := range communities {
-		_, _, err := m.FetchCommunity(ctx, community, opts)
-		if err != nil {
-			outErr = fmt.Errorf("%sfailed to create a request for community %s: %w", outErr, gocommon.TruncateWithDot(community.CommunityID), err)
-		}
-	}
-
-	return outErr
 }
 
 // FetchContact - similar to FetchCommunity
@@ -181,7 +152,7 @@ func (m *StoreNodeRequestManager) FetchContact(ctx context.Context, contactID st
 // subscribeToRequest checks if a request for given community/contact is already in progress, creates and installs
 // a new one if not found, and returns a subscription to the result of the found/started request.
 // The subscription can then be used to get the result of the request, this could be either a community/contact or an error.
-func (m *StoreNodeRequestManager) subscribeToRequest(ctx context.Context, requestType storeNodeRequestType, dataID string, shard *wakuv2.Shard, cfg StoreNodeRequestConfig) (storeNodeResponseSubscription, error) {
+func (m *StoreNodeRequestManager) subscribeToRequest(ctx context.Context, requestType storeNodeRequestType, dataID string, shard *messagingtypes.Shard, cfg StoreNodeRequestConfig) (storeNodeResponseSubscription, error) {
 	// It's important to unlock only after getting the subscription channel.
 	// We also lock `activeRequestsLock` during finalizing the requests. This ensures that the subscription
 	// created in this function will get the result even if the requests proceeds faster than this function ends.
@@ -211,9 +182,9 @@ func (m *StoreNodeRequestManager) subscribeToRequest(ctx context.Context, reques
 
 		request = m.newStoreNodeRequest(ctx)
 		request.config = cfg
-		request.pubsubTopic = filter.PubsubTopic
+		request.pubsubTopic = filter.PubsubTopic()
 		request.requestID = requestID
-		request.contentTopic = filter.ContentTopic
+		request.contentTopic = filter.ContentTopic()
 		if filterCreated {
 			request.filterToForget = filter
 		}
@@ -236,7 +207,7 @@ func (m *StoreNodeRequestManager) newStoreNodeRequest(ctx context.Context) *stor
 
 // getFilter checks if a filter for a given community is already created and creates one of not found.
 // Returns the found/created filter, a flag if the filter was created by the function and an error.
-func (m *StoreNodeRequestManager) getFilter(requestType storeNodeRequestType, dataID string, shard *wakuv2.Shard) (*messagingtypes.ChatFilter, bool, error) {
+func (m *StoreNodeRequestManager) getFilter(requestType storeNodeRequestType, dataID string, shard *messagingtypes.Shard) (*messagingtypes.ChatFilter, bool, error) {
 	// First check if such filter already exists.
 	filter := m.messenger.messaging.ChatFilterByChatID(dataID)
 	if filter != nil {
@@ -284,7 +255,10 @@ func (m *StoreNodeRequestManager) getFilter(requestType storeNodeRequestType, da
 		return nil, false, fmt.Errorf("invalid store node request type: %d", requestType)
 	}
 
-	filter.Ephemeral = true
+	err := m.messenger.messaging.UpdateFilterEphemerality(filter.ChatID(), true)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to update filter: %w", err)
+	}
 
 	return filter, true, nil
 }
@@ -338,7 +312,7 @@ type storeNodeRequestResult struct {
 	// One of data fields (community or contact) will be present depending on request type
 	community *communities.Community
 	contact   *Contact
-	shard     *wakuv2.Shard
+	shard     *messagingtypes.Shard
 }
 
 type storeNodeResponseSubscription = chan storeNodeRequestResult

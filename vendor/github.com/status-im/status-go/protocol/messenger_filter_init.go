@@ -14,7 +14,6 @@ import (
 	"github.com/status-im/status-go/deprecation"
 	messagingtypes "github.com/status-im/status-go/messaging/types"
 	"github.com/status-im/status-go/protocol/communities"
-	"github.com/status-im/status-go/wakuv2"
 )
 
 // InitFilters analyzes chats and contacts in order to setup filters
@@ -24,7 +23,7 @@ func (m *Messenger) InitFilters() error {
 	rand.Seed(time.Now().Unix())
 
 	// Community requests will arrive in this pubsub topic
-	if err := m.SubscribeToPubsubTopic(wakuv2.DefaultNonProtectedPubsubTopic(), nil); err != nil {
+	if err := m.SubscribeToPubsubTopic(messagingtypes.DefaultNonProtectedPubsubTopic(), nil); err != nil {
 		return err
 	}
 
@@ -182,12 +181,12 @@ func (m *Messenger) processSingleChat(chat *Chat, communityInfo map[string]*comm
 		filters = append(filters, &messagingtypes.ChatToInitialize{ChatID: chat.ID})
 
 	case ChatTypeCommunityChat:
-		filter, err := m.processCommunityChat(chat, communityInfo)
+		// Since universalChatID is being used, no specific filters needs to be registered for all community chats.
+		// Reasoning: https://github.com/status-im/status-go/pull/5993
+		err := m.processCommunityChat(chat, communityInfo)
 		if err != nil {
 			return nil, nil, err
 		}
-		filters = append(filters, &filter)
-
 	case ChatTypeOneToOne:
 		pk, err := chat.PublicKey()
 		if err != nil {
@@ -209,13 +208,13 @@ func (m *Messenger) processSingleChat(chat *Chat, communityInfo map[string]*comm
 	return filters, publicKeys, nil
 }
 
-func (m *Messenger) processCommunityChat(chat *Chat, communityInfo map[string]*communities.Community) (messagingtypes.ChatToInitialize, error) {
+func (m *Messenger) processCommunityChat(chat *Chat, communityInfo map[string]*communities.Community) error {
 	community, ok := communityInfo[chat.CommunityID]
 	if !ok {
 		var err error
 		community, err = m.communitiesManager.GetByIDString(chat.CommunityID)
 		if err != nil {
-			return messagingtypes.ChatToInitialize{}, err
+			return err
 		}
 		communityInfo[chat.CommunityID] = community
 	}
@@ -229,10 +228,12 @@ func (m *Messenger) processCommunityChat(chat *Chat, communityInfo map[string]*c
 		}
 	}
 
-	return messagingtypes.ChatToInitialize{
-		ChatID:      chat.ID,
-		PubsubTopic: community.PubsubTopic(),
-	}, nil
+	// Members could be populated in the DB from previous inserts
+	if !community.ChannelHasPermissions(chat.CommunityChatID()) {
+		chat.Members = []ChatMember{}
+	}
+
+	return nil
 }
 
 func (m *Messenger) processPrivateGroupChat(chat *Chat) ([]*ecdsa.PublicKey, error) {
