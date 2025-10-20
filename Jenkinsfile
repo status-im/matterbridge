@@ -1,6 +1,11 @@
 pipeline {
   agent {
-    label 'linux && x86_64'
+    docker {
+      label 'linuxcontainer'
+      image 'harbor.status.im/infra/ci-build-containers:linux-base-1.0.0'
+      args '--volume=/var/run/docker.sock:/var/run/docker.sock ' +
+           '--user jenkins'
+    }
   }
 
   parameters {
