@@ -17,23 +17,21 @@ import (
 
 // StatusBackend defines the contract for the Status.im service
 type StatusBackend interface {
-	// IsNodeRunning() bool                       // NOTE: Only used in tests
-	StartNode(config *params.NodeConfig) error
+	StartNode(config *params.NodeConfig) error // NOTE: Only used in canary
 	StartNodeWithKey(acc multiaccounts.Account, password string, keyHex string, conf *params.NodeConfig) error
 	StartNodeWithAccount(acc multiaccounts.Account, password string, conf *params.NodeConfig, chatKey *ecdsa.PrivateKey) error
-	StartNodeWithAccountAndInitialConfig(account multiaccounts.Account, password string, settings settings.Settings, conf *params.NodeConfig, subaccs []*accounts.Account, chatKey *ecdsa.PrivateKey) error
+	StartNodeWithAccountAndInitialConfig(mnemonic string, account multiaccounts.Account, password string, settings settings.Settings,
+		conf *params.NodeConfig, keypair *accounts.Keypair, chatKey *ecdsa.PrivateKey) error
 	StopNode() error
-	// RestartNode() error // NOTE: Only used in tests
 
 	GetNodeConfig() (*params.NodeConfig, error)
 	UpdateRootDataDir(datadir string)
 
-	// SelectAccount(loginParams account.LoginParams) error
+	SelectAccount(loginParams LoginParams, privateKey *ecdsa.PrivateKey) error
 	OpenAccounts() error
 	GetAccounts() ([]multiaccounts.Account, error)
 	LocalPairingStarted() error
-	// SaveAccount(account multiaccounts.Account) error
-	SaveAccountAndStartNodeWithKey(acc multiaccounts.Account, password string, settings settings.Settings, conf *params.NodeConfig, subaccs []*accounts.Account, keyHex string) error
+	SaveAccount(account multiaccounts.Account) error
 	Recover(rpcParams personal.RecoverParams) (types.Address, error)
 	Logout() error
 
@@ -42,7 +40,6 @@ type StatusBackend interface {
 	HashTransaction(sendArgs wallettypes.SendTxArgs) (wallettypes.SendTxArgs, types.Hash, error)
 	HashTypedData(typed typeddata.TypedData) (types.Hash, error)
 	HashTypedDataV4(typed signercore.TypedData) (types.Hash, error)
-	ResetChainData() error
 	SendTransaction(sendArgs wallettypes.SendTxArgs, password string) (hash types.Hash, err error)
 	SendTransactionWithChainID(chainID uint64, sendArgs wallettypes.SendTxArgs, password string) (hash types.Hash, err error)
 	SendTransactionWithSignature(sendArgs wallettypes.SendTxArgs, sig []byte) (hash types.Hash, err error)

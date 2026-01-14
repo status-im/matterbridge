@@ -54,6 +54,7 @@ type CreateAccount struct {
 	LogLevel    *string `json:"logLevel"`
 	LogFilePath string  `json:"logFilePath"` // absolute path
 	LogEnabled  bool    `json:"logEnabled"`
+	LogToStderr bool    `json:"logToStderr"`
 
 	PreviewPrivacy bool `json:"previewPrivacy"`
 
@@ -78,8 +79,6 @@ type CreateAccount struct {
 
 	TorrentConfigEnabled *bool
 	TorrentConfigPort    *int
-
-	TelemetryServerURL string `json:"telemetryServerURL"`
 
 	APIConfig *APIConfig `json:"apiConfig"`
 
@@ -117,9 +116,9 @@ type WalletSecretsConfig struct {
 	StatusProxyMarketUser     security.SensitiveString `json:"statusProxyMarketUser"`
 	StatusProxyMarketPassword security.SensitiveString `json:"statusProxyMarketPassword"`
 
-	MarketDataProxyUrl      string `json:"marketDataProxyUrl"`
-	MarketDataProxyUser     string `json:"marketDataProxyUser"`
-	MarketDataProxyPassword string `json:"marketDataProxyPassword"`
+	MarketDataProxyUrl      security.SensitiveString `json:"marketDataProxyUrl"`
+	MarketDataProxyUser     security.SensitiveString `json:"marketDataProxyUser"`
+	MarketDataProxyPassword security.SensitiveString `json:"marketDataProxyPassword"`
 	// FIXME: remove when EthRpcProxy* is integrated
 	StatusProxyBlockchainUser     security.SensitiveString `json:"statusProxyBlockchainUser"`
 	StatusProxyBlockchainPassword security.SensitiveString `json:"statusProxyBlockchainPassword"`

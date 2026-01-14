@@ -9,16 +9,14 @@ import (
 	"github.com/status-im/status-go/wakuv2"
 
 	wps "github.com/waku-org/go-waku/waku/v2/peerstore"
-	v2protocol "github.com/waku-org/go-waku/waku/v2/protocol"
 
-	v1protocol "github.com/status-im/status-go/protocol/v1"
 	v2common "github.com/status-im/status-go/wakuv2/common"
 )
 
 type ReceivedMessages struct {
 	Filter     messagingtypes.ChatFilter
 	SHHMessage *messagingtypes.ReceivedMessage
-	Messages   []*v1protocol.StatusMessage
+	Messages   []*messagingtypes.Message
 }
 
 type Client struct {
@@ -75,9 +73,9 @@ func (c *Client) SetDeviceType(deviceType string) {
 
 func (c *Client) PushReceivedMessages(receivedMessages ReceivedMessages) {
 	metrics.MessagesReceivedTotal.WithLabelValues(
-		receivedMessages.Filter.PubsubTopic,
-		receivedMessages.Filter.ContentTopic.String(),
-		receivedMessages.Filter.ChatID,
+		receivedMessages.Filter.PubsubTopic(),
+		receivedMessages.Filter.ContentTopic().String(),
+		receivedMessages.Filter.ChatID(),
 	).Add(float64(len(receivedMessages.Messages)))
 }
 
@@ -135,7 +133,7 @@ func (c *Client) PushDialFailure(dialFailure v2common.DialError) {
 	).Inc()
 }
 
-func (c *Client) PushMissedMessage(envelope *v2protocol.Envelope) {
+func (c *Client) PushMissedMessage(envelope v2common.Envelope) {
 	metrics.MissedMessages.WithLabelValues(
 		envelope.PubsubTopic(),
 		envelope.Message().ContentTopic,

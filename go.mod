@@ -20,6 +20,7 @@ require (
 	github.com/keybase/go-keybase-chat-bot v0.0.0-20221220212439-e48d9abd2c20
 	github.com/kyokomi/emoji/v2 v2.2.12
 	github.com/labstack/echo/v4 v4.11.1
+	github.com/libp2p/go-libp2p v0.36.2
 	github.com/lrstanley/girc v0.0.0-20230729130341-dd5853a5f1a6
 	github.com/matterbridge/Rocket.Chat.Go.SDK v0.0.0-20211016222428-79310a412696
 	github.com/matterbridge/go-xmpp v0.0.0-20211030125215-791a06c5f1be
@@ -43,7 +44,7 @@ require (
 	github.com/sirupsen/logrus v1.9.3
 	github.com/slack-go/slack v0.12.2
 	github.com/spf13/viper v1.16.0
-	github.com/status-im/status-go v1.1.1-0.20250522094040-62f7d5ab9b07
+	github.com/status-im/status-go v1.1.1-0.20251015163754-9f93288dbede
 	github.com/stretchr/testify v1.9.0
 	github.com/vincent-petithory/dataurl v1.0.0
 	github.com/writeas/go-strip-markdown v2.0.1+incompatible
@@ -52,9 +53,9 @@ require (
 	go.mau.fi/whatsmeow v0.0.0-20230805111647-405414b9b5c0
 	go.uber.org/zap v1.27.0
 	golang.org/x/exp v0.0.0-20240808152545-0cdaa3abc0fa
-	golang.org/x/image v0.11.0
+	golang.org/x/image v0.24.0
 	golang.org/x/oauth2 v0.21.0
-	golang.org/x/text v0.17.0
+	golang.org/x/text v0.22.0
 	gomod.garykim.dev/nc-talk v0.3.0
 	google.golang.org/protobuf v1.34.2
 	layeh.com/gumble v0.0.0-20221205141517-d1df60a3cc14
@@ -121,12 +122,10 @@ require (
 	github.com/dyatlov/go-opengraph v0.0.0-20210112100619-dae8665a5b09 // indirect
 	github.com/edsrzf/mmap-go v1.0.0 // indirect
 	github.com/elastic/gosigar v0.14.3 // indirect
-	github.com/fjl/memsize v0.0.0-20190710130421-bcb5799ab5e5 // indirect
 	github.com/flynn/noise v1.1.0 // indirect
 	github.com/fogleman/gg v1.3.0 // indirect
 	github.com/forPelevin/gomoji v1.1.2 // indirect
 	github.com/francoispqt/gojay v1.2.13 // indirect
-	github.com/gballet/go-libpcsclite v0.0.0-20191108122812-4678299bea08 // indirect
 	github.com/getsentry/sentry-go v0.29.1 // indirect
 	github.com/go-asn1-ber/asn1-ber v1.5.3 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
@@ -184,7 +183,6 @@ require (
 	github.com/lib/pq v1.10.4 // indirect
 	github.com/libp2p/go-buffer-pool v0.1.0 // indirect
 	github.com/libp2p/go-flow-metrics v0.1.0 // indirect
-	github.com/libp2p/go-libp2p v0.36.2 // indirect
 	github.com/libp2p/go-libp2p-asn-util v0.4.1 // indirect
 	github.com/libp2p/go-libp2p-pubsub v0.12.0 // indirect
 	github.com/libp2p/go-msgio v0.3.0 // indirect
@@ -291,7 +289,6 @@ require (
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/status-im/doubleratchet v3.0.0+incompatible // indirect
 	github.com/status-im/extkeys v1.1.0 // indirect
-	github.com/status-im/keycard-go v0.0.0-20200402102358-957c09536969 // indirect
 	github.com/status-im/markdown v0.0.0-20240404192634-b7e33c6ac3d4 // indirect
 	github.com/status-im/migrate/v4 v4.6.2-status.3 // indirect
 	github.com/status-im/mvds v0.0.27-0.20241031073756-b192c603a75d // indirect
@@ -301,7 +298,6 @@ require (
 	github.com/tinylib/msgp v1.1.6 // indirect
 	github.com/tklauser/go-sysconf v0.3.11 // indirect
 	github.com/tklauser/numcpus v0.6.0 // indirect
-	github.com/tyler-smith/go-bip39 v1.1.0 // indirect
 	github.com/urfave/cli/v2 v2.27.2 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasttemplate v1.2.2 // indirect
@@ -314,7 +310,7 @@ require (
 	github.com/waku-org/go-zerokit-rln-apple v0.0.0-20230916172309-ee0ee61dde2b // indirect
 	github.com/waku-org/go-zerokit-rln-arm v0.0.0-20230916171929-1dd9494ff065 // indirect
 	github.com/waku-org/go-zerokit-rln-x86_64 v0.0.0-20230916171518-2a77c3734dd1 // indirect
-	github.com/waku-org/waku-go-bindings v0.0.0-20250313132258-6f95d51df46c // indirect
+	github.com/waku-org/waku-go-bindings v0.0.0-20250714110306-6feba5b0df4d // indirect
 	github.com/wealdtech/go-ens/v3 v3.5.0 // indirect
 	github.com/wealdtech/go-multicodec v1.4.0 // indirect
 	github.com/wiggin77/merror v1.0.3 // indirect
@@ -338,14 +334,14 @@ require (
 	go.uber.org/fx v1.22.2 // indirect
 	go.uber.org/mock v0.4.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/crypto v0.26.0 // indirect
-	golang.org/x/mod v0.20.0 // indirect
-	golang.org/x/net v0.28.0 // indirect
-	golang.org/x/sync v0.8.0 // indirect
-	golang.org/x/sys v0.24.0 // indirect
-	golang.org/x/term v0.23.0 // indirect
+	golang.org/x/crypto v0.33.0 // indirect
+	golang.org/x/mod v0.23.0 // indirect
+	golang.org/x/net v0.35.0 // indirect
+	golang.org/x/sync v0.11.0 // indirect
+	golang.org/x/sys v0.30.0 // indirect
+	golang.org/x/term v0.29.0 // indirect
 	golang.org/x/time v0.5.0 // indirect
-	golang.org/x/tools v0.24.0 // indirect
+	golang.org/x/tools v0.30.0 // indirect
 	gopkg.in/go-playground/validator.v9 v9.31.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
@@ -369,14 +365,22 @@ require (
 
 //replace github.com/matrix-org/gomatrix => github.com/matterbridge/gomatrix v0.0.0-20220205235239-607eb9ee6419
 
-go 1.22
+go 1.23
 
-toolchain go1.22.10
+toolchain go1.23.1
 
-replace github.com/ethereum/go-ethereum v1.10.26 => github.com/status-im/go-ethereum v1.10.25-status.19
+replace github.com/ethereum/go-ethereum v1.10.26 => github.com/status-im/go-ethereum v1.10.25-status.21
 
 replace github.com/mutecomm/go-sqlcipher/v4 v4.4.2 => github.com/status-im/go-sqlcipher/v4 v4.5.4-status.3
 
 replace github.com/nfnt/resize => github.com/status-im/resize v0.0.0-20201215164250-7c6d9f0d3088
 
 replace github.com/libp2p/go-libp2p-pubsub v0.12.0 => github.com/waku-org/go-libp2p-pubsub v0.12.0-gowaku.0.20240823143342-b0f2429ca27f
+
+replace github.com/rjeczalik/notify => github.com/status-im/notify v1.0.2-status
+
+replace github.com/docker/docker => github.com/docker/engine v1.4.2-0.20190717161051-705d9623b7c1
+
+replace github.com/forPelevin/gomoji => github.com/status-im/gomoji v1.1.3-0.20220213022530-e5ac4a8732d4
+
+replace github.com/gomarkdown/markdown v0.0.0-20191113114344-af599402d015 => github.com/gomarkdown/markdown v0.0.0-20231115200524-a660076da3fd

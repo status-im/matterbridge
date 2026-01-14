@@ -39,6 +39,7 @@
 // 1742297119_add_etag_to_token_lists_table.up.sql (61B)
 // 1745430861_market_data.up.sql (524B)
 // 1745483432_drop_route_build_tx_parameters_table.up.sql (47B)
+// 1748442098_add_source_to_token_lists_table.up.sql (89B)
 // doc.go (94B)
 
 package migrations
@@ -887,6 +888,26 @@ func _1745483432_drop_route_build_tx_parameters_tableUpSql() (*asset, error) {
 	return a, nil
 }
 
+var __1748442098_add_source_to_token_lists_tableUpSql = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x72\x71\xf5\x71\x0d\x71\x55\x70\x0b\xf2\xf7\x55\x28\xc9\xcf\x4e\xcd\x8b\xcf\xc9\x2c\x2e\x29\xb6\xe6\xe2\x72\xf4\x09\x71\x0d\x52\x08\x71\x74\xf2\x71\x45\x96\x51\x70\x74\x71\x51\x70\xf6\xf7\x09\xf5\xf5\x53\x28\xce\x2f\x2d\x4a\x4e\x55\x08\x73\x0c\x72\xf6\x70\x0c\x52\x70\x71\x75\x73\x0c\xf5\x09\x51\xf0\x0b\xf5\xf1\xb1\x06\x04\x00\x00\xff\xff\x41\x67\x61\x8e\x59\x00\x00\x00")
+
+func _1748442098_add_source_to_token_lists_tableUpSqlBytes() ([]byte, error) {
+	return bindataRead(
+		__1748442098_add_source_to_token_lists_tableUpSql,
+		"1748442098_add_source_to_token_lists_table.up.sql",
+	)
+}
+
+func _1748442098_add_source_to_token_lists_tableUpSql() (*asset, error) {
+	bytes, err := _1748442098_add_source_to_token_lists_tableUpSqlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "1748442098_add_source_to_token_lists_table.up.sql", size: 89, mode: os.FileMode(0644), modTime: time.Unix(1700000000, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x6a, 0x38, 0x21, 0x8f, 0x7e, 0xff, 0x79, 0x4d, 0xbe, 0x50, 0xbd, 0x8f, 0x59, 0x3e, 0xf2, 0x15, 0xf5, 0xf, 0xab, 0xd7, 0x51, 0xdf, 0x5e, 0xa1, 0x9c, 0xbf, 0xfd, 0x85, 0x84, 0x4c, 0x48, 0x50}}
+	return a, nil
+}
+
 var _docGo = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x2c\xcb\x41\x0e\x02\x31\x08\x05\xd0\x7d\x4f\xf1\x2f\x00\xe8\xca\xc4\xc4\xc3\xa0\x43\x08\x19\x5b\xc6\x96\xfb\xc7\x4d\xdf\xfe\x5d\xfa\x39\xd5\x0d\xeb\xf7\x6d\x4d\xc4\xf3\xe9\x36\x6c\x6a\x19\x3c\xe9\x1d\xe3\xd0\x52\x50\xcf\xa3\xa2\xdb\xeb\xfe\xb8\x6d\xa0\xeb\x74\xf4\xf0\xa9\x15\x39\x16\x28\xc1\x2c\x7b\xb0\x27\x58\xda\x3f\x00\x00\xff\xff\x57\xd4\xd5\x90\x5e\x00\x00\x00")
 
 func docGoBytes() ([]byte, error) {
@@ -1037,6 +1058,7 @@ var _bindata = map[string]func() (*asset, error){
 	"1742297119_add_etag_to_token_lists_table.up.sql":                               _1742297119_add_etag_to_token_lists_tableUpSql,
 	"1745430861_market_data.up.sql":                                                 _1745430861_market_dataUpSql,
 	"1745483432_drop_route_build_tx_parameters_table.up.sql":                        _1745483432_drop_route_build_tx_parameters_tableUpSql,
+	"1748442098_add_source_to_token_lists_table.up.sql":                             _1748442098_add_source_to_token_lists_tableUpSql,
 	"doc.go": docGo,
 }
 
@@ -1125,6 +1147,7 @@ var _bintree = &bintree{nil, map[string]*bintree{
 	"1742297119_add_etag_to_token_lists_table.up.sql":                               {_1742297119_add_etag_to_token_lists_tableUpSql, map[string]*bintree{}},
 	"1745430861_market_data.up.sql":                                                 {_1745430861_market_dataUpSql, map[string]*bintree{}},
 	"1745483432_drop_route_build_tx_parameters_table.up.sql":                        {_1745483432_drop_route_build_tx_parameters_tableUpSql, map[string]*bintree{}},
+	"1748442098_add_source_to_token_lists_table.up.sql":                             {_1748442098_add_source_to_token_lists_tableUpSql, map[string]*bintree{}},
 	"doc.go": {docGo, map[string]*bintree{}},
 }}
 

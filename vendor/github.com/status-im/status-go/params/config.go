@@ -14,10 +14,7 @@ import (
 	"go.uber.org/zap"
 	"gopkg.in/go-playground/validator.v9"
 
-	"github.com/ethereum/go-ethereum/p2p/discv5"
 	"github.com/ethereum/go-ethereum/params"
-
-	"github.com/status-im/status-go/pkg/version"
 
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/eth-node/types"
@@ -26,45 +23,6 @@ import (
 	"github.com/status-im/status-go/static"
 	wakuv2common "github.com/status-im/status-go/wakuv2/common"
 )
-
-// ----------
-// LightEthConfig
-// ----------
-
-// LightEthConfig holds LES-related configuration
-// Status nodes are always lightweight clients (due to mobile platform constraints)
-type LightEthConfig struct {
-	// Enabled flag specifies whether protocol is enabled
-	Enabled bool
-
-	// DatabaseCache is memory (in MBs) allocated to internal caching (min 16MB / database forced)
-	DatabaseCache int
-
-	// TrustedNodes is a list of trusted servers
-	TrustedNodes []string
-
-	//MinTrustedFraction is minimum percentage of connected trusted servers to validate header(1-100)
-	MinTrustedFraction int
-}
-
-// ----------
-// DatabaseConfig
-// ----------
-
-type DatabaseConfig struct {
-	PGConfig PGConfig
-}
-
-// ----------
-// PGConfig
-// ----------
-
-type PGConfig struct {
-	// Enabled whether we should use a Postgres instance
-	Enabled bool
-	// The URI of the server
-	URI string
-}
 
 // ----------
 // WakuV2Config
@@ -131,29 +89,11 @@ type WakuV2Config struct {
 	// StoreSeconds indicates the maximum number of seconds before a message is removed from the store
 	StoreSeconds int
 
-	TelemetryServerURL string
-
 	// EnableMissingMessageVerification indicates whether the storenodes must be queried periodically to retrieve any missing message
 	EnableMissingMessageVerification bool
 
 	// EnableMissingMessageVerification indicates whether storenodes must be queried periodically to confirm if messages sent are actually propagated in the network
 	EnableStoreConfirmationForMessagesSent bool
-}
-
-// ----------
-// SwarmConfig
-// ----------
-
-// SwarmConfig holds Swarm-related configuration
-type SwarmConfig struct {
-	// Enabled flag specifies whether protocol is enabled
-	Enabled bool
-}
-
-// String dumps config object as nicely indented JSON
-func (c *SwarmConfig) String() string {
-	data, _ := json.MarshalIndent(c, "", "    ") // nolint: gas
-	return string(data)
 }
 
 // ----------
@@ -228,12 +168,6 @@ type NodeConfig struct {
 
 	RootDataDir string `json:",omitempty"`
 
-	// DataDir is the file system folder the node should use for any data storage needs.
-	DataDir string `validate:"required"`
-
-	// KeyStoreDir is the file system folder that contains private keys.
-	KeyStoreDir string `validate:"required"`
-
 	// KeycardPairingDataFile is the file where we keep keycard pairings data.
 	// It's specified by clients (and not in status-go) when creating a new account,
 	// because this file is initialized by status-keycard-go and we need to use it before initializing the node.
@@ -244,26 +178,6 @@ type NodeConfig struct {
 	// NodeKey is the hex-encoded node ID (private key). Should be a valid secp256k1 private key that will be used for both
 	// remote peer identification as well as network traffic encryption.
 	NodeKey string
-
-	// NoDiscovery set to true will disable discovery protocol.
-	// Deprecated: won't be used at all in wakuv2 and is always `true`.
-	NoDiscovery bool
-
-	// ListenAddr is an IP address and port of this node (e.g. 127.0.0.1:30303).
-	ListenAddr string
-
-	// AdvertiseAddr is a public IP address the node wants to be found with.
-	// It is especially useful when using floating IPs attached to a server.
-	// This configuration value is used by rendezvous protocol, and it's optional
-	// If no value is specified, it will attempt to determine the node's external
-	// IP address. A value can be specified in case the returned address is incorrect
-	AdvertiseAddr string
-
-	// Name sets the instance name of the node. It must not contain the / character.
-	Name string `validate:"excludes=/"`
-
-	// Version exposes program's version. It is used in the devp2p node identifier.
-	Version string
 
 	// APIModules is a comma-separated list of API modules exposed via *any* (HTTP/WS/IPC) RPC interface.
 	APIModules string `validate:"required"`
@@ -307,18 +221,6 @@ type NodeConfig struct {
 	// IPCFile is filename of exposed IPC RPC Server
 	IPCFile string
 
-	// TLSEnabled specifies whether TLS support should be enabled on node or not
-	// TLS support is only planned in go-ethereum, so we are using our own patch.
-	TLSEnabled bool
-
-	// MaxPeers is the maximum number of (global) peers that can be connected.
-	// Set to zero, if only static or trusted peers are allowed to connect.
-	MaxPeers int
-
-	// MaxPendingPeers is the maximum number of peers that can be pending in the
-	// handshake phase, counted separately for inbound and outbound connections.
-	MaxPendingPeers int
-
 	// LogEnabled enables the logger
 	LogEnabled bool `json:"LogEnabled"`
 
@@ -350,32 +252,20 @@ type NodeConfig struct {
 	// LogToStderr defines whether logged info should also be output to os.Stderr
 	LogToStderr bool
 
-	// EnableStatusService should be true to enable methods under status namespace.
-	EnableStatusService bool
-
 	// Initial networks to load
 	Networks []Network
 
 	// ClusterConfig extra configuration for supporting cluster peers.
 	ClusterConfig ClusterConfig `json:"ClusterConfig," validate:"structonly"`
 
-	// LightEthConfig extra configuration for LES
-	LightEthConfig LightEthConfig `json:"LightEthConfig," validate:"structonly"`
-
 	// WakuV2Config provides a configuration for WakuV2 protocol.
 	WakuV2Config WakuV2Config `json:"WakuV2Config" validate:"structonly"`
-
-	// BridgeConfig provides a configuration for Whisper-Waku bridge.
-	BridgeConfig BridgeConfig `json:"BridgeConfig" validate:"structonly"`
 
 	// ShhextConfig extra configuration for service running under shhext namespace.
 	ShhextConfig ShhextConfig `json:"ShhextConfig," validate:"structonly"`
 
 	// WalletConfig extra configuration for wallet.Service.
 	WalletConfig WalletConfig
-
-	// WalleLocalNotificationsConfig extra configuration for localnotifications.Service.
-	LocalNotificationsConfig LocalNotificationsConfig
 
 	// BrowsersConfig extra configuration for browsers.Service.
 	BrowsersConfig BrowsersConfig
@@ -387,31 +277,10 @@ type NodeConfig struct {
 	// (persistent storage of user's mailserver records).
 	MailserversConfig MailserversConfig
 
-	// Web3ProviderConfig extra configuration for provider.Service.
-	// (desktop provider API)
-	Web3ProviderConfig Web3ProviderConfig
-
 	// ConnectorConfig extra configuration for connector.Service
 	ConnectorConfig ConnectorConfig
 
-	// SwarmConfig extra configuration for Swarm and ENS
-	SwarmConfig SwarmConfig `json:"SwarmConfig," validate:"structonly"`
-
 	TorrentConfig TorrentConfig
-
-	// RegisterTopics a list of specific topics where the peer wants to be
-	// discoverable.
-	RegisterTopics []discv5.Topic `json:"RegisterTopics"`
-
-	// RequiredTopics list of topics where a client wants to search for
-	// discoverable peers with the discovery limits.
-	RequireTopics map[discv5.Topic]Limits `json:"RequireTopics"`
-
-	// MailServerRegistryAddress is the MailServerRegistry contract address
-	MailServerRegistryAddress string
-
-	// PushNotificationServerConfig is the config for the push notification server
-	PushNotificationServerConfig PushNotificationServerConfig `json:"PushNotificationServerConfig"`
 
 	OutputMessageCSVEnabled bool
 
@@ -447,11 +316,12 @@ type WalletConfig struct {
 }
 
 type MarketDataProxyConfig struct {
-	Url                     string `json:"Url"`
-	User                    string `json:"User"`
-	Password                string `json:"Password"`
-	FullDataRefreshInterval int    `json:"FullDataRefreshInterval"`
-	PriceRefreshInterval    int    `json:"PriceRefreshInterval"`
+	UrlOverride             security.SensitiveString `json:"UrlOverride"`
+	StageName               string                   `json:"StageName"`
+	User                    security.SensitiveString `json:"User"`
+	Password                security.SensitiveString `json:"Password"`
+	FullDataRefreshInterval int                      `json:"FullDataRefreshInterval"`
+	PriceRefreshInterval    int                      `json:"PriceRefreshInterval"`
 }
 
 // MarshalJSON custom marshalling to avoid exposing sensitive data in log,
@@ -472,11 +342,6 @@ func (wc WalletConfig) MarshalJSON() ([]byte, error) {
 	})
 }
 
-// LocalNotificationsConfig extra configuration for localnotifications.Service.
-type LocalNotificationsConfig struct {
-	Enabled bool
-}
-
 // BrowsersConfig extra configuration for browsers.Service.
 type BrowsersConfig struct {
 	Enabled bool
@@ -492,18 +357,8 @@ type MailserversConfig struct {
 	Enabled bool
 }
 
-// ProviderAuthConfig extra configuration for provider.Service
-type Web3ProviderConfig struct {
-	Enabled bool
-}
-
 // ConnectorConfig extra configuration for provider.Service
 type ConnectorConfig struct {
-	Enabled bool
-}
-
-// BridgeConfig provides configuration for Whisper-Waku bridge.
-type BridgeConfig struct {
 	Enabled bool
 }
 
@@ -528,12 +383,6 @@ func (p *PushNotificationServer) UnmarshalText(data []byte) error {
 
 	p.PublicKey = pk
 	return nil
-}
-
-type PushNotificationServerConfig struct {
-	Enabled   bool
-	Identity  *ecdsa.PrivateKey
-	GorushURL string
 }
 
 // ShhextConfig defines options used by shhext service.
@@ -630,7 +479,6 @@ func WithFleet(fleet string) Option {
 		if fleet == FleetUndefined {
 			return nil
 		}
-		c.NoDiscovery = false
 		c.ClusterConfig.Enabled = true
 		return loadConfigFromAsset(fmt.Sprintf("../config/cli/fleet-%s.json", fleet), c)
 	}
@@ -672,9 +520,7 @@ func NewNodeConfigWithDefaults(dataDir string, networkID uint64, opts ...Option)
 		return nil, err
 	}
 
-	c.NoDiscovery = true
 	c.HTTPHost = ""
-	c.ListenAddr = ":30303"
 	c.LogEnabled = true
 	c.LogLevel = "INFO"
 	c.LogMaxSize = 100
@@ -688,8 +534,6 @@ func NewNodeConfigWithDefaults(dataDir string, networkID uint64, opts ...Option)
 			return nil, err
 		}
 	}
-
-	c.updatePeerLimits()
 
 	if err := c.Validate(); err != nil {
 		return nil, err
@@ -771,8 +615,6 @@ func NewNodeConfigWithDefaultsAndFiles(
 		}
 	}
 
-	c.updatePeerLimits()
-
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
@@ -780,23 +622,12 @@ func NewNodeConfigWithDefaultsAndFiles(
 	return c, nil
 }
 
-// updatePeerLimits will set default peer limits expectations based on enabled services.
-func (c *NodeConfig) updatePeerLimits() {
-	if c.NoDiscovery {
-		return
-	}
-	if c.LightEthConfig.Enabled {
-		c.RequireTopics[discv5.Topic(LesTopic(int(c.NetworkID)))] = LesDiscoveryLimits
-	}
-}
-
 // NewNodeConfig creates new node configuration object with bare-minimum defaults.
 // Important: the returned config is not validated.
 func NewNodeConfig(dataDir string, networkID uint64) (*NodeConfig, error) {
-	var keyStoreDir, keycardPairingDataFile, wakuV2Dir string
+	var keycardPairingDataFile, wakuV2Dir string
 
 	if dataDir != "" {
-		keyStoreDir = filepath.Join(dataDir, "keystore")
 		keycardPairingDataFile = filepath.Join(dataDir, "keycard", "pairings.json")
 
 		wakuV2Dir = filepath.Join(dataDir, "wakuv2")
@@ -805,24 +636,14 @@ func NewNodeConfig(dataDir string, networkID uint64) (*NodeConfig, error) {
 	config := &NodeConfig{
 		NetworkID:              networkID,
 		RootDataDir:            dataDir,
-		DataDir:                dataDir,
-		KeyStoreDir:            keyStoreDir,
 		KeycardPairingDataFile: keycardPairingDataFile,
-		Version:                version.Version(),
 		HTTPHost:               "localhost",
 		HTTPPort:               8545,
 		HTTPVirtualHosts:       []string{"localhost"},
-		ListenAddr:             ":0",
 		APIModules:             "eth,net,web3,peer,wallet",
-		MaxPeers:               25,
-		MaxPendingPeers:        0,
 		IPCFile:                "geth.ipc",
 		LogFile:                "",
 		LogLevel:               "ERROR",
-		NoDiscovery:            true,
-		LightEthConfig: LightEthConfig{
-			DatabaseCache: 16,
-		},
 		WakuV2Config: WakuV2Config{
 			Host:           "0.0.0.0",
 			Port:           0,
@@ -830,15 +651,12 @@ func NewNodeConfig(dataDir string, networkID uint64) (*NodeConfig, error) {
 			MaxMessageSize: wakuv2common.DefaultMaxMessageSize,
 		},
 		ShhextConfig: ShhextConfig{},
-		SwarmConfig:  SwarmConfig{},
 		TorrentConfig: TorrentConfig{
 			Enabled:    false,
 			Port:       9025,
 			DataDir:    dataDir + "/archivedata",
 			TorrentDir: dataDir + "/torrents",
 		},
-		RegisterTopics: []discv5.Topic{},
-		RequireTopics:  map[discv5.Topic]Limits{},
 	}
 
 	return config, nil
@@ -926,12 +744,6 @@ func (c *NodeConfig) Validate() error {
 		return err
 	}
 
-	if !c.NoDiscovery && len(c.ClusterConfig.BootNodes) == 0 {
-		// No point in running discovery if we don't have bootnodes.
-		// In case we do have bootnodes, NoDiscovery should be true.
-		return fmt.Errorf("NoDiscovery is false, but ClusterConfig.BootNodes is empty")
-	}
-
 	if c.ShhextConfig.PFSEnabled && len(c.ShhextConfig.InstallationID) == 0 {
 		return fmt.Errorf("PFSEnabled is true, but InstallationID is empty")
 	}
@@ -942,12 +754,6 @@ func (c *NodeConfig) Validate() error {
 func (c *NodeConfig) validateChildStructs(validate *validator.Validate) error {
 	// Validate child structs
 	if err := c.ClusterConfig.Validate(validate); err != nil {
-		return err
-	}
-	if err := c.LightEthConfig.Validate(validate); err != nil {
-		return err
-	}
-	if err := c.SwarmConfig.Validate(validate); err != nil {
 		return err
 	}
 	if err := c.ShhextConfig.Validate(validate); err != nil {
@@ -961,32 +767,6 @@ func (c *NodeConfig) validateChildStructs(validate *validator.Validate) error {
 
 // Validate validates the ClusterConfig struct and returns an error if inconsistent values are found
 func (c *ClusterConfig) Validate(validate *validator.Validate) error {
-	if !c.Enabled {
-		return nil
-	}
-
-	if err := validate.Struct(c); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// Validate validates the LightEthConfig struct and returns an error if inconsistent values are found
-func (c *LightEthConfig) Validate(validate *validator.Validate) error {
-	if !c.Enabled {
-		return nil
-	}
-
-	if err := validate.Struct(c); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// Validate validates the SwarmConfig struct and returns an error if inconsistent values are found
-func (c *SwarmConfig) Validate(validate *validator.Validate) error {
 	if !c.Enabled {
 		return nil
 	}
@@ -1020,11 +800,11 @@ func (c *NodeConfig) Save() error {
 		return err
 	}
 
-	if err := os.MkdirAll(c.DataDir, os.ModePerm); err != nil {
+	if err := os.MkdirAll(c.RootDataDir, os.ModePerm); err != nil {
 		return err
 	}
 
-	configFilePath := filepath.Join(c.DataDir, "config.json")
+	configFilePath := filepath.Join(c.RootDataDir, "config.json")
 	//nolint:gosec
 	if err := ioutil.WriteFile(configFilePath, data, os.ModePerm); err != nil {
 		return err
@@ -1080,5 +860,6 @@ func (c *NodeConfig) ProfileLogSettings() logutils.LogSettings {
 		MaxSize:         c.LogMaxSize,
 		MaxBackups:      c.LogMaxBackups,
 		CompressRotated: c.LogCompressRotated,
+		LogToStderr:     c.LogToStderr,
 	}
 }

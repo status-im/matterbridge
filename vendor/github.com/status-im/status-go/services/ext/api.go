@@ -11,9 +11,9 @@ import (
 	"github.com/multiformats/go-multiaddr"
 	"go.uber.org/zap"
 
-	"github.com/status-im/status-go/account"
 	"github.com/status-im/status-go/logutils"
 	"github.com/status-im/status-go/services/browsers"
+	"github.com/status-im/status-go/services/personal"
 	"github.com/status-im/status-go/services/wallet"
 	"github.com/status-im/status-go/services/wallet/bigint"
 
@@ -38,7 +38,6 @@ import (
 	"github.com/status-im/status-go/protocol/pushnotificationclient"
 	"github.com/status-im/status-go/protocol/requests"
 	"github.com/status-im/status-go/protocol/verification"
-	"github.com/status-im/status-go/wakuv2"
 
 	messagingtypes "github.com/status-im/status-go/messaging/types"
 	wakutypes "github.com/status-im/status-go/waku/types"
@@ -599,21 +598,21 @@ func (api *PublicAPI) AllNonApprovedCommunitiesRequestsToJoin() ([]*communities.
 // Generates a single hash for each address that needs to be revealed to a community.
 // Each hash needs to be signed.
 // The order of retuned hashes corresponds to the order of addresses in addressesToReveal.
-func (api *PublicAPI) GenerateJoiningCommunityRequestsForSigning(memberPubKey string, communityID types.HexBytes, addressesToReveal []string) ([]account.SignParams, error) {
+func (api *PublicAPI) GenerateJoiningCommunityRequestsForSigning(memberPubKey string, communityID types.HexBytes, addressesToReveal []string) ([]personal.SignParams, error) {
 	return api.service.messenger.GenerateJoiningCommunityRequestsForSigning(memberPubKey, communityID, addressesToReveal)
 }
 
 // Generates a single hash for each address that needs to be revealed to a community.
 // Each hash needs to be signed.
 // The order of retuned hashes corresponds to the order of addresses in addressesToReveal.
-func (api *PublicAPI) GenerateEditCommunityRequestsForSigning(memberPubKey string, communityID types.HexBytes, addressesToReveal []string) ([]account.SignParams, error) {
+func (api *PublicAPI) GenerateEditCommunityRequestsForSigning(memberPubKey string, communityID types.HexBytes, addressesToReveal []string) ([]personal.SignParams, error) {
 	return api.service.messenger.GenerateEditCommunityRequestsForSigning(memberPubKey, communityID, addressesToReveal)
 }
 
 // Signs the provided messages with the provided accounts and password.
 // Provided accounts must not belong to a keypair that is migrated to a keycard.
 // Otherwise, the signing will fail, cause such accounts should be signed with a keycard.
-func (api *PublicAPI) SignData(signParams []account.SignParams) ([]string, error) {
+func (api *PublicAPI) SignData(signParams []personal.SignParams) ([]string, error) {
 	return api.service.messenger.SignData(signParams)
 }
 
@@ -1098,25 +1097,6 @@ func (api *PublicAPI) RemainingCapacityForSavedAddresses(ctx context.Context, te
 	return api.service.messenger.RemainingCapacityForSavedAddresses(testnetMode)
 }
 
-// PushNotifications server endpoints
-func (api *PublicAPI) StartPushNotificationsServer() error {
-	err := api.service.accountsDB.SaveSettingField(settings.PushNotificationsServerEnabled, true)
-	if err != nil {
-		return err
-	}
-
-	return api.service.messenger.StartPushNotificationsServer()
-}
-
-func (api *PublicAPI) StopPushNotificationsServer() error {
-	err := api.service.accountsDB.SaveSettingField(settings.PushNotificationsServerEnabled, false)
-	if err != nil {
-		return err
-	}
-
-	return api.service.messenger.StopPushNotificationsServer()
-}
-
 // PushNotification client endpoints
 
 func (api *PublicAPI) RegisterForPushNotifications(ctx context.Context, deviceToken string, apnTopic string, tokenType protobuf.PushNotificationRegistration_TokenType) error {
@@ -1262,7 +1242,7 @@ func (api *PublicAPI) RequestCommunityInfoFromMailserver(communityID string) (*c
 
 // Deprecated: RequestCommunityInfoFromMailserverWithShard is deprecated in favor of
 // configurable FetchCommunity.
-func (api *PublicAPI) RequestCommunityInfoFromMailserverWithShard(communityID string, shard *wakuv2.Shard) (*communities.Community, error) {
+func (api *PublicAPI) RequestCommunityInfoFromMailserverWithShard(communityID string, shard *messagingtypes.Shard) (*communities.Community, error) {
 	request := &protocol.FetchCommunityRequest{
 		CommunityKey:    communityID,
 		Shard:           shard,
@@ -1287,7 +1267,7 @@ func (api *PublicAPI) RequestCommunityInfoFromMailserverAsync(communityID string
 
 // Deprecated: RequestCommunityInfoFromMailserverAsyncWithShard is deprecated in favor of
 // configurable FetchCommunity.
-func (api *PublicAPI) RequestCommunityInfoFromMailserverAsyncWithShard(communityID string, shard *wakuv2.Shard) error {
+func (api *PublicAPI) RequestCommunityInfoFromMailserverAsyncWithShard(communityID string, shard *messagingtypes.Shard) error {
 	request := &protocol.FetchCommunityRequest{
 		CommunityKey:    communityID,
 		Shard:           shard,
@@ -1795,7 +1775,7 @@ func (api *PublicAPI) SetMaxLogBackups(request *requests.SetMaxLogBackups) error
 	return api.service.messenger.SetMaxLogBackups(request)
 }
 
-func (api *PublicAPI) LogTest() error {
+func (api *PublicAPI) LogTest() {
 	l1 := logutils.ZapLogger().Named("test1")
 	l2 := l1.Named("test2")
 	l3 := l2.Named("test3")
@@ -1806,7 +1786,7 @@ func (api *PublicAPI) LogTest() error {
 		}
 	}
 
-	return l1.Sync()
+	_ = l1.Sync()
 }
 
 func (api *PublicAPI) SetCustomNodes(request *requests.SetCustomNodes) error {

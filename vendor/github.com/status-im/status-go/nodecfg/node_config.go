@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/p2p/discv5"
+
 	"github.com/status-im/status-go/eth-node/crypto"
 	"github.com/status-im/status-go/params"
 	"github.com/status-im/status-go/sqlite"
@@ -35,21 +35,14 @@ type insertFn func(tx *sql.Tx, c *params.NodeConfig) error
 func insertNodeConfigBase(tx *sql.Tx, c *params.NodeConfig, includeConnector bool) error {
 	query := `
 	INSERT OR REPLACE INTO node_config (
-		network_id, data_dir, keystore_dir, node_key, no_discovery,
-		listen_addr, advertise_addr, name, version, api_modules, tls_enabled,
-		max_peers, max_pending_peers, enable_status_service, enable_ntp_sync,
-		bridge_enabled, wallet_enabled, local_notifications_enabled,
-		 browser_enabled, permissions_enabled, mailservers_enabled,
-		 swarm_enabled, mailserver_registry_address, web3provider_enabled`
+		network_id, data_dir, keystore_dir, node_key,
+		api_modules, enable_ntp_sync, wallet_enabled,
+		browser_enabled, permissions_enabled, mailservers_enabled`
 
 	args := []any{
-		c.NetworkID, c.DataDir, c.KeyStoreDir, c.NodeKey, c.NoDiscovery,
-		c.ListenAddr, c.AdvertiseAddr, c.Name, c.Version, c.APIModules,
-		c.TLSEnabled, c.MaxPeers, c.MaxPendingPeers,
-		c.EnableStatusService, true,
-		c.BridgeConfig.Enabled, c.WalletConfig.Enabled, c.LocalNotificationsConfig.Enabled,
-		c.BrowsersConfig.Enabled, c.PermissionsConfig.Enabled, c.MailserversConfig.Enabled,
-		c.SwarmConfig.Enabled, c.MailServerRegistryAddress, c.Web3ProviderConfig.Enabled,
+		c.NetworkID, "", "", c.NodeKey, c.APIModules, true,
+		c.WalletConfig.Enabled, c.BrowsersConfig.Enabled,
+		c.PermissionsConfig.Enabled, c.MailserversConfig.Enabled,
 	}
 
 	if includeConnector {
@@ -131,48 +124,6 @@ func insertLogConfig(tx *sql.Tx, c *params.NodeConfig) error {
 	return insertLogConfigBase(tx, c, false)
 }
 
-func insertLightETHConfigTrustedNodes(tx *sql.Tx, c *params.NodeConfig) error {
-	if _, err := tx.Exec(`DELETE FROM light_eth_trusted_nodes WHERE synthetic_id = 'id'`); err != nil {
-		return err
-	}
-
-	for _, node := range c.LightEthConfig.TrustedNodes {
-		_, err := tx.Exec(`INSERT OR REPLACE INTO light_eth_trusted_nodes (node, synthetic_id) VALUES (?, 'id')`, node)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func insertRegisterTopics(tx *sql.Tx, c *params.NodeConfig) error {
-	if _, err := tx.Exec(`DELETE FROM register_topics WHERE synthetic_id = 'id'`); err != nil {
-		return err
-	}
-
-	for _, topic := range c.RegisterTopics {
-		_, err := tx.Exec(`INSERT OR REPLACE INTO register_topics (topic, synthetic_id) VALUES (?, 'id')`, topic)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func insertRequireTopics(tx *sql.Tx, c *params.NodeConfig) error {
-	if _, err := tx.Exec(`DELETE FROM require_topics WHERE synthetic_id = 'id'`); err != nil {
-		return err
-	}
-
-	for topic, limits := range c.RequireTopics {
-		_, err := tx.Exec(`INSERT OR REPLACE INTO require_topics (topic, min, max, synthetic_id) VALUES (?, ?, ?, 'id')`, topic, limits.Min, limits.Max)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func insertIPCConfig(tx *sql.Tx, c *params.NodeConfig) error {
 	_, err := tx.Exec(`INSERT OR REPLACE INTO ipc_config (enabled, file, synthetic_id) VALUES (?, ?, 'id')`, c.IPCEnabled, c.IPCFile)
 	return err
@@ -180,11 +131,6 @@ func insertIPCConfig(tx *sql.Tx, c *params.NodeConfig) error {
 
 func insertClusterConfig(tx *sql.Tx, c *params.NodeConfig) error {
 	_, err := tx.Exec(`INSERT OR REPLACE INTO cluster_config (enabled, fleet, synthetic_id) VALUES (?, ?, 'id')`, c.ClusterConfig.Enabled, c.ClusterConfig.Fleet)
-	return err
-}
-
-func insertLightETHConfig(tx *sql.Tx, c *params.NodeConfig) error {
-	_, err := tx.Exec(`INSERT OR REPLACE INTO light_eth_config (enabled, database_cache, min_trusted_fraction, synthetic_id) VALUES (?, ?, ?, 'id')`, c.LightEthConfig.Enabled, c.LightEthConfig.DatabaseCache, c.LightEthConfig.MinTrustedFraction)
 	return err
 }
 
@@ -288,15 +234,6 @@ func insertWakuV2ConfigPostMigration(tx *sql.Tx, c *params.NodeConfig) error {
 	return err
 }
 
-func insertPushNotificationsServerConfig(tx *sql.Tx, c *params.NodeConfig) error {
-	hexPrivKey := ""
-	if c.PushNotificationServerConfig.Identity != nil {
-		hexPrivKey = hexutil.Encode(crypto.FromECDSA(c.PushNotificationServerConfig.Identity))
-	}
-	_, err := tx.Exec(`INSERT OR REPLACE INTO push_notifications_server_config (enabled, identity, gorush_url, synthetic_id) VALUES (?, ?, ?, 'id')`, c.PushNotificationServerConfig.Enabled, hexPrivKey, c.PushNotificationServerConfig.GorushURL)
-	return err
-}
-
 func insertClusterConfigNodes(tx *sql.Tx, c *params.NodeConfig) error {
 	if _, err := tx.Exec(`DELETE FROM cluster_nodes WHERE synthetic_id = 'id'`); err != nil {
 		return err
@@ -332,11 +269,6 @@ func nodeConfigUpgradeInserts() []insertFn {
 		insertLogConfig,
 		insertClusterConfig,
 		insertClusterConfigNodes,
-		insertLightETHConfig,
-		insertLightETHConfigTrustedNodes,
-		insertRegisterTopics,
-		insertRequireTopics,
-		insertPushNotificationsServerConfig,
 		insertShhExtConfig,
 		insertWakuV2ConfigPreMigration,
 	}
@@ -354,11 +286,6 @@ func nodeConfigNormalInserts() []insertFn {
 		insertLogConfigWithNamespaces,
 		insertClusterConfig,
 		insertClusterConfigNodes,
-		insertLightETHConfig,
-		insertLightETHConfigTrustedNodes,
-		insertRegisterTopics,
-		insertRequireTopics,
-		insertPushNotificationsServerConfig,
 		insertShhExtConfig,
 		insertWakuV2ConfigPreMigration,
 		insertTorrentConfig,
@@ -428,20 +355,17 @@ func migrateNodeConfig(tx *sql.Tx) error {
 func loadNodeConfig(tx *sql.Tx) (*params.NodeConfig, error) {
 	nodecfg := &params.NodeConfig{}
 
+	keystoreDir := "" // TODO: remove this from db
 	err := tx.QueryRow(`
 	SELECT
-		network_id, data_dir, keystore_dir, node_key, no_discovery,
-		listen_addr, advertise_addr, name, version, api_modules, tls_enabled, max_peers, max_pending_peers,
-		enable_status_service, bridge_enabled, wallet_enabled, local_notifications_enabled,
-		browser_enabled, permissions_enabled, mailservers_enabled, swarm_enabled,
-		mailserver_registry_address, web3provider_enabled, connector_enabled FROM node_config
+		network_id, keystore_dir, node_key, api_modules,
+		wallet_enabled, browser_enabled, permissions_enabled,
+		mailservers_enabled, connector_enabled FROM node_config
 		WHERE synthetic_id = 'id'
 	`).Scan(
-		&nodecfg.NetworkID, &nodecfg.DataDir, &nodecfg.KeyStoreDir, &nodecfg.NodeKey, &nodecfg.NoDiscovery,
-		&nodecfg.ListenAddr, &nodecfg.AdvertiseAddr, &nodecfg.Name, &nodecfg.Version, &nodecfg.APIModules, &nodecfg.TLSEnabled, &nodecfg.MaxPeers, &nodecfg.MaxPendingPeers,
-		&nodecfg.EnableStatusService, &nodecfg.BridgeConfig.Enabled, &nodecfg.WalletConfig.Enabled, &nodecfg.LocalNotificationsConfig.Enabled,
-		&nodecfg.BrowsersConfig.Enabled, &nodecfg.PermissionsConfig.Enabled, &nodecfg.MailserversConfig.Enabled, &nodecfg.SwarmConfig.Enabled,
-		&nodecfg.MailServerRegistryAddress, &nodecfg.Web3ProviderConfig.Enabled, &nodecfg.ConnectorConfig.Enabled,
+		&nodecfg.NetworkID, &keystoreDir, &nodecfg.NodeKey, &nodecfg.APIModules,
+		&nodecfg.WalletConfig.Enabled, &nodecfg.BrowsersConfig.Enabled, &nodecfg.PermissionsConfig.Enabled,
+		&nodecfg.MailserversConfig.Enabled, &nodecfg.ConnectorConfig.Enabled,
 	)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, err
@@ -537,71 +461,6 @@ func loadNodeConfig(tx *sql.Tx) (*params.NodeConfig, error) {
 		}
 		if nodeList, ok := nodeMap[nodeType]; ok {
 			*nodeList = append(*nodeList, node)
-		}
-	}
-
-	err = tx.QueryRow("SELECT enabled, database_cache, min_trusted_fraction FROM light_eth_config WHERE synthetic_id = 'id'").Scan(&nodecfg.LightEthConfig.Enabled, &nodecfg.LightEthConfig.DatabaseCache, &nodecfg.LightEthConfig.MinTrustedFraction)
-	if err != nil && err != sql.ErrNoRows {
-		return nil, err
-	}
-
-	rows, err = tx.Query(`SELECT node FROM light_eth_trusted_nodes WHERE synthetic_id = 'id' ORDER BY node ASC`)
-	if err != nil && err != sql.ErrNoRows {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var node string
-		err = rows.Scan(&node)
-		if err != nil {
-			return nil, err
-		}
-		nodecfg.LightEthConfig.TrustedNodes = append(nodecfg.LightEthConfig.TrustedNodes, node)
-	}
-
-	rows, err = tx.Query(`SELECT topic FROM register_topics WHERE synthetic_id = 'id' ORDER BY topic ASC`)
-	if err != nil && err != sql.ErrNoRows {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var topic discv5.Topic
-		err = rows.Scan(&topic)
-		if err != nil {
-			return nil, err
-		}
-		nodecfg.RegisterTopics = append(nodecfg.RegisterTopics, topic)
-	}
-
-	rows, err = tx.Query(`SELECT topic, min, max FROM require_topics WHERE synthetic_id = 'id' ORDER BY topic ASC`)
-	if err != nil && err != sql.ErrNoRows {
-		return nil, err
-	}
-	defer rows.Close()
-	nodecfg.RequireTopics = make(map[discv5.Topic]params.Limits)
-	for rows.Next() {
-		var topic discv5.Topic
-		var limit params.Limits
-		err = rows.Scan(&topic, &limit.Min, &limit.Max)
-		if err != nil {
-			return nil, err
-		}
-		nodecfg.RequireTopics[topic] = limit
-	}
-
-	var pushNotifHexIdentity string
-	err = tx.QueryRow("SELECT enabled, identity, gorush_url FROM push_notifications_server_config WHERE synthetic_id = 'id'").Scan(&nodecfg.PushNotificationServerConfig.Enabled, &pushNotifHexIdentity, &nodecfg.PushNotificationServerConfig.GorushURL)
-	if err != nil && err != sql.ErrNoRows {
-		return nil, err
-	}
-	if pushNotifHexIdentity != "" {
-		b, err := hexutil.Decode(pushNotifHexIdentity)
-		if err != nil {
-			return nil, err
-		}
-		nodecfg.PushNotificationServerConfig.Identity, err = crypto.ToECDSA(b)
-		if err != nil {
-			return nil, err
 		}
 	}
 

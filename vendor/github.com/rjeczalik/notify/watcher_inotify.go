@@ -2,8 +2,9 @@
 // Use of this source code is governed by the MIT license that can be
 // found in the LICENSE file.
 
-//go:build linux
+//go:build linux && !(android && amd64)
 // +build linux
+// +build !android !amd64
 
 package notify
 

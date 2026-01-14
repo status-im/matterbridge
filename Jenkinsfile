@@ -11,7 +11,7 @@ pipeline {
   parameters {
     string(
       name: 'GIT_REF',
-      defaultValue: 'master',
+      defaultValue: 'wakuv2',
       description: 'Branch, tag, or commit to build.'
     )
     string(
@@ -22,7 +22,7 @@ pipeline {
     string(
       name: 'IMAGE_TAG',
       description: 'Docker image tag.',
-      defaultValue: params.IMAGE_TAG ?: 'latest'
+      defaultValue: params.IMAGE_TAG ?: ''
     )
     string(
       name: 'DOCKER_CRED',
@@ -34,7 +34,6 @@ pipeline {
       description: 'URL of the Docker Registry',
       defaultValue: params.DOCKER_REGISTRY_URL ?: 'https://harbor.status.im'
     )
-
   }
 
   options {
@@ -49,24 +48,22 @@ pipeline {
   stages {
     stage('Build') {
       steps { script {
+        env.IMAGE_TAG = params.IMAGE_TAG ?: env.GIT_COMMIT.take(8)
+
         image = docker.build(
-          "${params.IMAGE_NAME}:${params.IMAGE_TAG}",
+          "${params.IMAGE_NAME}:${env.IMAGE_TAG}",
           "--build-arg='GIT_COMMIT=${GIT_COMMIT.take(8)}' ."
         )
       } }
     }
 
     stage('Push') {
-      when { expression { params.IMAGE_TAG != '' } }
       steps { script {
         withDockerRegistry([
-          credentialsId: params.DOCKER_CRED, url: params.DOCKER_REGISTRY_URL
+          credentialsId: params.DOCKER_CRED,
+          url: params.DOCKER_REGISTRY_URL
         ]) {
-          image.push()
-          /* If Git ref is a tag push it as Docker tag too. */
-          if (params.GIT_REF ==~ /v\d+\.\d+\.\d+.*/) {
-            image.push(params.GIT_REF)
-          }
+          image.push(env.IMAGE_TAG)
         }
       } }
     }

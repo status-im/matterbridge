@@ -16,6 +16,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/p2p/enode"
+
 	"github.com/status-im/status-go/connection"
 )
 
@@ -88,13 +89,8 @@ type WakuKeyManager interface {
 	GetPrivateKey(id string) (*ecdsa.PrivateKey, error)
 	// AddKeyPair imports a asymmetric private key and returns a deterministic identifier.
 	AddKeyPair(key *ecdsa.PrivateKey) (string, error)
-	// DeleteKeyPair deletes the key with the specified ID if it exists.
-	DeleteKeyPair(keyID string) bool
 	// DeleteKeyPairs deletes all the keys
 	DeleteKeyPairs() error
-	AddSymKeyDirect(key []byte) (string, error)
-	AddSymKeyFromPassword(password string) (string, error)
-	DeleteSymKey(id string) bool
 	GetSymKey(id string) ([]byte, error)
 }
 
@@ -155,7 +151,7 @@ type Waku interface {
 	BloomFilter() []byte
 
 	// GetCurrentTime returns current time.
-	GetCurrentTime() time.Time
+	GetCurrentTime() uint64
 
 	// GetPrivateKey retrieves the private key of the specified identity.
 	GetPrivateKey(id string) (*ecdsa.PrivateKey, error)
