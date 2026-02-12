@@ -46,6 +46,15 @@ pipeline {
   }
 
   stages {
+    stage('Checkout') {
+      steps {
+        checkout([
+          $class: 'GitSCM',
+          branches: [[name: params.GIT_REF]],
+          userRemoteConfigs: scm.userRemoteConfigs
+        ])
+      }
+    }
     stage('Build') {
       steps { script {
         env.IMAGE_TAG = params.IMAGE_TAG ?: env.GIT_COMMIT.take(8)

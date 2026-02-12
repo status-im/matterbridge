@@ -140,6 +140,7 @@ type Protocol struct {
 	NicksPerRow            int        // mattermost, slack
 	NoHomeServerSuffix     bool       // matrix
 	NodeConfigFile         string     // status
+	Number                 string     // signal
 	NoSendJoinPart         bool       // all protocols
 	NoTLS                  bool       // mattermost, xmpp
 	Password               string     // IRC,mattermost,XMPP,matrix
@@ -156,6 +157,7 @@ type Protocol struct {
 	RemoteNickFormat       string     // all protocols
 	RunCommands            []string   // IRC
 	Server                 string     // IRC,mattermost,XMPP,discord,matrix
+	SignalAPIURL           string     // signal
 	SessionFile            string     // msteams,whatsapp
 	ShowJoinPart           bool       // all protocols
 	ShowTopicChange        bool       // slack
@@ -230,6 +232,7 @@ type BridgeValues struct {
 	Slack              map[string]Protocol
 	SlackLegacy        map[string]Protocol
 	Status             map[string]Protocol
+	Signal             map[string]Protocol
 	Steam              map[string]Protocol
 	Gitter             map[string]Protocol
 	XMPP               map[string]Protocol
