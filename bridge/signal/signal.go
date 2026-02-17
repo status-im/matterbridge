@@ -92,10 +92,16 @@ type signalSendRequest struct {
 	QuoteTimestamp    *int64   `json:"quote_timestamp,omitempty"`
 	QuoteAuthor       string   `json:"quote_author,omitempty"`
 	QuoteMessage      string   `json:"quote_message,omitempty"`
+	EditTimestamp     *int64   `json:"edit_timestamp,omitempty"`
 }
 
 type signalSendResponse struct {
 	Timestamp string `json:"timestamp"`
+}
+
+type signalRemoteDeleteRequest struct {
+	Recipient string `json:"recipient"`
+	Timestamp int64  `json:"timestamp"`
 }
 
 type signalGroup struct {
@@ -171,8 +177,9 @@ func (b *Bsignal) JoinChannel(channel config.ChannelInfo) error {
 }
 
 func (b *Bsignal) Send(msg config.Message) (string, error) {
+	// Handle delete from other bridges
 	if msg.Event == config.EventMsgDelete {
-		return "", nil
+		return b.handleSendDelete(msg)
 	}
 
 	// Prepend username to message text since Signal has no webhook/impersonation
@@ -187,6 +194,14 @@ func (b *Bsignal) Send(msg config.Message) (string, error) {
 		Message:    text,
 		Number:     b.number,
 		Recipients: []string{"group." + msg.Channel},
+	}
+
+	// Handle edit from other bridges — msg.ID is set when gateway finds existing message in cache
+	if msg.ID != "" {
+		if ts, err := strconv.ParseInt(msg.ID, 10, 64); err == nil {
+			req.EditTimestamp = &ts
+			b.Log.Debugf("Editing Signal message with timestamp %d", ts)
+		}
 	}
 
 	if msg.ParentID != "" {
@@ -244,6 +259,54 @@ func (b *Bsignal) Send(msg config.Message) (string, error) {
 	var sendResp signalSendResponse
 	if err := json.Unmarshal(respBody, &sendResp); err == nil && sendResp.Timestamp != "" {
 		return sendResp.Timestamp, nil
+	}
+
+	return "", nil
+}
+
+func (b *Bsignal) handleSendDelete(msg config.Message) (string, error) {
+	if msg.ID == "" {
+		b.Log.Debug("Ignoring delete event with empty message ID")
+		return "", nil
+	}
+
+	ts, err := strconv.ParseInt(msg.ID, 10, 64)
+	if err != nil {
+		b.Log.Debugf("Ignoring delete event with non-numeric ID: %s", msg.ID)
+		return "", nil
+	}
+
+	b.Log.Debugf("=> Deleting Signal message with timestamp %d in group %s", ts, msg.Channel)
+
+	delReq := signalRemoteDeleteRequest{
+		Recipient: "group." + msg.Channel,
+		Timestamp: ts,
+	}
+
+	data, err := json.Marshal(delReq)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal delete request: %w", err)
+	}
+
+	req, err := http.NewRequest(
+		http.MethodDelete,
+		fmt.Sprintf("%s/v1/remote-delete/%s", b.apiURL, b.number),
+		bytes.NewBuffer(data),
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to create delete request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := b.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to send delete request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return "", fmt.Errorf("signal-cli delete returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	return "", nil
