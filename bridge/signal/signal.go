@@ -40,6 +40,7 @@ type signalEnvelope struct {
 	SourceName  string             `json:"sourceName"`
 	Timestamp   int64              `json:"timestamp"`
 	DataMessage *signalDataMessage `json:"dataMessage"`
+	EditMessage *signalEditMessage `json:"editMessage"`
 }
 
 type signalDataMessage struct {
@@ -49,6 +50,11 @@ type signalDataMessage struct {
 	Attachments  []signalAttachment  `json:"attachments"`
 	Quote        *signalQuote        `json:"quote"`
 	RemoteDelete *signalRemoteDelete `json:"remoteDelete"`
+}
+
+type signalEditMessage struct {
+	TargetSentTimestamp int64              `json:"targetSentTimestamp"`
+	DataMessage         signalDataMessage  `json:"dataMessage"`
 }
 
 type signalGroupInfo struct {
@@ -290,16 +296,22 @@ func (b *Bsignal) receiveMessages() {
 }
 
 func (b *Bsignal) handleMessage(msg signalMessage) {
+	if msg.Envelope.Source == b.number {
+		return
+	}
+
+	// Handle edit message
+	if msg.Envelope.EditMessage != nil {
+		b.handleEditMessage(msg)
+		return
+	}
+
 	dm := msg.Envelope.DataMessage
 	if dm == nil {
 		return
 	}
 
 	if dm.GroupInfo == nil {
-		return
-	}
-
-	if msg.Envelope.Source == b.number {
 		return
 	}
 
@@ -371,6 +383,41 @@ func (b *Bsignal) handleMessage(msg signalMessage) {
 	}
 
 	b.Remote <- rmsg
+}
+
+func (b *Bsignal) handleEditMessage(msg signalMessage) {
+	em := msg.Envelope.EditMessage
+	dm := &em.DataMessage
+
+	if dm.GroupInfo == nil {
+		return
+	}
+
+	channel, ok := b.groupMap[dm.GroupInfo.GroupID]
+	if !ok {
+		b.Log.Warnf("Unknown group internal_id: %s", dm.GroupInfo.GroupID)
+		return
+	}
+
+	if dm.Message == "" {
+		return
+	}
+
+	username := msg.Envelope.SourceName
+	if username == "" {
+		username = msg.Envelope.Source
+	}
+
+	// Use targetSentTimestamp as ID so gateway maps it to the original Discord message
+	b.Remote <- config.Message{
+		Username:  username,
+		Text:      dm.Message,
+		Channel:   channel,
+		Account:   b.Account,
+		Protocol:  "signal",
+		ID:        strconv.FormatInt(em.TargetSentTimestamp, 10),
+		Timestamp: time.UnixMilli(dm.Timestamp),
+	}
 }
 
 func (b *Bsignal) downloadAttachment(id string) (*[]byte, error) {
