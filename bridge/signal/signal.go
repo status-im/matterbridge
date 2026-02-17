@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -16,6 +17,8 @@ import (
 	"github.com/42wim/matterbridge/bridge/config"
 	"github.com/gorilla/websocket"
 )
+
+const maxAttachmentSize = 20 * 1024 * 1024 // 20MB
 
 type Bsignal struct {
 	*bridge.Config
@@ -53,8 +56,8 @@ type signalDataMessage struct {
 }
 
 type signalEditMessage struct {
-	TargetSentTimestamp int64              `json:"targetSentTimestamp"`
-	DataMessage         signalDataMessage  `json:"dataMessage"`
+	TargetSentTimestamp int64             `json:"targetSentTimestamp"`
+	DataMessage         signalDataMessage `json:"dataMessage"`
 }
 
 type signalGroupInfo struct {
@@ -120,7 +123,6 @@ func (b *Bsignal) Connect() error {
 		return fmt.Errorf("Number not configured")
 	}
 
-	// Derive WebSocket URL from HTTP URL
 	b.wsURL = strings.Replace(b.apiURL, "http://", "ws://", 1)
 	b.wsURL = strings.Replace(b.wsURL, "https://", "wss://", 1)
 
@@ -136,7 +138,6 @@ func (b *Bsignal) Connect() error {
 		return fmt.Errorf("signal-cli API returned status %d", resp.StatusCode)
 	}
 
-	// Build group ID mapping: receive returns internal_id, config and send use id
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("failed to read groups response: %w", err)
@@ -174,22 +175,26 @@ func (b *Bsignal) Send(msg config.Message) (string, error) {
 		return "", nil
 	}
 
-	b.Log.Debugf("=> Sending message to Signal group %s: %s", msg.Channel, msg.Text)
+	// Prepend username to message text since Signal has no webhook/impersonation
+	text := msg.Text
+	if msg.Username != "" {
+		text = msg.Username + msg.Text
+	}
+
+	b.Log.Debugf("=> Sending message to Signal group %s: %s", msg.Channel, text)
 
 	req := signalSendRequest{
-		Message:    msg.Text,
+		Message:    text,
 		Number:     b.number,
 		Recipients: []string{"group." + msg.Channel},
 	}
 
-	// Handle reply/quote from other bridges
 	if msg.ParentID != "" {
 		if ts, err := strconv.ParseInt(msg.ParentID, 10, 64); err == nil {
 			req.QuoteTimestamp = &ts
 		}
 	}
 
-	// Handle attachments from other bridges (e.g. Discord CDN URLs)
 	if files, ok := msg.Extra["file"]; ok {
 		for _, f := range files {
 			fi, ok := f.(config.FileInfo)
@@ -205,12 +210,12 @@ func (b *Bsignal) Send(msg config.Message) (string, error) {
 					b.Log.Errorf("Failed to download attachment from %s: %s", fi.URL, err)
 					continue
 				}
-				data, _ = io.ReadAll(resp.Body)
+				data, _ = io.ReadAll(io.LimitReader(resp.Body, maxAttachmentSize))
 				resp.Body.Close()
 			}
 			if len(data) > 0 {
-				mime := mimeFromFilename(fi.Name)
-				b64 := fmt.Sprintf("data:%s;base64,%s", mime, base64.StdEncoding.EncodeToString(data))
+				mt := mimeFromFilename(fi.Name)
+				b64 := fmt.Sprintf("data:%s;base64,%s", mt, base64.StdEncoding.EncodeToString(data))
 				req.Base64Attachments = append(req.Base64Attachments, b64)
 			}
 		}
@@ -236,7 +241,6 @@ func (b *Bsignal) Send(msg config.Message) (string, error) {
 		return "", fmt.Errorf("signal-cli API returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	// Return signal timestamp as message ID for cross-protocol tracking
 	var sendResp signalSendResponse
 	if err := json.Unmarshal(respBody, &sendResp); err == nil && sendResp.Timestamp != "" {
 		return sendResp.Timestamp, nil
@@ -261,7 +265,7 @@ func (b *Bsignal) receiveLoop() {
 
 func (b *Bsignal) receiveMessages() {
 	wsURL := fmt.Sprintf("%s/v1/receive/%s", b.wsURL, b.number)
-	b.Log.Infof("Opening WebSocket connection to %s", wsURL)
+	b.Log.Debugf("Opening WebSocket connection to %s", wsURL)
 
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
@@ -300,7 +304,6 @@ func (b *Bsignal) handleMessage(msg signalMessage) {
 		return
 	}
 
-	// Handle edit message
 	if msg.Envelope.EditMessage != nil {
 		b.handleEditMessage(msg)
 		return
@@ -321,7 +324,6 @@ func (b *Bsignal) handleMessage(msg signalMessage) {
 		return
 	}
 
-	// Handle remote delete
 	if dm.RemoteDelete != nil {
 		b.Remote <- config.Message{
 			Event:    config.EventMsgDelete,
@@ -333,7 +335,6 @@ func (b *Bsignal) handleMessage(msg signalMessage) {
 		return
 	}
 
-	// Skip messages with no text and no attachments
 	if dm.Message == "" && len(dm.Attachments) == 0 {
 		return
 	}
@@ -353,12 +354,10 @@ func (b *Bsignal) handleMessage(msg signalMessage) {
 		Timestamp: time.UnixMilli(dm.Timestamp),
 	}
 
-	// Handle quote/reply
 	if dm.Quote != nil {
 		rmsg.ParentID = strconv.FormatInt(dm.Quote.ID, 10)
 	}
 
-	// Handle attachments
 	for _, att := range dm.Attachments {
 		data, err := b.downloadAttachment(att.ID)
 		if err != nil {
@@ -377,7 +376,6 @@ func (b *Bsignal) handleMessage(msg signalMessage) {
 		rmsg.Extra["file"] = append(rmsg.Extra["file"], fi)
 	}
 
-	// When attachments carry the caption, clear text to avoid duplication
 	if len(dm.Attachments) > 0 && dm.Message != "" {
 		rmsg.Text = ""
 	}
@@ -408,7 +406,6 @@ func (b *Bsignal) handleEditMessage(msg signalMessage) {
 		username = msg.Envelope.Source
 	}
 
-	// Use targetSentTimestamp as ID so gateway maps it to the original Discord message
 	b.Remote <- config.Message{
 		Username:  username,
 		Text:      dm.Message,
@@ -431,7 +428,7 @@ func (b *Bsignal) downloadAttachment(id string) (*[]byte, error) {
 		return nil, fmt.Errorf("attachment endpoint returned %d", resp.StatusCode)
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxAttachmentSize))
 	if err != nil {
 		return nil, fmt.Errorf("read failed: %w", err)
 	}
@@ -439,17 +436,9 @@ func (b *Bsignal) downloadAttachment(id string) (*[]byte, error) {
 }
 
 func mimeFromFilename(name string) string {
-	ext := strings.ToLower(filepath.Ext(name))
-	types := map[string]string{
-		".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-		".png": "image/png", ".gif": "image/gif",
-		".webp": "image/webp", ".svg": "image/svg+xml",
-		".mp4": "video/mp4", ".webm": "video/webm",
-		".mp3": "audio/mpeg", ".ogg": "audio/ogg",
-		".pdf": "application/pdf",
+	t := mime.TypeByExtension(filepath.Ext(name))
+	if t == "" {
+		return "application/octet-stream"
 	}
-	if mime, ok := types[ext]; ok {
-		return mime
-	}
-	return "application/octet-stream"
+	return t
 }
