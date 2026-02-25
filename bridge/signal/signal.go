@@ -113,7 +113,7 @@ func New(cfg *bridge.Config) bridge.Bridger {
 	return &Bsignal{
 		Config:    cfg,
 		fetchDone: make(chan bool),
-		client:    &http.Client{Timeout: 60 * time.Second},
+		client:    &http.Client{Timeout: 10 * time.Second},
 		groupMap:  make(map[string]string),
 	}
 }
@@ -210,50 +210,22 @@ func (b *Bsignal) Send(msg config.Message) (string, error) {
 		}
 	}
 
+	// Handle attachments from other bridges
 	if files, ok := msg.Extra["file"]; ok {
 		for _, f := range files {
 			fi, ok := f.(config.FileInfo)
 			if !ok {
 				continue
 			}
-			var data []byte
-			if fi.Data != nil {
-				data = *fi.Data
-			} else if fi.URL != "" {
-				resp, err := b.client.Get(fi.URL)
-				if err != nil {
-					b.Log.Errorf("Failed to download attachment from %s: %s", fi.URL, err)
-					continue
-				}
-				data, _ = io.ReadAll(io.LimitReader(resp.Body, maxAttachmentSize))
-				resp.Body.Close()
-			}
-			if len(data) > 0 {
-				mt := mimeFromFilename(fi.Name)
-				b64 := fmt.Sprintf("data:%s;base64,%s", mt, base64.StdEncoding.EncodeToString(data))
-				req.Base64Attachments = append(req.Base64Attachments, b64)
+			if att := b.prepareAttachment(fi); att != "" {
+				req.Base64Attachments = append(req.Base64Attachments, att)
 			}
 		}
 	}
 
-	data, err := json.Marshal(req)
+	respBody, err := b.apiRequest(http.MethodPost, fmt.Sprintf("%s/v2/send", b.apiURL), req)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal message: %w", err)
-	}
-
-	resp, err := b.client.Post(
-		fmt.Sprintf("%s/v2/send", b.apiURL),
-		"application/json",
-		bytes.NewBuffer(data),
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to send message: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return "", fmt.Errorf("signal-cli API returned %d: %s", resp.StatusCode, string(respBody))
+		return "", err
 	}
 
 	var sendResp signalSendResponse
@@ -283,33 +255,60 @@ func (b *Bsignal) handleSendDelete(msg config.Message) (string, error) {
 		Timestamp: ts,
 	}
 
-	data, err := json.Marshal(delReq)
+	_, err = b.apiRequest(http.MethodDelete, fmt.Sprintf("%s/v1/remote-delete/%s", b.apiURL, b.number), delReq)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal delete request: %w", err)
+		return "", err
 	}
 
-	req, err := http.NewRequest(
-		http.MethodDelete,
-		fmt.Sprintf("%s/v1/remote-delete/%s", b.apiURL, b.number),
-		bytes.NewBuffer(data),
-	)
+	return "", nil
+}
+
+// prepareAttachment converts a config.FileInfo into a base64-encoded data URI for signal-cli.
+func (b *Bsignal) prepareAttachment(fi config.FileInfo) string {
+	var data []byte
+	if fi.Data != nil {
+		data = *fi.Data
+	} else if fi.URL != "" {
+		resp, err := b.client.Get(fi.URL)
+		if err != nil {
+			b.Log.Errorf("Failed to download attachment from %s: %s", fi.URL, err)
+			return ""
+		}
+		data, _ = io.ReadAll(io.LimitReader(resp.Body, maxAttachmentSize))
+		resp.Body.Close()
+	}
+	if len(data) == 0 {
+		return ""
+	}
+	mt := mimeFromFilename(fi.Name)
+	return fmt.Sprintf("data:%s;base64,%s", mt, base64.StdEncoding.EncodeToString(data))
+}
+
+// apiRequest sends a JSON request to the signal-cli REST API and returns the response body.
+func (b *Bsignal) apiRequest(method, url string, payload interface{}) ([]byte, error) {
+	data, err := json.Marshal(payload)
 	if err != nil {
-		return "", fmt.Errorf("failed to create delete request: %w", err)
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequest(method, url, bytes.NewBuffer(data))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := b.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to send delete request: %w", err)
+		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return "", fmt.Errorf("signal-cli delete returned %d: %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("signal-cli API returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	return "", nil
+	return respBody, nil
 }
 
 // WebSocket receive loop with automatic reconnection
