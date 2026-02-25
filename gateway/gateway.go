@@ -280,6 +280,9 @@ func (gw *Gateway) ignoreTextEmpty(msg *config.Message) bool {
 	if msg.Event == config.EventUserTyping {
 		return false
 	}
+	if msg.Event == config.EventMsgDelete {
+		return false
+	}
 	// we have an attachment or actual bytes, do not ignore
 	if msg.Extra != nil &&
 		(msg.Extra["attachments"] != nil ||
