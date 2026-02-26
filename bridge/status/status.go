@@ -73,6 +73,7 @@ type Bstatus struct {
 	messenger  *status.Messenger
 
 	joinedCommunities []string
+	waku              *wakuv2.Waku
 }
 
 func New(cfg *bridge.Config) bridge.Bridger {
@@ -404,12 +405,7 @@ func (b *Bstatus) Connect() error {
 	if err != nil {
 		return errors.Wrap(err, "failed to start waku")
 	}
-	defer func() {
-		err := waku.Stop()
-		if err != nil {
-			logger.Error("failed to stop waku", zap.Error(err))
-		}
-	}()
+	b.waku = waku
 
 	encryptionProtocol := encryption.New(
 		appDB,
@@ -516,6 +512,11 @@ func (b *Bstatus) Disconnect() error {
 	b.stopMessagesLoop()
 	if err := b.messenger.Shutdown(); err != nil {
 		return errors.Wrap(err, "Failed to stop Status messenger")
+	}
+	if b.waku != nil {
+		if err := b.waku.Stop(); err != nil {
+			b.Log.WithError(err).Error("Failed to stop waku")
+		}
 	}
 	if err := b.statusNode.Stop(); err != nil {
 		return errors.Wrap(err, "Failed to stop Status node")
