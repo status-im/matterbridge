@@ -1,0 +1,469 @@
+package node
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"reflect"
+	"time"
+
+	"go.uber.org/zap"
+
+	"github.com/status-im/status-go/pkg/pubsub"
+	"github.com/status-im/status-go/server"
+	"github.com/status-im/status-go/transactions"
+
+	"github.com/ethereum/go-ethereum/event"
+	gethrpc "github.com/ethereum/go-ethereum/rpc"
+
+	"github.com/status-im/status-go/appmetrics"
+	"github.com/status-im/status-go/common"
+	"github.com/status-im/status-go/multiaccounts/accounts"
+	"github.com/status-im/status-go/params"
+	accountssvc "github.com/status-im/status-go/services/accounts"
+	appgeneral "github.com/status-im/status-go/services/app-general"
+	appmetricsservice "github.com/status-im/status-go/services/appmetrics"
+	"github.com/status-im/status-go/services/browsers"
+	"github.com/status-im/status-go/services/chat"
+	"github.com/status-im/status-go/services/communitytokens"
+	"github.com/status-im/status-go/services/connector"
+	"github.com/status-im/status-go/services/ens"
+	"github.com/status-im/status-go/services/gif"
+	localnotifications "github.com/status-im/status-go/services/local-notifications"
+	"github.com/status-im/status-go/services/mailservers"
+	"github.com/status-im/status-go/services/permissions"
+	"github.com/status-im/status-go/services/personal"
+	"github.com/status-im/status-go/services/rpcstats"
+	"github.com/status-im/status-go/services/status"
+	"github.com/status-im/status-go/services/stickers"
+	"github.com/status-im/status-go/services/updates"
+	"github.com/status-im/status-go/services/wakuv2ext"
+	"github.com/status-im/status-go/services/wallet"
+	"github.com/status-im/status-go/services/wallet/thirdparty"
+	"github.com/status-im/status-go/timesource"
+)
+
+var (
+	// ErrWakuClearIdentitiesFailure clearing whisper identities has failed.
+	ErrWakuClearIdentitiesFailure = errors.New("failed to clear waku identities")
+	// ErrRPCClientUnavailable is returned if an RPC client can't be retrieved.
+	// This is a normal situation when a node is stopped.
+	ErrRPCClientUnavailable = errors.New("JSON-RPC client is unavailable")
+)
+
+func (b *StatusNode) initServices(config *params.NodeConfig, mediaServer *server.MediaServer) error {
+	accDB, err := accounts.NewDB(b.appDB)
+	if err != nil {
+		return err
+	}
+
+	services := []common.StatusService{}
+	services = append(services, b.rpcStatsService())
+	services = append(services, b.appmetricsService())
+	services = append(services, b.appgeneralService())
+	services = append(services, b.personalService())
+	services = append(services, b.statusPublicService())
+	services = append(services, b.pendingTrackerService(&b.walletFeed))
+	services = append(services, b.ensService(b.timeSourceNow()))
+	services = append(services, b.CommunityTokensService())
+	services = append(services, b.stickersService(accDB))
+	services = append(services, b.updatesService())
+	services = appendIf(b.appDB != nil && b.multiaccountsDB != nil, services, b.accountsService(accDB, mediaServer))
+	services = appendIf(config.BrowsersConfig.Enabled, services, b.browsersService())
+	services = appendIf(config.PermissionsConfig.Enabled, services, b.permissionsService())
+	services = appendIf(config.MailserversConfig.Enabled, services, b.mailserversService())
+	services = appendIf(config.ConnectorConfig.Enabled, services, b.connectorService())
+	services = append(services, b.gifService(accDB))
+	services = append(services, b.ChatService(accDB))
+
+	// Wallet Service is used by wakuExtSrvc/wakuV2ExtSrvc
+	// Keep this initialization before the other two
+	if config.WalletConfig.Enabled {
+		walletService := b.walletService(accDB, b.appDB, b.accountsPublisher, &b.walletFeed, config.WalletConfig.StatusProxyStageName)
+		services = append(services, walletService)
+	}
+
+	// CollectiblesManager needs the WakuExt service to get metadata for
+	// Community collectibles.
+	// Messenger needs the CollectiblesManager to get the list of collectibles owned
+	// by a certain account and check community entry permissions.
+	// We handle circular dependency between the two by delaying ininitalization of the CommunityCollectibleInfoProvider
+	// in the CollectiblesManager.
+	if config.WakuV2Config.Enabled {
+		wakuext, err := b.wakuV2ExtService(config)
+		if err != nil {
+			return err
+		}
+
+		b.wakuV2ExtSrvc = wakuext
+
+		services = append(services, wakuext)
+
+		b.SetWalletCommunityInfoProvider(wakuext)
+	}
+
+	// We ignore for now local notifications flag as users who are upgrading have no mean to enable it
+	lns, err := b.localNotificationsService(config.NetworkID)
+	if err != nil {
+		return err
+	}
+	services = append(services, lns)
+
+	for i := range services {
+		b.RegisterLifecycle(services[i])
+	}
+
+	return nil
+}
+
+func (b *StatusNode) RegisterLifecycle(s common.StatusService) {
+	b.addPublicMethods(s.APIs())
+	b.gethNode.RegisterAPIs(s.APIs())
+	b.gethNode.RegisterLifecycle(s)
+}
+
+// Add through reflection a list of public methods so we can check when the
+// user makes a call if they are allowed
+func (b *StatusNode) addPublicMethods(apis []gethrpc.API) {
+	for _, api := range apis {
+		if api.Public {
+			addSuitableCallbacks(reflect.ValueOf(api.Service), api.Namespace, b.publicMethods)
+		}
+	}
+}
+
+func (b *StatusNode) wakuV2ExtService(config *params.NodeConfig) (*wakuv2ext.Service, error) {
+	if b.gethNode == nil {
+		return nil, errors.New("geth node not initialized")
+	}
+	if b.wakuV2ExtSrvc == nil {
+		b.wakuV2ExtSrvc = wakuv2ext.New(*config, b.rpcClient)
+	}
+
+	return b.wakuV2ExtSrvc, nil
+}
+
+func (b *StatusNode) statusPublicService() *status.Service {
+	if b.statusPublicSrvc == nil {
+		b.statusPublicSrvc = status.New()
+	}
+	return b.statusPublicSrvc
+}
+
+func (b *StatusNode) StatusPublicService() *status.Service {
+	return b.statusPublicSrvc
+}
+
+func (b *StatusNode) AccountService() *accountssvc.Service {
+	return b.accountsSrvc
+}
+
+func (b *StatusNode) BrowserService() *browsers.Service {
+	return b.browsersSrvc
+}
+
+func (b *StatusNode) EnsService() *ens.Service {
+	return b.ensSrvc
+}
+
+func (b *StatusNode) WakuV2ExtService() *wakuv2ext.Service {
+	return b.wakuV2ExtSrvc
+}
+
+func (b *StatusNode) connectorService() *connector.Service {
+	if b.connectorSrvc == nil {
+		b.connectorSrvc = connector.NewService(b.walletDB, b.rpcClient, b.rpcClient.GetNetworkManager())
+	}
+	return b.connectorSrvc
+}
+
+func (b *StatusNode) rpcStatsService() *rpcstats.Service {
+	if b.rpcStatsSrvc == nil {
+		b.rpcStatsSrvc = rpcstats.New()
+	}
+
+	return b.rpcStatsSrvc
+}
+
+func (b *StatusNode) accountsService(accDB *accounts.Database, mediaServer *server.MediaServer) *accountssvc.Service {
+	if b.accountsSrvc == nil {
+		b.accountsSrvc = accountssvc.NewService(
+			accDB,
+			b.multiaccountsDB,
+			b.gethAccountsManager,
+			b.config,
+			b.accountsPublisher,
+			mediaServer,
+		)
+	}
+
+	return b.accountsSrvc
+}
+
+func (b *StatusNode) browsersService() *browsers.Service {
+	if b.browsersSrvc == nil {
+		b.browsersSrvc = browsers.NewService(browsers.NewDB(b.appDB))
+	}
+	return b.browsersSrvc
+}
+
+func (b *StatusNode) ensService(timesource func() time.Time) *ens.Service {
+	if b.ensSrvc == nil {
+		b.ensSrvc = ens.NewService(b.rpcClient, b.gethAccountsManager, b.pendingTracker, b.config, b.appDB, timesource)
+	}
+	return b.ensSrvc
+}
+
+func (b *StatusNode) pendingTrackerService(walletFeed *event.Feed) *transactions.PendingTxTracker {
+	if b.pendingTracker == nil {
+		b.pendingTracker = transactions.NewPendingTxTracker(b.walletDB, b.rpcClient, walletFeed, transactions.PendingCheckInterval)
+		if b.transactor != nil {
+			b.transactor.SetPendingTracker(b.pendingTracker)
+		}
+	}
+	return b.pendingTracker
+}
+
+func (b *StatusNode) CommunityTokensService() *communitytokens.Service {
+	if b.communityTokensSrvc == nil {
+		b.communityTokensSrvc = communitytokens.NewService(b.rpcClient, b.gethAccountsManager, b.config, b.appDB, &b.walletFeed, b.transactor)
+	}
+	return b.communityTokensSrvc
+}
+
+func (b *StatusNode) stickersService(accountDB *accounts.Database) *stickers.Service {
+	if b.stickersSrvc == nil {
+		b.stickersSrvc = stickers.NewService(accountDB, b.rpcClient, b.gethAccountsManager, b.config, b.downloader, b.httpServer, b.pendingTracker)
+	}
+	return b.stickersSrvc
+}
+
+func (b *StatusNode) updatesService() *updates.Service {
+	if b.updatesSrvc == nil {
+		b.updatesSrvc = updates.NewService(b.ensService(b.timeSourceNow()))
+	}
+
+	return b.updatesSrvc
+}
+
+func (b *StatusNode) gifService(accountsDB *accounts.Database) *gif.Service {
+	if b.gifSrvc == nil {
+		b.gifSrvc = gif.NewService(accountsDB)
+	}
+	return b.gifSrvc
+}
+
+func (b *StatusNode) ChatService(accountsDB *accounts.Database) *chat.Service {
+	if b.chatSrvc == nil {
+		b.chatSrvc = chat.NewService(accountsDB)
+	}
+	return b.chatSrvc
+}
+
+func (b *StatusNode) permissionsService() *permissions.Service {
+	if b.permissionsSrvc == nil {
+		b.permissionsSrvc = permissions.NewService(permissions.NewDB(b.appDB))
+	}
+	return b.permissionsSrvc
+}
+
+func (b *StatusNode) mailserversService() *mailservers.Service {
+	if b.mailserversSrvc == nil {
+
+		b.mailserversSrvc = mailservers.NewService(mailservers.NewDB(b.appDB))
+	}
+	return b.mailserversSrvc
+}
+
+func (b *StatusNode) appmetricsService() common.StatusService {
+	if b.appMetricsSrvc == nil {
+		b.appMetricsSrvc = appmetricsservice.NewService(appmetrics.NewDB(b.appDB))
+	}
+	return b.appMetricsSrvc
+}
+
+func (b *StatusNode) appgeneralService() *appgeneral.Service {
+	if b.appGeneralSrvc == nil {
+		b.appGeneralSrvc = appgeneral.New()
+	}
+	return b.appGeneralSrvc
+}
+
+func (b *StatusNode) WalletService() *wallet.Service {
+	return b.walletSrvc
+}
+
+func (b *StatusNode) AccountsPublisher() *pubsub.Publisher {
+	return b.accountsPublisher
+}
+
+func (b *StatusNode) SetWalletCommunityInfoProvider(provider thirdparty.CommunityInfoProvider) {
+	if b.walletSrvc != nil {
+		b.walletSrvc.SetWalletCommunityInfoProvider(provider)
+	}
+}
+
+func (b *StatusNode) walletService(accountsDB *accounts.Database, appDB *sql.DB, accountsPublisher *pubsub.Publisher, walletFeed *event.Feed, statusProxyStageName string) *wallet.Service {
+	if b.walletSrvc == nil {
+		b.walletSrvc = wallet.NewService(
+			b.walletDB, accountsDB, appDB, b.rpcClient, accountsPublisher, b.gethAccountsManager, b.transactor, b.config,
+			b.ensService(b.timeSourceNow()).API().EnsResolver(),
+			b.pendingTracker,
+			walletFeed,
+			b.httpServer,
+			statusProxyStageName,
+		)
+	}
+	return b.walletSrvc
+}
+
+func (b *StatusNode) localNotificationsService(network uint64) (*localnotifications.Service, error) {
+	var err error
+	if b.localNotificationsSrvc == nil {
+		b.localNotificationsSrvc, err = localnotifications.NewService(b.appDB)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return b.localNotificationsSrvc, nil
+}
+
+func appendIf(condition bool, services []common.StatusService, service common.StatusService) []common.StatusService {
+	if !condition {
+		return services
+	}
+	return append(services, service)
+}
+
+func (b *StatusNode) PendingTracker() *transactions.PendingTxTracker {
+	return b.pendingTracker
+}
+
+func (b *StatusNode) StopLocalNotifications() error {
+	if b.localNotificationsSrvc == nil {
+		return nil
+	}
+
+	if b.localNotificationsSrvc.IsStarted() {
+		err := b.localNotificationsSrvc.Stop()
+		if err != nil {
+			b.logger.Error("LocalNotifications service stop failed on StopLocalNotifications", zap.Error(err))
+			return nil
+		}
+	}
+
+	return nil
+}
+
+func (b *StatusNode) StartLocalNotifications() error {
+	if b.localNotificationsSrvc == nil {
+		return nil
+	}
+
+	if b.walletSrvc == nil {
+		return nil
+	}
+
+	if !b.localNotificationsSrvc.IsStarted() {
+		err := b.localNotificationsSrvc.Start()
+
+		if err != nil {
+			b.logger.Error("LocalNotifications service start failed on StartLocalNotifications", zap.Error(err))
+			return nil
+		}
+	}
+
+	return nil
+}
+
+func (b *StatusNode) personalService() *personal.Service {
+	if b.personalSrvc == nil {
+		b.personalSrvc = personal.New()
+	}
+	return b.personalSrvc
+}
+
+func (b *StatusNode) TimeSource() *timesource.NTPTimeSource {
+
+	if b.timeSourceSrvc == nil {
+		b.timeSourceSrvc = timesource.Default()
+		go func() {
+			defer common.LogOnPanic()
+			err := b.timeSourceSrvc.Start(context.Background())
+			if err != nil {
+				panic("could not obtain timesource: " + err.Error())
+			}
+		}()
+	}
+	return b.timeSourceSrvc
+}
+
+func (b *StatusNode) timeSourceNow() func() time.Time {
+	return b.TimeSource().Now
+}
+
+func (b *StatusNode) Cleanup() error {
+	if b.Config() != nil && b.Config().WalletConfig.Enabled {
+		if b.walletSrvc != nil {
+			if b.walletSrvc.IsStarted() {
+				err := b.walletSrvc.Stop()
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	if b.ensSrvc != nil {
+		err := b.ensSrvc.Stop()
+		if err != nil {
+			return err
+		}
+	}
+
+	if b.pendingTracker != nil {
+		err := b.pendingTracker.Stop()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+type RPCCall struct {
+	Method string `json:"method"`
+}
+
+func (b *StatusNode) CallPrivateRPC(inputJSON string) (string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.rpcClient == nil {
+		return "", ErrRPCClientUnavailable
+	}
+
+	return b.rpcClient.CallRaw(inputJSON), nil
+}
+
+// CallRPC calls public methods on the node, we register public methods
+// in a map and check if they can be called in this function
+func (b *StatusNode) CallRPC(inputJSON string) (string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.rpcClient == nil {
+		return "", ErrRPCClientUnavailable
+	}
+
+	rpcCall := &RPCCall{}
+	err := json.Unmarshal([]byte(inputJSON), rpcCall)
+	if err != nil {
+		return "", err
+	}
+
+	if rpcCall.Method == "" || !b.publicMethods[rpcCall.Method] {
+		return ErrRPCMethodUnavailable, nil
+	}
+
+	return b.rpcClient.CallRaw(inputJSON), nil
+}
