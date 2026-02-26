@@ -412,6 +412,9 @@ func (s *Service) DeploymentSignatureDigest(chainID uint64, addressFrom string, 
 }
 
 func (s *Service) ProcessCommunityTokenAction(message *protobuf.CommunityTokenAction) error {
+	if s.Messenger == nil {
+		return nil
+	}
 	communityToken, err := s.Messenger.GetCommunityTokenByChainAndAddress(int(message.ChainId), message.ContractAddress)
 	if err != nil {
 		return err

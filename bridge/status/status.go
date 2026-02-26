@@ -161,17 +161,26 @@ func (b *Bstatus) fetchMessagesLoop() {
 	for {
 		select {
 		case <-ticker.C:
-			mResp, err := b.messenger.RetrieveAll()
-			if err != nil {
-				b.Log.WithError(err).Error("Failed to retrieve messages")
-				continue
-			}
-			for _, msg := range mResp.Messages() {
-				b.propagateMessage(msg)
-			}
+			b.fetchMessages()
 		case <-b.fetchDone:
 			return
 		}
+	}
+}
+
+func (b *Bstatus) fetchMessages() {
+	defer func() {
+		if r := recover(); r != nil {
+			b.Log.Errorf("Recovered from panic in RetrieveAll: %v", r)
+		}
+	}()
+	mResp, err := b.messenger.RetrieveAll()
+	if err != nil {
+		b.Log.WithError(err).Error("Failed to retrieve messages")
+		return
+	}
+	for _, msg := range mResp.Messages() {
+		b.propagateMessage(msg)
 	}
 }
 
