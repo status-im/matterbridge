@@ -48,6 +48,7 @@ import (
 	"github.com/status-im/status-go/protocol/requests"
 	"github.com/status-im/status-go/services/mailservers"
 	statussentry "github.com/status-im/status-go/pkg/sentry"
+	protosqlite "github.com/status-im/status-go/protocol/sqlite"
 
 	"github.com/status-im/status-go/common/dbsetup"
 	"github.com/status-im/status-go/walletdatabase"
@@ -415,6 +416,10 @@ func (b *Bstatus) Connect() error {
 		return errors.Wrap(err, "failed to start waku")
 	}
 	b.waku = waku
+
+	if err := protosqlite.Migrate(appDB); err != nil {
+		return errors.Wrap(err, "Failed to run protocol migrations")
+	}
 
 	encryptionProtocol := encryption.New(
 		appDB,

@@ -426,8 +426,17 @@ func (b *Bsignal) handleMessage(msg signalMessage) {
 			b.Log.Errorf("Failed to download attachment %s: %s", att.ID, err)
 			continue
 		}
+		filename := att.Filename
+		if filename == "" {
+			exts, _ := mime.ExtensionsByType(att.ContentType)
+			ext := ".bin"
+			if len(exts) > 0 {
+				ext = exts[0]
+			}
+			filename = att.ID + ext
+		}
 		fi := config.FileInfo{
-			Name:    att.Filename,
+			Name:    filename,
 			Data:    data,
 			Size:    att.Size,
 			Comment: dm.Message,
