@@ -1,0 +1,651 @@
+package nodecfg
+
+import (
+	"context"
+	"database/sql"
+	"strings"
+
+	"github.com/ethereum/go-ethereum/common/hexutil"
+
+	"github.com/status-im/status-go/eth-node/crypto"
+	"github.com/status-im/status-go/params"
+	"github.com/status-im/status-go/sqlite"
+)
+
+const StaticNodes = "static"
+const BootNodes = "boot"
+const TrustedMailServers = "trusted_mailserver"
+const PushNotificationsServers = "pushnotification"
+const RendezvousNodes = "rendezvous"
+const DiscV5BootstrapNodes = "discV5boot"
+const WakuNodes = "waku"
+
+func nodeConfigWasMigrated(tx *sql.Tx) (migrated bool, err error) {
+	row := tx.QueryRow("SELECT exists(SELECT 1 FROM node_config)")
+	switch err := row.Scan(&migrated); err {
+	case sql.ErrNoRows, nil:
+		return migrated, nil
+	default:
+		return migrated, err
+	}
+}
+
+type insertFn func(tx *sql.Tx, c *params.NodeConfig) error
+
+func insertNodeConfigBase(tx *sql.Tx, c *params.NodeConfig, includeConnector bool) error {
+	query := `
+	INSERT OR REPLACE INTO node_config (
+		network_id, data_dir, keystore_dir, node_key,
+		api_modules, enable_ntp_sync, wallet_enabled,
+		browser_enabled, permissions_enabled, mailservers_enabled`
+
+	args := []any{
+		c.NetworkID, "", "", c.NodeKey, c.APIModules, true,
+		c.WalletConfig.Enabled, c.BrowsersConfig.Enabled,
+		c.PermissionsConfig.Enabled, c.MailserversConfig.Enabled,
+	}
+
+	if includeConnector {
+		query += `, connector_enabled`
+		args = append(args, c.ConnectorConfig.Enabled)
+	}
+
+	query += `, synthetic_id) VALUES (?` + strings.Repeat(",?", len(args)) + `)`
+	args = append(args, "id")
+
+	_, err := tx.Exec(query, args...)
+	return err
+}
+
+func insertNodeConfig(tx *sql.Tx, c *params.NodeConfig) error {
+	return insertNodeConfigBase(tx, c, false)
+}
+
+func insertNodeConfigWithConnector(tx *sql.Tx, c *params.NodeConfig) error {
+	return insertNodeConfigBase(tx, c, true)
+}
+
+func insertHTTPConfig(tx *sql.Tx, c *params.NodeConfig) error {
+	if _, err := tx.Exec(`INSERT OR REPLACE INTO http_config (enabled, host, port, synthetic_id) VALUES (?, ?, ?, 'id')`, c.HTTPEnabled, c.HTTPHost, c.HTTPPort); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`DELETE FROM http_virtual_hosts WHERE synthetic_id = 'id'`); err != nil {
+		return err
+	}
+
+	for _, httpVirtualHost := range c.HTTPVirtualHosts {
+		if _, err := tx.Exec(`INSERT OR REPLACE INTO http_virtual_hosts (host, synthetic_id) VALUES (?, 'id')`, httpVirtualHost); err != nil {
+			return err
+		}
+	}
+
+	if _, err := tx.Exec(`DELETE FROM http_cors WHERE synthetic_id = 'id'`); err != nil {
+		return err
+	}
+
+	for _, httpCors := range c.HTTPCors {
+		if _, err := tx.Exec(`INSERT OR REPLACE INTO http_cors (cors, synthetic_id) VALUES (?, 'id')`, httpCors); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func insertLogConfigBase(tx *sql.Tx, c *params.NodeConfig, includeNamespaces bool) error {
+	query := `
+	INSERT OR REPLACE INTO log_config (
+		enabled, log_dir, log_level, max_backups, max_size,
+		file, compress_rotated, log_to_stderr`
+
+	args := []any{
+		c.LogEnabled, c.LogDir, c.LogLevel, c.LogMaxBackups, c.LogMaxSize,
+		c.LogFile, c.LogCompressRotated, c.LogToStderr,
+	}
+
+	if includeNamespaces {
+		query += `, log_namespaces`
+		args = append(args, c.LogNamespaces)
+	}
+
+	query += `, synthetic_id) VALUES (?` + strings.Repeat(",?", len(args)) + `)`
+	args = append(args, "id")
+
+	_, err := tx.Exec(query, args...)
+	return err
+}
+
+func insertLogConfigWithNamespaces(tx *sql.Tx, c *params.NodeConfig) error {
+	return insertLogConfigBase(tx, c, true)
+}
+
+func insertLogConfig(tx *sql.Tx, c *params.NodeConfig) error {
+	return insertLogConfigBase(tx, c, false)
+}
+
+func insertIPCConfig(tx *sql.Tx, c *params.NodeConfig) error {
+	_, err := tx.Exec(`INSERT OR REPLACE INTO ipc_config (enabled, file, synthetic_id) VALUES (?, ?, 'id')`, c.IPCEnabled, c.IPCFile)
+	return err
+}
+
+func insertClusterConfig(tx *sql.Tx, c *params.NodeConfig) error {
+	_, err := tx.Exec(`INSERT OR REPLACE INTO cluster_config (enabled, fleet, synthetic_id) VALUES (?, ?, 'id')`, c.ClusterConfig.Enabled, c.ClusterConfig.Fleet)
+	return err
+}
+
+func insertShhExtConfig(tx *sql.Tx, c *params.NodeConfig) error {
+	_, err := tx.Exec(`
+	INSERT OR REPLACE INTO shhext_config (
+		pfs_enabled, installation_id, mailserver_confirmations, enable_connection_manager,
+		enable_last_used_monitor, connection_target, request_delay, max_server_failures, max_message_delivery_attempts,
+		whisper_cache_dir, disable_generic_discovery_topic, send_v1_messages, data_sync_enabled, verify_transaction_url,
+		verify_ens_url, verify_ens_contract_address, verify_transaction_chain_id, anon_metrics_server_enabled,
+		anon_metrics_send_id, anon_metrics_server_postgres_uri, bandwidth_stats_enabled, synthetic_id
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'id')`,
+		c.ShhextConfig.PFSEnabled, c.ShhextConfig.InstallationID, c.ShhextConfig.MailServerConfirmations, c.ShhextConfig.EnableConnectionManager,
+		c.ShhextConfig.EnableLastUsedMonitor, c.ShhextConfig.ConnectionTarget, c.ShhextConfig.RequestsDelay, c.ShhextConfig.MaxServerFailures, c.ShhextConfig.MaxMessageDeliveryAttempts,
+		c.ShhextConfig.WhisperCacheDir, c.ShhextConfig.DisableGenericDiscoveryTopic, c.ShhextConfig.SendV1Messages, c.ShhextConfig.DataSyncEnabled, c.ShhextConfig.VerifyTransactionURL,
+		c.ShhextConfig.VerifyENSURL, c.ShhextConfig.VerifyENSContractAddress, c.ShhextConfig.VerifyTransactionChainID, c.ShhextConfig.AnonMetricsServerEnabled,
+		c.ShhextConfig.AnonMetricsSendID, c.ShhextConfig.AnonMetricsServerPostgresURI, c.ShhextConfig.BandwidthStatsEnabled)
+	if err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`DELETE FROM shhext_default_push_notification_servers WHERE synthetic_id = 'id'`); err != nil {
+		return err
+	}
+
+	for _, pushNotifServ := range c.ShhextConfig.DefaultPushNotificationsServers {
+		hexpubk := hexutil.Encode(crypto.FromECDSAPub(pushNotifServ.PublicKey))
+		_, err := tx.Exec(`INSERT OR REPLACE INTO shhext_default_push_notification_servers (public_key, synthetic_id) VALUES (?, 'id')`, hexpubk)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func insertTorrentConfig(tx *sql.Tx, c *params.NodeConfig) error {
+	_, err := tx.Exec(`
+  INSERT OR REPLACE INTO torrent_config (
+    enabled, port, data_dir, torrent_dir, synthetic_id
+  ) VALUES (?, ?, ?, ?, 'id')`,
+		c.TorrentConfig.Enabled, c.TorrentConfig.Port, c.TorrentConfig.DataDir, c.TorrentConfig.TorrentDir,
+	)
+	return err
+}
+
+func insertWakuV2ConfigPreMigration(tx *sql.Tx, c *params.NodeConfig) error {
+	_, err := tx.Exec(`
+	INSERT OR REPLACE INTO wakuv2_config (
+		enabled, host, port, light_client, full_node, discovery_limit, data_dir,
+		max_message_size, enable_confirmations, peer_exchange, enable_discv5, udp_port,  auto_update, synthetic_id
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'id')`,
+		c.WakuV2Config.Enabled, c.WakuV2Config.Host, c.WakuV2Config.Port, c.WakuV2Config.LightClient, c.WakuV2Config.FullNode, c.WakuV2Config.DiscoveryLimit, c.WakuV2Config.DataDir,
+		c.WakuV2Config.MaxMessageSize, c.WakuV2Config.EnableConfirmations, c.WakuV2Config.PeerExchange, c.WakuV2Config.EnableDiscV5, c.WakuV2Config.UDPPort, c.WakuV2Config.AutoUpdate,
+	)
+	if err != nil {
+		return err
+	}
+
+	return setWakuV2CustomNodes(tx, c.WakuV2Config.CustomNodes)
+}
+
+func setWakuV2CustomNodes(tx *sql.Tx, customNodes map[string]string) error {
+	if _, err := tx.Exec(`DELETE FROM wakuv2_custom_nodes WHERE synthetic_id = 'id'`); err != nil {
+		return err
+	}
+
+	for name, multiaddress := range customNodes {
+		// NOTE: synthetic id is redundant, name is effectively the primary key
+		_, err := tx.Exec(`INSERT OR REPLACE INTO wakuv2_custom_nodes (name, multiaddress, synthetic_id) VALUES (?, ?, 'id')`, name, multiaddress)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func insertWakuV2ConfigPostMigration(tx *sql.Tx, c *params.NodeConfig) error {
+	_, err := tx.Exec(`
+	UPDATE wakuv2_config
+	SET enable_store = ?,
+		store_capacity = ?,
+		store_seconds = ?,
+		enable_missing_message_verification = ?,
+		enable_store_confirmation_for_messages_sent = ?
+	WHERE synthetic_id = 'id'`,
+		c.WakuV2Config.EnableStore, c.WakuV2Config.StoreCapacity, c.WakuV2Config.StoreSeconds,
+		c.WakuV2Config.EnableMissingMessageVerification, c.WakuV2Config.EnableStoreConfirmationForMessagesSent,
+	)
+
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(`
+	UPDATE cluster_config
+	SET cluster_id = ?
+	WHERE synthetic_id = 'id'`,
+		c.ClusterConfig.ClusterID,
+	)
+
+	return err
+}
+
+func insertClusterConfigNodes(tx *sql.Tx, c *params.NodeConfig) error {
+	if _, err := tx.Exec(`DELETE FROM cluster_nodes WHERE synthetic_id = 'id'`); err != nil {
+		return err
+	}
+
+	nodeMap := make(map[string][]string)
+	nodeMap[StaticNodes] = c.ClusterConfig.StaticNodes
+	nodeMap[BootNodes] = c.ClusterConfig.BootNodes
+	nodeMap[TrustedMailServers] = c.ClusterConfig.TrustedMailServers
+	nodeMap[PushNotificationsServers] = c.ClusterConfig.PushNotificationsServers
+	nodeMap[DiscV5BootstrapNodes] = c.ClusterConfig.DiscV5BootstrapNodes
+	nodeMap[WakuNodes] = c.ClusterConfig.WakuNodes
+
+	for nodeType, nodes := range nodeMap {
+		for _, node := range nodes {
+			_, err := tx.Exec(`INSERT OR REPLACE INTO cluster_nodes (node, type, synthetic_id) VALUES (?, ?, 'id')`, node, nodeType)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// List of inserts to be executed when upgrading a node
+// These INSERT queries should not be modified
+func nodeConfigUpgradeInserts() []insertFn {
+	return []insertFn{
+		insertNodeConfig,
+		insertHTTPConfig,
+		insertIPCConfig,
+		insertLogConfig,
+		insertClusterConfig,
+		insertClusterConfigNodes,
+		insertShhExtConfig,
+		insertWakuV2ConfigPreMigration,
+	}
+}
+
+func nodeConfigNormalInserts() []insertFn {
+	// WARNING: if you are modifying one of the node config tables
+	// you need to edit `nodeConfigUpgradeInserts` to guarantee that
+	// the selects being used there are not affected.
+
+	return []insertFn{
+		insertNodeConfigWithConnector,
+		insertHTTPConfig,
+		insertIPCConfig,
+		insertLogConfigWithNamespaces,
+		insertClusterConfig,
+		insertClusterConfigNodes,
+		insertShhExtConfig,
+		insertWakuV2ConfigPreMigration,
+		insertTorrentConfig,
+		insertWakuV2ConfigPostMigration,
+	}
+}
+
+func execInsertFns(inFn []insertFn, tx *sql.Tx, c *params.NodeConfig) error {
+	for _, fn := range inFn {
+		err := fn(tx, c)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func insertNodeConfigUpgrade(tx *sql.Tx, c *params.NodeConfig) error {
+	return execInsertFns(nodeConfigUpgradeInserts(), tx, c)
+}
+
+func SaveConfigWithTx(tx *sql.Tx, c *params.NodeConfig) error {
+	insertFNs := nodeConfigNormalInserts()
+	return execInsertFns(insertFNs, tx, c)
+}
+
+func SaveNodeConfig(db *sql.DB, c *params.NodeConfig) error {
+	tx, err := db.BeginTx(context.Background(), &sql.TxOptions{})
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if err == nil {
+			err = tx.Commit()
+			return
+		}
+		// don't shadow original error
+		_ = tx.Rollback()
+	}()
+
+	return SaveConfigWithTx(tx, c)
+}
+
+func migrateNodeConfig(tx *sql.Tx) error {
+	nodecfg := &params.NodeConfig{}
+	err := tx.QueryRow("SELECT node_config FROM settings WHERE synthetic_id = 'id'").Scan(&sqlite.JSONBlob{Data: nodecfg})
+
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+
+	if err == sql.ErrNoRows {
+		// Can't migrate because there's no data
+		return nil
+	}
+
+	err = insertNodeConfigUpgrade(tx, nodecfg)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func loadNodeConfig(tx *sql.Tx) (*params.NodeConfig, error) {
+	nodecfg := &params.NodeConfig{}
+
+	keystoreDir := "" // TODO: remove this from db
+	err := tx.QueryRow(`
+	SELECT
+		network_id, keystore_dir, node_key, api_modules,
+		wallet_enabled, browser_enabled, permissions_enabled,
+		mailservers_enabled, connector_enabled FROM node_config
+		WHERE synthetic_id = 'id'
+	`).Scan(
+		&nodecfg.NetworkID, &keystoreDir, &nodecfg.NodeKey, &nodecfg.APIModules,
+		&nodecfg.WalletConfig.Enabled, &nodecfg.BrowsersConfig.Enabled, &nodecfg.PermissionsConfig.Enabled,
+		&nodecfg.MailserversConfig.Enabled, &nodecfg.ConnectorConfig.Enabled,
+	)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+
+	err = tx.QueryRow(`SELECT enabled, host, port FROM http_config WHERE synthetic_id = 'id'`).Scan(&nodecfg.HTTPEnabled, &nodecfg.HTTPHost, &nodecfg.HTTPPort)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+
+	rows, err := tx.Query("SELECT host FROM http_virtual_hosts WHERE synthetic_id = 'id' ORDER BY host ASC")
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var host string
+		err = rows.Scan(&host)
+		if err != nil {
+			return nil, err
+		}
+		nodecfg.HTTPVirtualHosts = append(nodecfg.HTTPVirtualHosts, host)
+	}
+
+	rows, err = tx.Query("SELECT cors FROM http_cors WHERE synthetic_id = 'id' ORDER BY cors ASC")
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cors string
+		err = rows.Scan(&cors)
+		if err != nil {
+			return nil, err
+		}
+		nodecfg.HTTPCors = append(nodecfg.HTTPCors, cors)
+	}
+
+	err = tx.QueryRow("SELECT enabled, file FROM ipc_config WHERE synthetic_id = 'id'").Scan(&nodecfg.IPCEnabled, &nodecfg.IPCFile)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+
+	err = tx.QueryRow("SELECT enabled, log_dir, log_level, log_namespaces, file, max_backups, max_size, compress_rotated, log_to_stderr FROM log_config WHERE synthetic_id = 'id'").Scan(
+		&nodecfg.LogEnabled, &nodecfg.LogDir, &nodecfg.LogLevel, &nodecfg.LogNamespaces, &nodecfg.LogFile, &nodecfg.LogMaxBackups, &nodecfg.LogMaxSize, &nodecfg.LogCompressRotated, &nodecfg.LogToStderr)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+
+	rows, err = tx.Query(`SELECT
+                chain_id, chain_name, rpc_url, block_explorer_url, icon_url, native_currency_name,
+                native_currency_symbol, native_currency_decimals, is_test, layer, enabled, chain_color, short_name
+        FROM networks ORDER BY chain_id ASC`)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var n params.Network
+		err = rows.Scan(&n.ChainID, &n.ChainName, &n.RPCURL, &n.BlockExplorerURL, &n.IconURL,
+			&n.NativeCurrencyName, &n.NativeCurrencySymbol, &n.NativeCurrencyDecimals, &n.IsTest,
+			&n.Layer, &n.Enabled, &n.ChainColor, &n.ShortName,
+		)
+		if err != nil {
+			return nil, err
+		}
+		nodecfg.Networks = append(nodecfg.Networks, n)
+	}
+
+	err = tx.QueryRow("SELECT enabled, fleet, cluster_id FROM cluster_config WHERE synthetic_id = 'id'").Scan(&nodecfg.ClusterConfig.Enabled, &nodecfg.ClusterConfig.Fleet, &nodecfg.ClusterConfig.ClusterID)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+
+	nodeMap := make(map[string]*[]string)
+	nodeMap[StaticNodes] = &nodecfg.ClusterConfig.StaticNodes
+	nodeMap[BootNodes] = &nodecfg.ClusterConfig.BootNodes
+	nodeMap[TrustedMailServers] = &nodecfg.ClusterConfig.TrustedMailServers
+	nodeMap[PushNotificationsServers] = &nodecfg.ClusterConfig.PushNotificationsServers
+	nodeMap[WakuNodes] = &nodecfg.ClusterConfig.WakuNodes
+	nodeMap[DiscV5BootstrapNodes] = &nodecfg.ClusterConfig.DiscV5BootstrapNodes
+	rows, err = tx.Query(`SELECT node, type	FROM cluster_nodes WHERE synthetic_id = 'id' ORDER BY node ASC`)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var node string
+		var nodeType string
+		err = rows.Scan(&node, &nodeType)
+		if err != nil {
+			return nil, err
+		}
+		if nodeList, ok := nodeMap[nodeType]; ok {
+			*nodeList = append(*nodeList, node)
+		}
+	}
+
+	err = tx.QueryRow(`
+	SELECT pfs_enabled, installation_id, mailserver_confirmations, enable_connection_manager,
+	enable_last_used_monitor, connection_target, request_delay, max_server_failures, max_message_delivery_attempts,
+	whisper_cache_dir, disable_generic_discovery_topic, send_v1_messages, data_sync_enabled, verify_transaction_url,
+	verify_ens_url, verify_ens_contract_address, verify_transaction_chain_id, anon_metrics_server_enabled,
+	anon_metrics_send_id, anon_metrics_server_postgres_uri, bandwidth_stats_enabled FROM shhext_config WHERE synthetic_id = 'id'
+	`).Scan(
+		&nodecfg.ShhextConfig.PFSEnabled, &nodecfg.ShhextConfig.InstallationID, &nodecfg.ShhextConfig.MailServerConfirmations, &nodecfg.ShhextConfig.EnableConnectionManager,
+		&nodecfg.ShhextConfig.EnableLastUsedMonitor, &nodecfg.ShhextConfig.ConnectionTarget, &nodecfg.ShhextConfig.RequestsDelay, &nodecfg.ShhextConfig.MaxServerFailures, &nodecfg.ShhextConfig.MaxMessageDeliveryAttempts,
+		&nodecfg.ShhextConfig.WhisperCacheDir, &nodecfg.ShhextConfig.DisableGenericDiscoveryTopic, &nodecfg.ShhextConfig.SendV1Messages, &nodecfg.ShhextConfig.DataSyncEnabled, &nodecfg.ShhextConfig.VerifyTransactionURL,
+		&nodecfg.ShhextConfig.VerifyENSURL, &nodecfg.ShhextConfig.VerifyENSContractAddress, &nodecfg.ShhextConfig.VerifyTransactionChainID, &nodecfg.ShhextConfig.AnonMetricsServerEnabled,
+		&nodecfg.ShhextConfig.AnonMetricsSendID, &nodecfg.ShhextConfig.AnonMetricsServerPostgresURI, &nodecfg.ShhextConfig.BandwidthStatsEnabled,
+	)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+
+	rows, err = tx.Query(`SELECT public_key FROM shhext_default_push_notification_servers WHERE synthetic_id = 'id' ORDER BY public_key ASC`)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var pubKeyStr string
+		err = rows.Scan(&pubKeyStr)
+		if err != nil {
+			return nil, err
+		}
+
+		if pubKeyStr != "" {
+			b, err := hexutil.Decode(pubKeyStr)
+			if err != nil {
+				return nil, err
+			}
+
+			pubKey, err := crypto.UnmarshalPubkey(b)
+			if err != nil {
+				return nil, err
+			}
+			nodecfg.ShhextConfig.DefaultPushNotificationsServers = append(nodecfg.ShhextConfig.DefaultPushNotificationsServers, &params.PushNotificationServer{PublicKey: pubKey})
+		}
+	}
+
+	err = tx.QueryRow(`
+  SELECT enabled, port, data_dir, torrent_dir
+  FROM torrent_config WHERE synthetic_id = 'id'
+  `).Scan(
+		&nodecfg.TorrentConfig.Enabled, &nodecfg.TorrentConfig.Port, &nodecfg.TorrentConfig.DataDir, &nodecfg.TorrentConfig.TorrentDir,
+	)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+
+	err = tx.QueryRow(`
+	SELECT enabled, host, port, light_client, full_node, discovery_limit, data_dir,
+	max_message_size, enable_confirmations, peer_exchange, enable_discv5, udp_port, auto_update,
+	enable_store, store_capacity, store_seconds, enable_missing_message_verification,
+	enable_store_confirmation_for_messages_sent
+	FROM wakuv2_config WHERE synthetic_id = 'id'
+	`).Scan(
+		&nodecfg.WakuV2Config.Enabled, &nodecfg.WakuV2Config.Host, &nodecfg.WakuV2Config.Port, &nodecfg.WakuV2Config.LightClient, &nodecfg.WakuV2Config.FullNode,
+		&nodecfg.WakuV2Config.DiscoveryLimit, &nodecfg.WakuV2Config.DataDir, &nodecfg.WakuV2Config.MaxMessageSize, &nodecfg.WakuV2Config.EnableConfirmations,
+		&nodecfg.WakuV2Config.PeerExchange, &nodecfg.WakuV2Config.EnableDiscV5, &nodecfg.WakuV2Config.UDPPort, &nodecfg.WakuV2Config.AutoUpdate,
+		&nodecfg.WakuV2Config.EnableStore, &nodecfg.WakuV2Config.StoreCapacity, &nodecfg.WakuV2Config.StoreSeconds,
+		&nodecfg.WakuV2Config.EnableMissingMessageVerification, &nodecfg.WakuV2Config.EnableStoreConfirmationForMessagesSent,
+	)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+
+	rows, err = tx.Query(`SELECT name, multiaddress FROM wakuv2_custom_nodes WHERE synthetic_id = 'id' ORDER BY name ASC`)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+	defer rows.Close()
+	nodecfg.WakuV2Config.CustomNodes = make(map[string]string)
+	for rows.Next() {
+		var name string
+		var multiaddress string
+		err = rows.Scan(&name, &multiaddress)
+		if err != nil {
+			return nil, err
+		}
+		nodecfg.WakuV2Config.CustomNodes[name] = multiaddress
+	}
+
+	return nodecfg, nil
+}
+
+func MigrateNodeConfig(db *sql.DB) (err error) {
+	tx, err := db.BeginTx(context.Background(), &sql.TxOptions{})
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if err == nil {
+			err = tx.Commit()
+			return
+		}
+		// don't shadow original error
+		_ = tx.Rollback()
+	}()
+
+	migrated, err := nodeConfigWasMigrated(tx)
+	if err != nil {
+		return err
+	}
+
+	if !migrated {
+		return migrateNodeConfig(tx)
+	}
+
+	return nil
+}
+
+func GetNodeConfigFromDB(db *sql.DB) (*params.NodeConfig, error) {
+	tx, err := db.BeginTx(context.Background(), &sql.TxOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() {
+		if err == nil {
+			err = tx.Commit()
+			return
+		}
+		// don't shadow original error
+		_ = tx.Rollback()
+	}()
+
+	return loadNodeConfig(tx)
+}
+
+func SetLightClient(db *sql.DB, enabled bool) error {
+	_, err := db.Exec(`UPDATE wakuv2_config SET light_client = ?`, enabled)
+	return err
+}
+
+func SetStoreConfirmationForMessagesSent(db *sql.DB, enabled bool) error {
+	_, err := db.Exec(`UPDATE wakuv2_config SET enable_store_confirmation_for_messages_sent = ?`, enabled)
+	return err
+}
+
+func SetLogLevel(db *sql.DB, logLevel string) error {
+	_, err := db.Exec(`UPDATE log_config SET log_level = ?`, logLevel)
+	return err
+}
+
+func SetLogNamespaces(db *sql.DB, logNamespaces string) error {
+	_, err := db.Exec(`UPDATE log_config SET log_namespaces = ?`, logNamespaces)
+	return err
+}
+
+func SetLogEnabled(db *sql.DB, enabled bool) error {
+	_, err := db.Exec(`UPDATE log_config SET enabled = ?`, enabled)
+	return err
+}
+
+func SetMaxLogBackups(db *sql.DB, maxLogBackups uint) error {
+	_, err := db.Exec(`UPDATE log_config SET max_backups = ?`, maxLogBackups)
+	return err
+}
+
+func SaveNewWakuNode(db *sql.DB, nodeAddress string) error {
+	_, err := db.Exec(`INSERT OR REPLACE INTO cluster_nodes (node, type, synthetic_id) VALUES (?, ?, 'id')`, nodeAddress, WakuNodes)
+	return err
+}
+
+func SetWakuV2CustomNodes(db *sql.DB, customNodes map[string]string) error {
+	tx, err := db.BeginTx(context.Background(), &sql.TxOptions{})
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if err == nil {
+			err = tx.Commit()
+			return
+		}
+		// don't shadow original error
+		_ = tx.Rollback()
+	}()
+	return setWakuV2CustomNodes(tx, customNodes)
+}
